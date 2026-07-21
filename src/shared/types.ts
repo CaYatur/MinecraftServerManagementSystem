@@ -50,6 +50,12 @@ export interface JavaArgsConfig {
   extraFlags: string
   jarFile: string // e.g. 'server.jar', 'paper.jar'
   nogui: boolean
+  /**
+   * For Forge/NeoForge (1.17+) which launch via an @args file instead of `-jar`.
+   * When set (and preset !== 'custom'), the launch becomes:
+   *   java <jvm flags> @<argsFile> [nogui]
+   */
+  argsFile?: string
 }
 
 export interface ServerConfig {

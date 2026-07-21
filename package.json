@@ -19,19 +19,27 @@
     "dist:dir": "electron-vite build && electron-builder --dir"
   },
   "dependencies": {
+    "adm-zip": "^0.6.0",
     "clsx": "^2.1.1",
+    "croner": "^10.0.1",
     "i18next": "^26.3.6",
     "lucide-react": "^1.25.0",
+    "pidusage": "^4.0.1",
+    "prismarine-nbt": "^2.8.0",
     "rcon-client": "^4.2.5",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-i18next": "^17.0.10",
+    "semver": "^7.8.5",
     "zustand": "^5.0.14"
   },
   "devDependencies": {
+    "@types/adm-zip": "^0.5.8",
     "@types/node": "^26.1.1",
+    "@types/pidusage": "^2.0.5",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
+    "@types/semver": "^7.7.1",
     "@vitejs/plugin-react": "^5.2.0",
     "electron": "^43.2.0",
     "electron-builder": "^26.15.3",

@@ -616,3 +616,69 @@ textarea.input:focus {
   text-align: center;
   color: var(--text-dim);
 }
+
+/* ---------- Wizard ---------- */
+.field-label {
+  font-size: 12.5px;
+  color: var(--text-dim);
+  margin-bottom: 10px;
+  font-weight: 600;
+}
+.type-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+  gap: 8px;
+}
+.type-card {
+  padding: 12px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-input);
+  color: var(--text);
+  font-weight: 600;
+  font-size: 13px;
+  text-align: center;
+  transition: border-color 0.12s, background 0.12s;
+}
+.type-card:hover {
+  background: var(--bg-hover);
+}
+.type-card.active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg-input));
+}
+.link {
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.link:hover {
+  text-decoration: underline;
+}
+.error-badge {
+  border-color: var(--danger-strong);
+  color: var(--danger);
+}
+.progress-track {
+  margin-top: 12px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--bg-input);
+  overflow: hidden;
+}
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent), var(--accent-strong));
+  transition: width 0.2s ease;
+}
+.spin {
+  animation: spin 0.9s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

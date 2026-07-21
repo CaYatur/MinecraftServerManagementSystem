@@ -1,7 +1,12 @@
 import { app, BrowserWindow } from 'electron'
+import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { processManager } from './core/processManager'
 import { getConfig } from './config'
+import { getProvider } from './core/versions'
+import { createServer } from './core/createServer'
+import { removeServer } from './core/serverRegistry'
+import { CREATABLE_TYPES } from '@shared/versions'
 
 /* eslint-disable no-console */
 
@@ -121,4 +126,63 @@ export async function runSmoke(): Promise<void> {
   if (!sawStop) return fail('never observed "Stopping the server" line')
 
   pass()
+}
+
+/**
+ * Wizard / version-provider smoke test against the live APIs:
+ *  - every provider lists versions
+ *  - a real (tiny) Fabric server is created, verified, then removed.
+ */
+export async function runWizardSmoke(): Promise<void> {
+  const fail = (m: string): void => {
+    console.log('WIZARD-SMOKE: FAIL -', m)
+    app.exit(1)
+  }
+
+  // 1. Every creatable provider returns versions.
+  for (const type of CREATABLE_TYPES) {
+    try {
+      const vs = await getProvider(type).listVersions(true)
+      if (vs.length === 0) return fail(`${type}: 0 versions`)
+      console.log(`WIZARD-SMOKE: ${type} -> ${vs.length} versions (latest ${vs[0].id})`)
+    } catch (e) {
+      return fail(`${type} listVersions threw: ${String(e)}`)
+    }
+  }
+
+  // 2. Create a real Fabric server (tiny launcher jar).
+  try {
+    const games = await getProvider('fabric').listVersions(false)
+    const mc = games[0].id
+    console.log('WIZARD-SMOKE: creating Fabric server for', mc)
+    const server = await createServer(
+      {
+        name: 'FabricSmoke',
+        folderName: 'FabricSmoke',
+        type: 'fabric',
+        mcVersion: mc,
+        memoryMB: 1024,
+        preset: 'basic',
+        acceptEula: true,
+        onlineMode: false,
+        port: 25599
+      },
+      (p) => console.log('WIZARD-SMOKE: progress', p.stage, p.percent ?? '')
+    )
+    const jarOk = existsSync(join(server.path, 'fabric-server-launch.jar'))
+    const eulaOk = existsSync(join(server.path, 'eula.txt'))
+    const propsOk = existsSync(join(server.path, 'server.properties'))
+    const registered = getConfig().servers.some((s) => s.id === server.id)
+    console.log(
+      `WIZARD-SMOKE: jar=${jarOk} eula=${eulaOk} props=${propsOk} registered=${registered}`
+    )
+    // cleanup
+    removeServer(server.id, true)
+    if (!jarOk || !eulaOk || !propsOk || !registered) return fail('created server missing files')
+  } catch (e) {
+    return fail('fabric create threw: ' + String(e))
+  }
+
+  console.log('WIZARD-SMOKE: PASS')
+  app.exit(0)
 }

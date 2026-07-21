@@ -39,9 +39,14 @@ const api: MsmsApi = {
   getAllStatus: () => ipcRenderer.invoke(IPC.procStatusAll),
   getLogHistory: (id) => ipcRenderer.invoke(IPC.procLogHistory, id),
 
+  listVersions: (type, incl) => ipcRenderer.invoke(IPC.versionsList, type, incl),
+  listBuilds: (type, mc, incl) => ipcRenderer.invoke(IPC.versionsBuilds, type, mc, incl),
+  createServer: (opts) => ipcRenderer.invoke(IPC.serverCreate, opts),
+
   onServerLog: (cb) => subscribe(EVT.serverLog, cb),
   onServerStatus: (cb) => subscribe(EVT.serverStatus, cb),
   onServerStats: (cb) => subscribe(EVT.serverStats, cb),
+  onCreateProgress: (cb) => subscribe(EVT.createProgress, cb),
   onToast: (cb) => subscribe(EVT.toast, cb)
 }
 

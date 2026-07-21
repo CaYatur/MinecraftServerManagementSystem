@@ -5,7 +5,7 @@ import { registerIpc } from './ipc/register'
 import { processManager } from './core/processManager'
 import { resolveBaseDir } from './paths'
 import { log } from './logger'
-import { runSmoke } from './smoke'
+import { runSmoke, runWizardSmoke } from './smoke'
 
 let mainWindow: BrowserWindow | null = null
 let cleanupDone = false
@@ -86,6 +86,14 @@ if (!gotLock) {
       runSmoke().catch((e) => {
         // eslint-disable-next-line no-console
         console.log('SMOKE: FAIL - exception', String(e))
+        app.exit(1)
+      })
+      return
+    }
+    if (process.env['MSMS_SMOKE_WIZARD']) {
+      runWizardSmoke().catch((e) => {
+        // eslint-disable-next-line no-console
+        console.log('WIZARD-SMOKE: FAIL - exception', String(e))
         app.exit(1)
       })
       return

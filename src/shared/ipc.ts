@@ -13,6 +13,7 @@ import type {
   StopOptions,
   LogLine
 } from './types'
+import type { McVersion, BuildInfo, CreateServerOptions, CreateProgress } from './versions'
 
 /** request/response channels (renderer -> main via invoke). */
 export const IPC = {
@@ -44,7 +45,11 @@ export const IPC = {
   procCommand: 'process:command',
   procStatus: 'process:status',
   procStatusAll: 'process:status-all',
-  procLogHistory: 'process:log-history'
+  procLogHistory: 'process:log-history',
+
+  versionsList: 'versions:list',
+  versionsBuilds: 'versions:builds',
+  serverCreate: 'servers:create'
 } as const
 
 /** event channels (main -> renderer via webContents.send). */
@@ -53,6 +58,7 @@ export const EVT = {
   serverStatus: 'evt:server-status',
   serverStats: 'evt:server-stats',
   configChanged: 'evt:config-changed',
+  createProgress: 'evt:create-progress',
   toast: 'evt:toast'
 } as const
 
@@ -70,6 +76,12 @@ export interface ToastEvent {
 }
 
 export interface AddServerResult {
+  ok: boolean
+  server?: ServerConfig
+  error?: string
+}
+
+export interface CreateServerResult {
   ok: boolean
   server?: ServerConfig
   error?: string
@@ -107,9 +119,14 @@ export interface MsmsApi {
   getAllStatus(): Promise<ServerRuntimeStatus[]>
   getLogHistory(id: string): Promise<LogLine[]>
 
+  listVersions(type: ServerType, includeUnstable: boolean): Promise<McVersion[]>
+  listBuilds(type: ServerType, mc: string, includeUnstable: boolean): Promise<BuildInfo[]>
+  createServer(opts: CreateServerOptions): Promise<CreateServerResult>
+
   // event subscriptions -> return unsubscribe fn
   onServerLog(cb: (e: ServerLogEvent) => void): () => void
   onServerStatus(cb: (s: ServerRuntimeStatus) => void): () => void
   onServerStats(cb: (s: ServerStats) => void): () => void
+  onCreateProgress(cb: (p: CreateProgress) => void): () => void
   onToast(cb: (t: ToastEvent) => void): () => void
 }

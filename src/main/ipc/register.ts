@@ -7,8 +7,11 @@ import { detectJava } from '../core/java'
 import { detectServer } from '../core/serverDetect'
 import * as registry from '../core/serverRegistry'
 import { processManager } from '../core/processManager'
+import { getProvider } from '../core/versions'
+import { createServer } from '../core/createServer'
 import { log } from '../logger'
-import type { Bootstrap, Language, ThemeMode, ServerConfig, StopOptions } from '@shared/types'
+import type { Bootstrap, Language, ThemeMode, ServerConfig, ServerType, StopOptions } from '@shared/types'
+import type { CreateServerOptions } from '@shared/versions'
 
 function broadcast(channel: string, payload: unknown): void {
   for (const w of BrowserWindow.getAllWindows()) {
@@ -117,6 +120,22 @@ export function registerIpc(): void {
   H(IPC.procStatus, (_e, id: string) => processManager.getStatus(id))
   H(IPC.procStatusAll, () => processManager.getAllStatus())
   H(IPC.procLogHistory, (_e, id: string) => processManager.getLogHistory(id))
+
+  // --- versions + creation ---
+  H(IPC.versionsList, (_e, type: ServerType, incl: boolean) =>
+    getProvider(type).listVersions(incl)
+  )
+  H(IPC.versionsBuilds, (_e, type: ServerType, mc: string, incl: boolean) =>
+    getProvider(type).listBuilds(mc, incl)
+  )
+  H(IPC.serverCreate, async (_e, opts: CreateServerOptions) => {
+    try {
+      const server = await createServer(opts, (p) => broadcast(EVT.createProgress, p))
+      return { ok: true, server }
+    } catch (err) {
+      return { ok: false, error: String((err as Error)?.message ?? err) }
+    }
+  })
 
   log.info('IPC handlers registered')
 }

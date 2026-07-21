@@ -135,7 +135,7 @@ export class ProcessManager extends EventEmitter {
     const args = buildLaunchArgs(server.java, server.type)
 
     // Sanity: for jar-based launch make sure the jar exists.
-    if (server.java.preset !== 'custom') {
+    if (server.java.preset !== 'custom' && !server.java.argsFile) {
       const jarPath = join(server.path, server.java.jarFile || 'server.jar')
       if (!existsSync(jarPath)) {
         const mp = this.ensureShell(id)

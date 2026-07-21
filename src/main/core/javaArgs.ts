@@ -55,25 +55,14 @@ export function tokenize(input: string): string[] {
   return out
 }
 
-/**
- * Build the full argument list that follows the `java` executable, i.e. JVM flags
- * + `-jar <jar>` + program args. For the `custom` preset the user's string is the
- * complete definition and is used verbatim.
- */
-export function buildLaunchArgs(cfg: JavaArgsConfig, type: ServerType): string[] {
-  if (cfg.preset === 'custom') {
-    return [...tokenize(cfg.customArgs), ...tokenize(cfg.extraFlags)]
-  }
-
+/** JVM flags only (memory + preset + extra) — no `-jar`, no program args. */
+export function buildJvmFlags(cfg: JavaArgsConfig, type: ServerType): string[] {
   const max = clampMem(cfg.maxMemoryMB)
-  const isProxy = PROXY_TYPES.includes(type)
   const jvm: string[] = []
-
   switch (cfg.preset) {
     case 'aikars':
     case 'aikars-large': {
       const large = cfg.preset === 'aikars-large' || max >= 12288
-      // Aikar recommends Xms == Xmx.
       jvm.push(`-Xms${max}M`, `-Xmx${max}M`, ...AIKARS_BASE, ...aikarsSizing(large))
       break
     }
@@ -95,13 +84,31 @@ export function buildLaunchArgs(cfg: JavaArgsConfig, type: ServerType): string[]
       break
     }
   }
-
   if (cfg.extraFlags.trim()) jvm.push(...tokenize(cfg.extraFlags))
+  return jvm
+}
 
-  jvm.push('-jar', cfg.jarFile || 'server.jar')
+/**
+ * Build the full argument list that follows the `java` executable, i.e. JVM flags
+ * + (`-jar <jar>` | `@argsFile`) + program args. For the `custom` preset the user's
+ * string is the complete definition and is used verbatim.
+ */
+export function buildLaunchArgs(cfg: JavaArgsConfig, type: ServerType): string[] {
+  if (cfg.preset === 'custom') {
+    return [...tokenize(cfg.customArgs), ...tokenize(cfg.extraFlags)]
+  }
 
+  const isProxy = PROXY_TYPES.includes(type)
+  const jvm = buildJvmFlags(cfg, type)
   const program: string[] = []
   if (cfg.nogui && !isProxy) program.push('nogui')
+
+  // Forge/NeoForge 1.17+ launch via an @args file (classpath + main class inside).
+  if (cfg.argsFile) {
+    return [...jvm, `@${cfg.argsFile}`, ...program]
+  }
+
+  jvm.push('-jar', cfg.jarFile || 'server.jar')
   return [...jvm, ...program]
 }
 
