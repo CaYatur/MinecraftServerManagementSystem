@@ -1,0 +1,36 @@
+# Dependencies
+node_modules/
+
+# Build output
+out/
+out-tsc/
+dist/
+release/
+*.tsbuildinfo
+
+# Portable app data written into the launch directory (never commit runtime data)
+msms-data/
+dev-root/
+
+# Logs & runtime
+*.log
+logs/
+
+# Secrets / generated credentials (RCON passwords, tokens)
+*.secret
+.env
+.env.*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+# Minecraft server artifacts that may appear if a server is created in the repo root
+*.jar
+eula.txt
+world/
+world_nether/
+world_the_end/

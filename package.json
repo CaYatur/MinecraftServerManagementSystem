@@ -1,0 +1,42 @@
+{
+  "name": "msms",
+  "version": "0.1.0",
+  "description": "Minecraft Server Management System — portable, bilingual (EN/TR) desktop control panel for Minecraft servers.",
+  "author": "CaYatur",
+  "license": "MIT",
+  "main": "./out/main/index.js",
+  "homepage": "https://github.com/CaYatur/MinecraftServerManagementSystem",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "typecheck:node": "tsc --noEmit -p tsconfig.node.json --composite false",
+    "typecheck:web": "tsc --noEmit -p tsconfig.web.json --composite false",
+    "typecheck": "npm run typecheck:node && npm run typecheck:web",
+    "lint": "eslint . --ext .ts,.tsx || echo lint-skipped",
+    "dist": "electron-vite build && electron-builder",
+    "dist:portable": "electron-vite build && electron-builder --win portable",
+    "dist:dir": "electron-vite build && electron-builder --dir"
+  },
+  "dependencies": {
+    "clsx": "^2.1.1",
+    "i18next": "^26.3.6",
+    "lucide-react": "^1.25.0",
+    "rcon-client": "^4.2.5",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "react-i18next": "^17.0.10",
+    "zustand": "^5.0.14"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.1",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.2.0",
+    "electron": "^43.2.0",
+    "electron-builder": "^26.15.3",
+    "electron-vite": "^5.0.0",
+    "typescript": "^7.0.2",
+    "vite": "^7.3.6"
+  }
+}

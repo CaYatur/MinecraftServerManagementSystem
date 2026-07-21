@@ -1,0 +1,43 @@
+appId: com.cayatur.msms
+productName: Minecraft Server Manager
+copyright: Copyright (c) 2026 CaYatur
+
+directories:
+  buildResources: build
+  output: release
+
+files:
+  - out/**
+  - package.json
+  - '!**/{.eslintrc,.editorconfig,tsconfig*.json,electron.vite.config.ts}'
+
+# We deliberately ship a single portable exe: it stores all data next to itself
+# (the launch directory), which is exactly the "portable" behaviour we want.
+win:
+  target:
+    - target: portable
+      arch:
+        - x64
+  artifactName: ${productName}-${version}-portable.${ext}
+
+portable:
+  # Keep the temp-extraction folder stable so relative helpers behave predictably.
+  unpackDirName: MSMS-${version}
+  artifactName: ${productName}-${version}-portable.${ext}
+
+# Optional NSIS installer target for users who prefer an installed app.
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  artifactName: ${productName}-${version}-setup.${ext}
+
+linux:
+  target:
+    - AppImage
+  category: Utility
+
+mac:
+  target:
+    - dmg
+  category: public.app-category.developer-tools
