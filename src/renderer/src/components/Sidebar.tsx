@@ -3,6 +3,7 @@ import { Plus, FolderPlus, RefreshCw, Settings as SettingsIcon, Server, FolderOp
 import { useStore } from '../store'
 import { StatusDot } from './ui'
 import { Logo } from './Logo'
+import { BrandWordmark } from './BrandWordmark'
 
 export function Sidebar(): JSX.Element {
   const { t } = useTranslation()
@@ -22,9 +23,7 @@ export function Sidebar(): JSX.Element {
         <div className="brand">
           <Logo size={34} />
           <div>
-            <span className="wordmark">
-              CaYa<span className="accent-text">Dev</span>
-            </span>
+            <BrandWordmark height={15} />
             <small>{t('app.subtitle')}</small>
           </div>
         </div>

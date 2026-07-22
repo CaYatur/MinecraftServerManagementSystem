@@ -6,22 +6,22 @@
       <stop offset="1" stop-color="#0b0b10"/>
     </linearGradient>
     <radialGradient id="glow" cx="0.32" cy="0.26" r="0.85">
-      <stop offset="0" stop-color="#e5313f" stop-opacity="0.5"/>
-      <stop offset="0.45" stop-color="#e5313f" stop-opacity="0.1"/>
-      <stop offset="1" stop-color="#e5313f" stop-opacity="0"/>
+      <stop offset="0" stop-color="#dc2727" stop-opacity="0.5"/>
+      <stop offset="0.45" stop-color="#dc2727" stop-opacity="0.1"/>
+      <stop offset="1" stop-color="#dc2727" stop-opacity="0"/>
     </radialGradient>
     <linearGradient id="c" x1="0.15" y1="0.05" x2="0.85" y2="0.95">
-      <stop offset="0" stop-color="#ff3a49"/>
-      <stop offset="1" stop-color="#b3121f"/>
+      <stop offset="0" stop-color="#f04444"/>
+      <stop offset="1" stop-color="#a81d1d"/>
     </linearGradient>
     <filter id="ds" x="-25%" y="-25%" width="150%" height="150%">
-      <feDropShadow dx="0" dy="7" stdDeviation="12" flood-color="#e5313f" flood-opacity="0.55"/>
+      <feDropShadow dx="0" dy="7" stdDeviation="12" flood-color="#dc2727" flood-opacity="0.55"/>
     </filter>
   </defs>
 
   <rect x="16" y="16" width="480" height="480" rx="116" fill="url(#bg)"/>
   <rect x="16" y="16" width="480" height="480" rx="116" fill="url(#glow)"/>
-  <rect x="17" y="17" width="478" height="478" rx="115" fill="none" stroke="#e5313f" stroke-opacity="0.35" stroke-width="2"/>
+  <rect x="17" y="17" width="478" height="478" rx="115" fill="none" stroke="#dc2727" stroke-opacity="0.35" stroke-width="2"/>
 
   <!-- angular CaYaDev "C" -->
   <path filter="url(#ds)" fill="url(#c)"

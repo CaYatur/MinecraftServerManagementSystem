@@ -19,6 +19,8 @@ const api: MsmsApi = {
   setLanguage: (lang) => ipcRenderer.invoke(IPC.configSetLanguage, lang),
   setTheme: (theme) => ipcRenderer.invoke(IPC.configSetTheme, theme),
   updateDefaults: (patch) => ipcRenderer.invoke(IPC.configUpdateDefaults, patch),
+  getServerMessages: () => ipcRenderer.invoke(IPC.messagesGet),
+  setServerMessages: (overrides) => ipcRenderer.invoke(IPC.messagesSet, overrides),
 
   pickFolder: (defaultPath) => ipcRenderer.invoke(IPC.dialogPickFolder, defaultPath),
   pickFile: (filters) => ipcRenderer.invoke(IPC.dialogPickFile, filters),

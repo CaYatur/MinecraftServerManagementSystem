@@ -60,7 +60,9 @@ export default {
     notRunningHint: 'Start the server to see live statistics.',
     tpsNA: 'TPS is available on Paper-based servers only',
     world: 'World size',
-    quickActions: 'Quick actions'
+    quickActions: 'Quick actions',
+    rconConnected: 'connected',
+    rconConnecting: 'connecting… (TPS/live players need RCON)'
   },
   settings: {
     title: 'Settings',
@@ -82,6 +84,9 @@ export default {
     preset: 'JVM preset',
     stopCountdown: 'Stop countdown (seconds)',
     autoEnableRcon: 'Auto-enable RCON on servers',
+    messages: 'Shutdown / kick messages',
+    messagesHint:
+      'Shown to players on stop/restart. {sec} = countdown seconds. § colour codes work. Leave empty to use the default. You can write in any language.',
     baseDir: 'Data / launch directory',
     about: 'About',
     aboutBody: 'Portable, open-source Minecraft server manager. All data is stored next to the app.',

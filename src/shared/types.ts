@@ -125,6 +125,14 @@ export interface AppConfig {
   defaults: AppDefaults
   /** Absolute base/launch directory the app is operating from. */
   baseDir?: string
+  /** User overrides for server-facing broadcast/kick messages (key -> text). */
+  serverMessages?: Record<string, string>
+}
+
+export interface ServerMessages {
+  keys: string[]
+  defaults: Record<string, string>
+  overrides: Record<string, string>
 }
 
 export interface Bootstrap {

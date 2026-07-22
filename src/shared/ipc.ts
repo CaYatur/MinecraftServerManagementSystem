@@ -21,7 +21,8 @@ import type {
   ScheduleTask,
   ScheduleAction,
   CrashReport,
-  UpdateInfo
+  UpdateInfo,
+  ServerMessages
 } from './types'
 import type { McVersion, BuildInfo, CreateServerOptions, CreateProgress } from './versions'
 import type { ModEntry, ModrinthHit } from './mods'
@@ -38,6 +39,8 @@ export const IPC = {
   configSetLanguage: 'config:set-language',
   configSetTheme: 'config:set-theme',
   configUpdateDefaults: 'config:update-defaults',
+  messagesGet: 'config:messages-get',
+  messagesSet: 'config:messages-set',
 
   dialogPickFolder: 'dialog:pick-folder',
   dialogPickFile: 'dialog:pick-file',
@@ -151,6 +154,8 @@ export interface MsmsApi {
   setLanguage(lang: Language): Promise<AppConfig>
   setTheme(theme: ThemeMode): Promise<AppConfig>
   updateDefaults(patch: Partial<AppConfig['defaults']>): Promise<AppConfig>
+  getServerMessages(): Promise<ServerMessages>
+  setServerMessages(overrides: Record<string, string>): Promise<void>
 
   pickFolder(defaultPath?: string): Promise<string | null>
   pickFile(filters?: { name: string; extensions: string[] }[]): Promise<string | null>

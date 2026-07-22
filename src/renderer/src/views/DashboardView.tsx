@@ -41,6 +41,10 @@ export function DashboardView(): JSX.Element {
   const [rename, setRename] = useState('')
   const [confirmRemove, setConfirmRemove] = useState(false)
   const [deleteFiles, setDeleteFiles] = useState(false)
+  const [rconOn, setRconOn] = useState(false)
+  const id = useStore((s) => s.activeServerId)
+  const st0 = status?.status ?? 'stopped'
+  const running0 = st0 === 'running' || st0 === 'starting'
 
   useEffect(() => {
     if (server) setRename(server.name)
@@ -51,6 +55,18 @@ export function DashboardView(): JSX.Element {
     const i = setInterval(() => force((n) => n + 1), 1000)
     return () => clearInterval(i)
   }, [])
+
+  // Poll RCON connection state (explains TPS availability).
+  useEffect(() => {
+    if (!id || !running0) {
+      setRconOn(false)
+      return
+    }
+    const tick = (): void => void window.msms.rconConnected(id).then(setRconOn).catch(() => {})
+    tick()
+    const iv = setInterval(tick, 3000)
+    return () => clearInterval(iv)
+  }, [id, running0])
 
   if (!server) return <></>
   const st = status?.status ?? 'stopped'
@@ -70,7 +86,7 @@ export function DashboardView(): JSX.Element {
         <Stat
           icon={<MemoryStick size={13} />}
           label={t('dashboard.ram')}
-          value={running && stats ? `${stats.memoryMB.toFixed(0)}` : '—'}
+          value={running && stats ? `${stats.memoryMB.toFixed(0)} / ${server.java.maxMemoryMB}` : '—'}
           sub={running && stats ? 'MB' : undefined}
         />
         <Stat
@@ -100,6 +116,12 @@ export function DashboardView(): JSX.Element {
       {!tpsSupported && (
         <p className="hint">
           <Gauge size={12} /> {t('dashboard.tpsNA')}
+        </p>
+      )}
+      {running && (
+        <p className="hint" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span className={`dot ${rconOn ? 'running' : 'starting'}`} />
+          RCON: {rconOn ? t('dashboard.rconConnected') : t('dashboard.rconConnecting')}
         </p>
       )}
 

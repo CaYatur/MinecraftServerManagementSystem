@@ -32,10 +32,22 @@ export function resolveLanguage(): ResolvedLanguage {
   return loc.startsWith('tr') ? 'tr' : 'en'
 }
 
-/** Translate a main-side (server-facing) message. */
-export function mt(key: string, params?: Record<string, string | number>): string {
+/** Keys the user can override in Settings. */
+export const MESSAGE_KEYS = Object.keys(dict.en)
+
+/** The built-in defaults in the current panel language (for UI placeholders). */
+export function defaultMessages(): Record<string, string> {
   const lang = resolveLanguage()
-  let s = dict[lang][key] ?? dict.en[key] ?? key
+  const out: Record<string, string> = {}
+  for (const k of MESSAGE_KEYS) out[k] = dict[lang][k] ?? dict.en[k]
+  return out
+}
+
+/** Translate a main-side (server-facing) message, honouring user overrides. */
+export function mt(key: string, params?: Record<string, string | number>): string {
+  const override = getConfig().serverMessages?.[key]
+  const lang = resolveLanguage()
+  let s = (override && override.trim()) || dict[lang][key] || dict.en[key] || key
   if (params) {
     for (const [k, v] of Object.entries(params)) {
       s = s.split(`{${k}}`).join(String(v))

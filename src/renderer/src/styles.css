@@ -9,8 +9,8 @@
   --text: #e7e9ee;
   --text-dim: #9aa0ad;
   --text-faint: #6b7280;
-  --accent: #e5313f;
-  --accent-strong: #b3121f;
+  --accent: #dc2727;
+  --accent-strong: #b01e1e;
   --accent-fg: #ffffff;
   --online: #4ade80;
   --danger: #f87171;
@@ -35,8 +35,8 @@
   --text: #1a1c22;
   --text-dim: #5b6270;
   --text-faint: #8b91a0;
-  --accent: #d61f2b;
-  --accent-strong: #a80f1a;
+  --accent: #c81f1f;
+  --accent-strong: #a01818;
   --accent-fg: #ffffff;
   --online: #16a34a;
   --shadow: 0 8px 24px rgba(20, 30, 50, 0.12);
@@ -84,7 +84,7 @@ button {
   display: grid;
   grid-template-columns: 250px 1fr;
   height: 100%;
-  background: radial-gradient(1100px 460px at 0% -8%, rgba(229, 49, 63, 0.1), transparent 62%);
+  background: radial-gradient(1100px 460px at 0% -8%, rgba(220, 39, 39, 0.1), transparent 62%);
 }
 
 .sidebar {

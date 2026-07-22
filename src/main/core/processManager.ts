@@ -2,9 +2,11 @@ import { spawn, execFile, type ChildProcess } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
+import { cpus } from 'node:os'
 import pidusage from 'pidusage'
 import { getConfig } from '../config'
 import { getServer, touchServer } from './serverRegistry'
+import { readProperties } from './serverFiles'
 import { detectJava, javaExecutable } from './java'
 import { buildLaunchArgs } from './javaArgs'
 import * as rcon from './rcon'
@@ -21,6 +23,7 @@ import type {
 } from '@shared/types'
 
 const HISTORY_CAP = 3000
+const CORES = Math.max(1, cpus().length)
 const wait = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
 interface ManagedProcess {
@@ -76,7 +79,8 @@ export class ProcessManager extends EventEmitter {
         const u = await pidusage(pid)
         this.emit('stats', {
           id: mp.id,
-          cpu: Math.round(u.cpu),
+          // pidusage reports % of a single core; normalize to % of the whole CPU.
+          cpu: Math.min(100, Math.round(u.cpu / CORES)),
           memoryMB: Math.round(u.memory / (1024 * 1024)),
           players: mp.players,
           tps: mp.tps,
@@ -230,6 +234,16 @@ export class ProcessManager extends EventEmitter {
     }
     this.procs.set(id, mp)
     touchServer(id)
+
+    // Seed the max-player count from server.properties so the UI shows "0 / 20"
+    // before RCON connects.
+    try {
+      const props = Object.fromEntries(readProperties(id).entries.map((e) => [e.key, e.value]))
+      const mx = parseInt(props['max-players'] || '0', 10)
+      if (mx) mp.players.max = mx
+    } catch {
+      /* ignore */
+    }
 
     this.systemLine(mp, `[MSMS] Starting ${server.name} (${server.type} ${server.mcVersion})`)
     this.systemLine(mp, `[MSMS] Java: ${javaBin}${javaInfo ? ` (v${javaInfo.version})` : ''}`)

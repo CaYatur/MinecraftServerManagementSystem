@@ -9,13 +9,13 @@ export function Logo({ size = 30 }: { size?: number }): JSX.Element {
           <stop offset="1" stopColor="#0b0b10" />
         </linearGradient>
         <radialGradient id={`${id}glow`} cx="0.32" cy="0.26" r="0.85">
-          <stop offset="0" stopColor="#e5313f" stopOpacity="0.5" />
-          <stop offset="0.45" stopColor="#e5313f" stopOpacity="0.1" />
-          <stop offset="1" stopColor="#e5313f" stopOpacity="0" />
+          <stop offset="0" stopColor="#dc2727" stopOpacity="0.5" />
+          <stop offset="0.45" stopColor="#dc2727" stopOpacity="0.1" />
+          <stop offset="1" stopColor="#dc2727" stopOpacity="0" />
         </radialGradient>
         <linearGradient id={`${id}c`} x1="0.15" y1="0.05" x2="0.85" y2="0.95">
-          <stop offset="0" stopColor="#ff3a49" />
-          <stop offset="1" stopColor="#b3121f" />
+          <stop offset="0" stopColor="#f04444" />
+          <stop offset="1" stopColor="#a81d1d" />
         </linearGradient>
       </defs>
       <rect x="16" y="16" width="480" height="480" rx="116" fill={`url(#${id}bg)`} />
@@ -27,7 +27,7 @@ export function Logo({ size = 30 }: { size?: number }): JSX.Element {
         height="478"
         rx="115"
         fill="none"
-        stroke="#e5313f"
+        stroke="#dc2727"
         strokeOpacity="0.35"
         strokeWidth="2"
       />

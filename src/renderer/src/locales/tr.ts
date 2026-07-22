@@ -62,7 +62,9 @@ const tr: typeof en = {
     notRunningHint: 'Canlı istatistikleri görmek için sunucuyu başlatın.',
     tpsNA: 'TPS yalnızca Paper tabanlı sunucularda gösterilir',
     world: 'Dünya boyutu',
-    quickActions: 'Hızlı işlemler'
+    quickActions: 'Hızlı işlemler',
+    rconConnected: 'bağlı',
+    rconConnecting: 'bağlanıyor… (TPS/canlı oyuncular için RCON gerekir)'
   },
   settings: {
     title: 'Ayarlar',
@@ -84,6 +86,9 @@ const tr: typeof en = {
     preset: 'JVM ön ayarı',
     stopCountdown: 'Durdurma geri sayımı (saniye)',
     autoEnableRcon: 'Sunucularda RCON’u otomatik etkinleştir',
+    messages: 'Kapatma / atma mesajları',
+    messagesHint:
+      'Durdurma/yeniden başlatmada oyunculara gösterilir. {sec} = geri sayım saniyesi. § renk kodları çalışır. Varsayılan için boş bırakın. İstediğiniz dilde yazabilirsiniz.',
     baseDir: 'Veri / çalışma dizini',
     about: 'Hakkında',
     aboutBody: 'Taşınabilir, açık kaynaklı Minecraft sunucu yöneticisi. Tüm veriler uygulamanın yanında saklanır.',

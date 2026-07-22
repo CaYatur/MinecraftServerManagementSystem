@@ -112,7 +112,14 @@ function MainArea(): JSX.Element {
   const setView = useStore((s) => s.setView)
 
   if (view === 'create') return <CreateView />
-  if (view === 'settings') return <SettingsView />
+  if (view === 'settings')
+    return (
+      <div className="content">
+        <ErrorBoundary key="settings">
+          <SettingsView />
+        </ErrorBoundary>
+      </div>
+    )
 
   if (!server) {
     return (

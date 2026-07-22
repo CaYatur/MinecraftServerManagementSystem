@@ -1,8 +1,8 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Coffee, Folder, Check, RefreshCw, Download } from 'lucide-react'
+import { Coffee, Folder, Check, RefreshCw, Download, MessageSquare } from 'lucide-react'
 import { useStore } from '../store'
-import type { JavaPreset, Language, ThemeMode, UpdateInfo } from '@shared/types'
+import type { JavaPreset, Language, ThemeMode, UpdateInfo, ServerMessages } from '@shared/types'
 
 const PRESETS: JavaPreset[] = ['basic', 'aikars', 'aikars-large', 'proxy']
 
@@ -23,8 +23,27 @@ export function SettingsView(): JSX.Element {
   const [preset, setPreset] = useState<JavaPreset>(d.javaPreset)
   const [countdown, setCountdown] = useState(d.stopCountdownSeconds)
   const [rcon, setRcon] = useState(d.autoEnableRcon)
+  const toast = useStore((s) => s.toast)
   const [update, setUpdate] = useState<UpdateInfo | null>(null)
   const [checking, setChecking] = useState(false)
+  const [messages, setMessages] = useState<ServerMessages | null>(null)
+  const [msgOverrides, setMsgOverrides] = useState<Record<string, string>>({})
+
+  useEffect(() => {
+    window.msms.getServerMessages().then((m) => {
+      setMessages(m)
+      setMsgOverrides(m.overrides)
+    })
+  }, [])
+
+  const saveMessages = (): void => {
+    // Drop empty overrides so defaults apply.
+    const clean: Record<string, string> = {}
+    for (const [k, v] of Object.entries(msgOverrides)) if (v.trim()) clean[k] = v.trim()
+    void window.msms.setServerMessages(clean)
+    setMsgOverrides(clean)
+    toast('success', 'toast.saved')
+  }
 
   const checkUpdates = async (): Promise<void> => {
     setChecking(true)
@@ -171,6 +190,33 @@ export function SettingsView(): JSX.Element {
             <Folder size={14} /> {t('sidebar.openFolder')}
           </button>
         </div>
+      </div>
+
+      <div className="section-title">
+        <MessageSquare size={14} style={{ verticalAlign: -2, marginRight: 6 }} />
+        {t('settings.messages')}
+      </div>
+      <div className="panel">
+        <p className="hint" style={{ marginTop: 0 }}>
+          {t('settings.messagesHint')}
+        </p>
+        {messages?.keys.map((k) => (
+          <div key={k} className="field" style={{ marginBottom: 10 }}>
+            <label className="mono" style={{ fontSize: 11 }}>
+              {k}
+            </label>
+            <input
+              className="input mono"
+              style={{ fontSize: 12 }}
+              value={msgOverrides[k] ?? ''}
+              placeholder={messages.defaults[k]}
+              onChange={(e) => setMsgOverrides((prev) => ({ ...prev, [k]: e.target.value }))}
+            />
+          </div>
+        ))}
+        <button className="btn primary" onClick={saveMessages}>
+          <Check size={14} /> {t('common.save')}
+        </button>
       </div>
 
       <div className="section-title">{t('settings.updates')}</div>

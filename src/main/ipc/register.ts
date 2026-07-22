@@ -2,7 +2,7 @@ import { ipcMain, dialog, shell, app, BrowserWindow } from 'electron'
 import { IPC, EVT } from '@shared/ipc'
 import { getConfig, updateConfig } from '../config'
 import { resolveBaseDir } from '../paths'
-import { resolveLanguage } from '../i18n'
+import { resolveLanguage, defaultMessages, MESSAGE_KEYS } from '../i18n'
 import { detectJava } from '../core/java'
 import { detectServer } from '../core/serverDetect'
 import * as registry from '../core/serverRegistry'
@@ -91,6 +91,16 @@ export function registerIpc(): void {
     })
     broadcast(EVT.configChanged, cfg)
     return cfg
+  })
+  H(IPC.messagesGet, () => ({
+    keys: MESSAGE_KEYS,
+    defaults: defaultMessages(),
+    overrides: getConfig().serverMessages ?? {}
+  }))
+  H(IPC.messagesSet, (_e, overrides: Record<string, string>) => {
+    updateConfig((c) => {
+      c.serverMessages = overrides
+    })
   })
 
   // --- dialogs ---
