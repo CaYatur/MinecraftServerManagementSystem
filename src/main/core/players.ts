@@ -58,6 +58,19 @@ async function readPlayerData(file: string, p: PlayerInfo): Promise<void> {
     if (v?.Health) p.health = Math.round(tag(v.Health))
     if (v?.foodLevel) p.food = tag(v.foodLevel)
     if (v?.XpLevel) p.xpLevel = tag(v.XpLevel)
+    // Inventory (list of item compounds). Handles pre-1.20.5 (Count) and
+    // 1.20.5+ (count) shapes.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const inv = v?.Inventory?.value?.value as any[]
+    if (Array.isArray(inv)) {
+      p.inventory = inv
+        .map((it) => ({
+          slot: tag(it.Slot) ?? tag(it.slot) ?? -1,
+          id: String(tag(it.id) ?? '').replace('minecraft:', ''),
+          count: tag(it.Count) ?? tag(it.count) ?? 1
+        }))
+        .filter((x) => x.id)
+    }
     p.lastSeen = statSync(file).mtimeMs
   } catch {
     /* ignore unreadable */

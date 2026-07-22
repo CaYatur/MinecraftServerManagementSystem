@@ -190,6 +190,7 @@ const tr: typeof en = {
     position: 'Konum',
     inventory: 'Envanter',
     inventorySoon: 'Canlı envanter görüntüleyici sonraki güncellemede gelecek.',
+    noInventory: 'Kayıtlı envanter yok (oyuncu giriş yapmış ve dünya kaydedilmiş olmalı). Simgeler çevrimiçi kaynaktan yüklenir.',
     clickHint: 'Ayrıntılar ve işlemler için bir oyuncu kartına tıklayın.',
     offline: 'Çevrimdışı'
   },

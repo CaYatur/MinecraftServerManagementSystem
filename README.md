@@ -49,9 +49,20 @@ create, configure, monitor and control servers from a clean graphical interface.
 | Cron scheduler (restart / backup / command / broadcast) | ✅ |
 | Crash analyzer (known-pattern detection with fixes) | ✅ |
 | CI + automated portable-exe releases + in-app update check | ✅ |
+| Syntax-highlighted file editor (CodeMirror) with tabs + split view | ✅ |
+| Player inventory viewer (NBT) with online item icons | ✅ |
+| Splash screen + CaYaDev branding | ✅ |
+| **Web panel** — bearer-auth, per-server RBAC, mobile-friendly (off by default) | ✅ (beta) |
+| **Store / economy** — currency, items + crates (animated), in-game delivery | ✅ (beta) |
 
-> Notes: Forge/NeoForge run their official installer (`--installServer`) on create.
-> Spigot is intentionally not one-click (it requires BuildTools compilation).
+> Notes:
+> - Forge/NeoForge run their official installer (`--installServer`) on create;
+>   Spigot is intentionally not one-click (requires BuildTools compilation).
+> - The web panel is **off by default** and binds to `127.0.0.1`. LAN/mobile
+>   access is an explicit opt-in and has **no HTTPS** — only enable on a trusted
+>   network. Web panel + store are marked **beta**.
+> - A visual website/CMS builder (page design, posts) is planned; the store/
+>   economy core (products, crates, delivery, balances) is implemented.
 
 ### 🚀 Getting started (development)
 ```bash

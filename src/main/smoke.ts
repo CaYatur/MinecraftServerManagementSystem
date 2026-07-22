@@ -1,6 +1,7 @@
 import { app, BrowserWindow } from 'electron'
-import { existsSync } from 'node:fs'
+import { existsSync, writeFileSync, mkdirSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
+import * as nbt from 'prismarine-nbt'
 import { processManager } from './core/processManager'
 import { getConfig, updateConfig } from './config'
 import { startWebServer, stopWebServer } from './web/server'
@@ -191,6 +192,50 @@ export async function runSmoke(): Promise<void> {
   sf.deleteEntry(id, 'ops.json')
   if (!steve || !steve.op) return fail('players: op merge failed')
   console.log('SMOKE: rcon-enable + players merge OK')
+
+  // --- 2d. inventory NBT parse (write a real playerdata .dat) ---
+  const spath = getConfig().servers.find((s) => s.id === id)?.path ?? ''
+  const invUuid = '22222222-2222-2222-2222-222222222222'
+  const pdDir = join(spath, 'world', 'playerdata')
+  mkdirSync(pdDir, { recursive: true })
+  const datBuf = nbt.writeUncompressed(
+    {
+      type: 'compound',
+      name: '',
+      value: {
+        Health: { type: 'float', value: 20 },
+        Inventory: {
+          type: 'list',
+          value: {
+            type: 'compound',
+            value: [
+              {
+                Slot: { type: 'byte', value: 0 },
+                id: { type: 'string', value: 'minecraft:diamond_sword' },
+                Count: { type: 'byte', value: 1 }
+              }
+            ]
+          }
+        }
+      }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any,
+    'big'
+  )
+  writeFileSync(join(pdDir, invUuid + '.dat'), datBuf)
+  sf.writeTextFile(id, 'usercache.json', JSON.stringify([{ name: 'InvTester', uuid: invUuid }]))
+  const players2 = await playersMod.getPlayers(id)
+  const invp = players2.find((p) => p.name === 'InvTester')
+  sf.deleteEntry(id, 'usercache.json')
+  try {
+    rmSync(join(spath, 'world'), { recursive: true, force: true })
+  } catch {
+    /* ignore */
+  }
+  if (!invp?.inventory?.some((it) => it.id === 'diamond_sword')) {
+    return fail('inventory NBT not parsed')
+  }
+  console.log('SMOKE: inventory NBT parse OK')
 
   // --- 3. command over stdin ---
   processManager.sendCommand(id, 'say hello-from-smoke')

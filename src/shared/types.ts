@@ -175,6 +175,13 @@ export interface PlayerInfo {
   lastSeen?: number
   playtimeHours?: number
   ip?: string
+  inventory?: InventoryItem[]
+}
+
+export interface InventoryItem {
+  slot: number
+  id: string
+  count: number
 }
 
 export type PlayerAction =

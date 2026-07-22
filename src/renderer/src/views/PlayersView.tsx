@@ -23,6 +23,7 @@ import {
 } from 'lucide-react'
 import { useStore } from '../store'
 import { PlayerAvatar } from '../components/PlayerAvatar'
+import { ItemIcon } from '../components/ItemIcon'
 import type { PlayerInfo } from '@shared/types'
 
 const GAMEMODES = ['survival', 'creative', 'adventure', 'spectator']
@@ -74,6 +75,7 @@ export function PlayersView(): JSX.Element {
   const { t } = useTranslation()
   const id = useStore((s) => s.activeServerId) as string
   const status = useStore((s) => s.activeStatus().status)
+  const mcVersion = useStore((s) => s.activeServer()?.mcVersion)
   const toast = useStore((s) => s.toast)
   const [list, setList] = useState<PlayerInfo[]>([])
   const [selected, setSelected] = useState<PlayerInfo | null>(null)
@@ -223,7 +225,18 @@ export function PlayersView(): JSX.Element {
               <Package size={13} style={{ verticalAlign: -2, marginRight: 6 }} />
               {t('players.inventory')}
             </div>
-            <p className="hint" style={{ marginTop: 0 }}>{t('players.inventorySoon')}</p>
+            {selected.inventory && selected.inventory.length > 0 ? (
+              <div className="inv-grid">
+                {selected.inventory.map((it, i) => (
+                  <div className="inv-slot" key={i} title={`${it.id} ×${it.count}`}>
+                    <ItemIcon id={it.id} version={mcVersion} size={30} />
+                    {it.count > 1 && <span className="inv-count">{it.count}</span>}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="hint" style={{ marginTop: 0 }}>{t('players.noInventory')}</p>
+            )}
           </div>
         </div>
       )}

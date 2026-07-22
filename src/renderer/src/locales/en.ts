@@ -187,6 +187,7 @@ export default {
     position: 'Position',
     inventory: 'Inventory',
     inventorySoon: 'Live inventory viewer is coming in a later update.',
+    noInventory: 'No saved inventory (the player must have logged in and the world saved). Icons load from an online source.',
     clickHint: 'Click a player card for details and actions.',
     offline: 'Offline'
   },
