@@ -36,7 +36,7 @@ input,select{width:100%;padding:11px 13px;background:#101019;border:1px solid va
 .srv .name{font-weight:700}
 .console{background:#08080c;border:1px solid var(--border);border-radius:10px;padding:12px;font-family:ui-monospace,Consolas,monospace;font-size:12.5px;line-height:1.5;height:52vh;overflow:auto;white-space:pre-wrap;word-break:break-word}
 .console .warn{color:#fbbf24}.console .err{color:#f87171}.console .sys{color:#60a5fa}
-.hidden{display:none}
+.hidden{display:none!important}
 .err-msg{color:#f87171;font-size:13px;margin-top:8px}
 .pgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px}
 .pcard{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:8px}
@@ -63,7 +63,7 @@ h2{margin:6px 0}
   <div class="row" style="margin-bottom:8px">
     <div class="brand">
       <svg class="logo" viewBox="0 0 512 512"><defs><linearGradient id="c" x1=".15" y1=".05" x2=".85" y2=".95"><stop offset="0" stop-color="#f04444"/><stop offset="1" stop-color="#a81d1d"/></linearGradient></defs><rect x="16" y="16" width="480" height="480" rx="120" fill="#17151b" stroke="#dc2727" stroke-opacity=".4" stroke-width="3"/><path fill="url(#c)" d="M 330 106 L 150 106 L 106 150 L 106 362 L 150 406 L 330 406 L 330 332 L 180 332 L 180 180 L 330 180 Z"/><rect x="356" y="232" width="48" height="48" rx="9" fill="url(#c)" transform="rotate(45 380 256)"/></svg>
-      CaYa<span>Dev</span>
+      <svg height="22" viewBox="0 0 287.34 36.78" style="margin-left:2px"><path fill="#fff" d="M246.93,0l21.5,22.56,13.19-21.51L287.34,0l-17.23,36.69h-3.35L241.21,0h5.72Z"/><polygon fill="#dc2727" points="47.33 0 34.18 8.71 8.62 8.71 8.62 29.55 34.07 29.55 47.33 36.7 0 36.7 0 0 47.33 0"/><polygon fill="#dc2727" points="133.16 .05 115.25 21.85 112.95 36.78 107.85 36.78 104.27 21.85 83.58 .05 90.78 .05 109.93 16.85 125.95 .05 133.16 .05"/><path fill="#fff" d="M184.93,32.42l15.99-15.72-22.52-12.42L177.15,0l33.84,15.45v2.51l-24.77,18.74-1.3-4.28Z"/><path fill="#dc2727" d="M84.34,18.89l-1.61-4.21L77.14,0h-19.22l-3.9,15.61-1.11,4.43-4.17,16.65h4.94l6.86-13.08,6.16,2.88h4.22l6.17-3.5,9.1,13.7h4.94l-6.79-17.81ZM68.81,20.5l-5.65-1.87,4.87-9.3,5.97,8.99-5.19,2.17Z"/><path fill="#dc2727" d="M165.49,18.89l-1.61-4.21L158.29,0h-19.22l-3.9,15.61-1.11,4.43-4.17,16.65h4.94l6.86-13.08,6.16,2.88h4.22l6.17-3.5,9.1,13.7h4.94l-6.79-17.81ZM149.96,20.5l-5.65-1.87,4.87-9.3,5.97,8.99-5.19,2.17Z"/><polygon fill="#fff" points="174.93 0 166.64 0 178.65 36.78 184.39 36.7 174.93 0"/><polygon fill="#fff" points="243.91 36.7 227.66 36.7 221.91 36.78 209.91 0 218.19 0 218.19 .01 239.17 0 237.85 3.22 219.83 6.36 222.09 15.13 237.15 15.13 237.38 19.11 223.73 21.48 226.04 30.41 241.59 33.12 243.91 36.7"/></svg>
     </div>
     <div class="spacer"></div>
     <button id="logout" class="btn sm hidden" onclick="logout()">Logout</button>

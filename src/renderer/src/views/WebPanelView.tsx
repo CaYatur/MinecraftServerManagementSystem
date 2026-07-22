@@ -36,6 +36,11 @@ export function WebPanelView(): JSX.Element {
 
   useEffect(() => {
     void refresh()
+    // Keep status/URLs live (they change when the server binds/rebinds).
+    const iv = setInterval(() => {
+      window.msms.getWebStatus().then(setStatus).catch(() => {})
+    }, 3000)
+    return () => clearInterval(iv)
   }, [])
 
   const saveConfig = async (): Promise<void> => {

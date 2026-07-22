@@ -6,6 +6,7 @@ import { processManager } from './core/processManager'
 import { getConfig, updateConfig } from './config'
 import { startWebServer, stopWebServer } from './web/server'
 import * as webAuth from './web/auth'
+import * as webPlayerAuth from './web/playerAuth'
 import * as economy from './store/economy'
 import type { Product } from '@shared/web'
 import { getProvider } from './core/versions'
@@ -499,6 +500,33 @@ export async function runWebSmoke(): Promise<void> {
     if (finalBal !== 0) return fail('double-spend balance should be 0, got ' + finalBal)
     economy.deleteProduct(id, prod.id)
     console.log('WEB-SMOKE: double-spend prevented (one 200, one 402, balance 0)')
+
+    // ---- public site + player/admin token SEPARATION + traversal ----
+    r = await get('/api/public/site')
+    if (r.status !== 200) return fail('public /site expected 200, got ' + r.status)
+
+    r = await post('/api/public/register/start', { mcName: 'Offliney' })
+    if (r.status === 200) return fail('register-start should fail when the server is offline')
+
+    r = await post('/api/public/register/verify', { mcName: 'Offliney', code: '000000', password: 'pw12' })
+    if (r.status === 200) return fail('verify with a wrong/absent code should fail')
+
+    // an ADMIN token must NOT satisfy player auth
+    r = await post('/api/public/store/buy', { productId: 'x' }, ot)
+    if (r.status !== 401) return fail('admin token on player route expected 401, got ' + r.status)
+
+    // a PLAYER token must NOT satisfy admin auth (the dangerous direction)
+    webPlayerAuth._testCreateAccount('PlayerT', 'playerpass')
+    r = await post('/api/public/login', { mcName: 'PlayerT', password: 'playerpass' })
+    const pt = ((await r.json()) as { token: string }).token
+    r = await post('/api/servers/' + id + '/power', { action: 'start' }, pt)
+    if (r.status !== 401) return fail('player token on admin route expected 401, got ' + r.status)
+
+    // uploads path-traversal sandbox
+    r = await get('/uploads/..%2F..%2Fconfig.json')
+    if (r.status !== 404) return fail('uploads traversal expected 404, got ' + r.status)
+
+    console.log('WEB-SMOKE: public routes + player/admin separation + traversal all correct')
   } catch (e) {
     return fail('exception: ' + String(e))
   } finally {

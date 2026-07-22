@@ -28,6 +28,7 @@ export type ViewId =
   | 'settings'
   | 'create'
   | 'web'
+  | 'site'
 
 export interface Toast {
   id: string

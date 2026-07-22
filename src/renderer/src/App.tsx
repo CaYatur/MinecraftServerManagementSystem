@@ -34,6 +34,7 @@ import { SchedulerView } from './views/SchedulerView'
 import { CrashView } from './views/CrashView'
 import { StoreView } from './views/StoreView'
 import { WebPanelView } from './views/WebPanelView'
+import { SiteView } from './views/SiteView'
 import { useState } from 'react'
 
 const TABS: { id: ViewId; icon: JSX.Element; labelKey: string }[] = [
@@ -116,10 +117,12 @@ function MainArea(): JSX.Element {
   const setView = useStore((s) => s.setView)
 
   if (view === 'create') return <CreateView />
-  if (view === 'settings' || view === 'web')
+  if (view === 'settings' || view === 'web' || view === 'site')
     return (
       <div className="content">
-        <ErrorBoundary key={view}>{view === 'web' ? <WebPanelView /> : <SettingsView />}</ErrorBoundary>
+        <ErrorBoundary key={view}>
+          {view === 'web' ? <WebPanelView /> : view === 'site' ? <SiteView /> : <SettingsView />}
+        </ErrorBoundary>
       </div>
     )
 

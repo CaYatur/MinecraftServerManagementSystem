@@ -179,16 +179,21 @@ export function StoreView(): JSX.Element {
               ) : (
                 <div className="field">
                   <label>{t('store.rewards')}</label>
-                  {edit.rewards.map((r, i) => (
-                    <div key={i} className="panel" style={{ padding: 10, marginBottom: 8 }}>
-                      <div className="row wrap" style={{ gap: 8 }}>
-                        <input className="input" style={{ flex: 1, minWidth: 120 }} placeholder={t('store.rewardName')} value={r.name} onChange={(e) => updReward(i, { name: e.target.value })} />
-                        <input className="input" style={{ width: 90 }} type="number" placeholder={t('store.weight')} value={r.weight} onChange={(e) => updReward(i, { weight: Number(e.target.value) })} />
-                        <button className="btn ghost sm danger" onClick={() => setEdit({ ...edit, rewards: edit.rewards.filter((_, idx) => idx !== i) })}><X size={13} /></button>
+                  {(() => {
+                    const totalW = edit.rewards.reduce((s, r) => s + Math.max(0, r.weight), 0) || 1
+                    return edit.rewards.map((r, i) => (
+                      <div key={i} className="panel" style={{ padding: 10, marginBottom: 8 }}>
+                        <div className="row wrap" style={{ gap: 8, alignItems: 'center' }}>
+                          <input className="input" style={{ flex: 1, minWidth: 110 }} placeholder={t('store.rewardName')} value={r.name} onChange={(e) => updReward(i, { name: e.target.value })} />
+                          <input className="input" style={{ width: 80 }} type="number" placeholder={t('store.weight')} value={r.weight} onChange={(e) => updReward(i, { weight: Number(e.target.value) })} />
+                          <span className="badge" title={t('store.weight')}>{Math.round((Math.max(0, r.weight) / totalW) * 100)}%</span>
+                          <button className="btn ghost sm danger" onClick={() => setEdit({ ...edit, rewards: edit.rewards.filter((_, idx) => idx !== i) })}><X size={13} /></button>
+                        </div>
+                        <input className="input" style={{ marginTop: 6 }} placeholder={t('store.icon')} value={r.icon ?? ''} onChange={(e) => updReward(i, { icon: e.target.value })} />
+                        <textarea className="input" style={{ minHeight: 48, marginTop: 6 }} placeholder="give {player} minecraft:diamond 3" value={r.commands.join('\n')} onChange={(e) => updReward(i, { commands: e.target.value.split('\n').map((s) => s.trim()).filter(Boolean) })} />
                       </div>
-                      <textarea className="input" style={{ minHeight: 54, marginTop: 6 }} placeholder="give {player} minecraft:diamond 3" value={r.commands.join('\n')} onChange={(e) => updReward(i, { commands: e.target.value.split('\n').map((s) => s.trim()).filter(Boolean) })} />
-                    </div>
-                  ))}
+                    ))
+                  })()}
                   <button className="btn sm" onClick={() => setEdit({ ...edit, rewards: [...edit.rewards, { name: '', weight: 10, commands: [] }] })}>
                     <Plus size={13} /> {t('store.addReward')}
                   </button>

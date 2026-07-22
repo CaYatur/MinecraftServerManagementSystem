@@ -21,8 +21,9 @@ import { checkForUpdates } from '../core/updates'
 import { startWebServer, stopWebServer, getWebStatus } from '../web/server'
 import * as auth from '../web/auth'
 import * as economy from '../store/economy'
+import * as site from '../web/site'
 import { log } from '../logger'
-import type { WebConfig, WebRole, Scope, Product } from '@shared/web'
+import type { WebConfig, WebRole, Scope, Product, SiteConfig, SitePost } from '@shared/web'
 import type {
   Bootstrap,
   Language,
@@ -278,6 +279,24 @@ export function registerIpc(): void {
   H(IPC.storeAddBalance, (_e, id: string, mcName: string, amount: number) =>
     economy.addBalance(id, mcName, amount)
   )
+
+  // --- public site / CMS (trusted desktop admin) ---
+  H(IPC.siteGet, () => site.getSiteConfig())
+  H(IPC.siteSet, (_e, patch: Partial<SiteConfig>) => site.setSiteConfig(patch))
+  H(IPC.sitePostUpsert, (_e, post: Partial<SitePost>) => site.upsertPost(post))
+  H(IPC.sitePostDelete, (_e, id: string) => site.deletePost(id))
+  H(IPC.siteUpload, async () => {
+    const res = await dialog.showOpenDialog({
+      properties: ['openFile'],
+      filters: [{ name: 'Image', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif'] }]
+    })
+    if (res.canceled || !res.filePaths[0]) return null
+    try {
+      return site.saveImage(res.filePaths[0])
+    } catch {
+      return null
+    }
+  })
 
   log.info('IPC handlers registered')
 }

@@ -26,7 +26,17 @@ import type {
 } from './types'
 import type { McVersion, BuildInfo, CreateServerOptions, CreateProgress } from './versions'
 import type { ModEntry, ModrinthHit } from './mods'
-import type { WebStatus, WebUserView, WebConfig, WebRole, Scope, Product, StoreConfig } from './web'
+import type {
+  WebStatus,
+  WebUserView,
+  WebConfig,
+  WebRole,
+  Scope,
+  Product,
+  StoreConfig,
+  SiteConfig,
+  SitePost
+} from './web'
 
 /** request/response channels (renderer -> main via invoke). */
 export const IPC = {
@@ -120,7 +130,13 @@ export const IPC = {
   storeCurrency: 'store:currency',
   storeUpsert: 'store:upsert',
   storeDelete: 'store:delete',
-  storeAddBalance: 'store:add-balance'
+  storeAddBalance: 'store:add-balance',
+
+  siteGet: 'site:get',
+  siteSet: 'site:set',
+  sitePostUpsert: 'site:post-upsert',
+  sitePostDelete: 'site:post-delete',
+  siteUpload: 'site:upload'
 } as const
 
 /** event channels (main -> renderer via webContents.send). */
@@ -264,6 +280,12 @@ export interface MsmsApi {
   upsertStoreProduct(id: string, product: Product): Promise<Product>
   deleteStoreProduct(id: string, productId: string): Promise<void>
   addStoreBalance(id: string, mcName: string, amount: number): Promise<number>
+
+  getSiteConfig(): Promise<SiteConfig>
+  setSiteConfig(patch: Partial<SiteConfig>): Promise<SiteConfig>
+  upsertSitePost(post: Partial<SitePost>): Promise<SitePost>
+  deleteSitePost(id: string): Promise<void>
+  uploadSiteImage(): Promise<string | null>
 
   // event subscriptions -> return unsubscribe fn
   onServerLog(cb: (e: ServerLogEvent) => void): () => void

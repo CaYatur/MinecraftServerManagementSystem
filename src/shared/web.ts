@@ -101,6 +101,37 @@ export interface BuyResult {
   reward?: { name: string; icon?: string; crate: boolean; pool?: { name: string; icon?: string }[] }
 }
 
+// ---- public website / CMS ----
+export interface SitePost {
+  id: string
+  title: string
+  body: string
+  image?: string // uploads filename
+  at: number
+}
+
+export interface SiteConfig {
+  serverId: string
+  siteName: string
+  tagline: string
+  description: string
+  accent: string
+  discordUrl: string
+  showStore: boolean
+  posts: SitePost[]
+}
+
+export interface PublicSite {
+  siteName: string
+  tagline: string
+  description: string
+  accent: string
+  discordUrl: string
+  showStore: boolean
+  status: { running: boolean; online: number; max: number; serverName: string; version: string }
+  posts: SitePost[]
+}
+
 export interface WebStatus {
   running: boolean
   enabled: boolean

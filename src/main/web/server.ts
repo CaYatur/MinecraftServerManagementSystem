@@ -1,11 +1,17 @@
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from 'node:http'
 import { networkInterfaces } from 'node:os'
+import { createReadStream, existsSync } from 'node:fs'
+import { join, extname, resolve, sep } from 'node:path'
 import { getConfig } from '../config'
+import { uploadsDir } from '../paths'
 import { log } from '../logger'
 import { listServers, getServer } from '../core/serverRegistry'
 import { processManager } from '../core/processManager'
 import { getPlayers } from '../core/players'
 import * as economy from '../store/economy'
+import * as site from './site'
+import * as playerAuth from './playerAuth'
+import { getPublicSiteHtml } from './publicSiteHtml'
 import type { Product } from '@shared/web'
 import {
   initAuth,
@@ -96,6 +102,103 @@ function serverSummary(user: AuthUser, id: string): Record<string, unknown> | nu
   }
 }
 
+const IMG_TYPES: Record<string, string> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
+  '.gif': 'image/gif'
+}
+
+function serveUpload(path: string, res: ServerResponse): void {
+  const name = decodeURIComponent(path.slice('/uploads/'.length))
+  const dir = resolve(uploadsDir())
+  const file = resolve(join(dir, name))
+  // Path-traversal sandbox + raster allowlist (no SVG).
+  if (file !== dir && !file.startsWith(dir + sep)) {
+    res.writeHead(404)
+    res.end()
+    return
+  }
+  const type = IMG_TYPES[extname(file).toLowerCase()]
+  if (!type || !existsSync(file)) {
+    res.writeHead(404)
+    res.end()
+    return
+  }
+  res.writeHead(200, { 'Content-Type': type, 'Cache-Control': 'public, max-age=3600' })
+  createReadStream(file).pipe(res)
+}
+
+async function handlePublic(
+  path: string,
+  method: string,
+  req: IncomingMessage,
+  res: ServerResponse,
+  ip: string
+): Promise<void> {
+  const sub = path.slice('/api/public/'.length)
+
+  if (sub === 'site' && method === 'GET') return sendJson(res, 200, site.publicSite())
+  if (sub === 'status' && method === 'GET') return sendJson(res, 200, site.publicSite().status)
+
+  if (sub === 'register/start' && method === 'POST') {
+    const b = (await readBody(req).catch(() => ({}))) as { mcName?: string }
+    const r = await playerAuth.registerStart(site.siteServerId(), (b.mcName ?? '').trim(), ip)
+    return sendJson(res, r.ok ? 200 : r.error === 'rate-limited' ? 429 : 400, r)
+  }
+  if (sub === 'register/verify' && method === 'POST') {
+    const b = (await readBody(req).catch(() => ({}))) as {
+      mcName?: string
+      code?: string
+      password?: string
+    }
+    const r = playerAuth.verify((b.mcName ?? '').trim(), b.code ?? '', b.password ?? '')
+    return sendJson(res, r.ok ? 200 : 400, r.ok ? { token: r.token, mcName: r.mcName } : r)
+  }
+  if (sub === 'login' && method === 'POST') {
+    const b = (await readBody(req).catch(() => ({}))) as { mcName?: string; password?: string }
+    const r = playerAuth.login((b.mcName ?? '').trim(), b.password ?? '')
+    if (!r.ok) return sendJson(res, 401, { error: 'invalid-credentials' })
+    return sendJson(res, 200, { token: r.token, mcName: r.mcName })
+  }
+  if (sub === 'logout' && method === 'POST') {
+    const t = bearer(req)
+    if (t) playerAuth.logoutPlayer(t)
+    return sendJson(res, 200, { ok: true })
+  }
+
+  const sid = site.siteServerId()
+  if (sub === 'store' && method === 'GET') {
+    if (!sid || !getServer(sid)) return sendJson(res, 200, { currency: '', products: [] })
+    return sendJson(res, 200, economy.publicStore(sid))
+  }
+
+  // ---- player-token-only endpoints (never satisfied by an admin token) ----
+  const player = playerAuth.resolvePlayerSession(bearer(req))
+  if (sub === 'store/balance' && method === 'GET') {
+    if (!player) return sendJson(res, 401, { error: 'login-required' })
+    return sendJson(res, 200, {
+      mcName: player.mcName,
+      balance: sid ? economy.getBalance(sid, player.mcName) : 0,
+      currency: sid ? economy.publicStore(sid).currency : ''
+    })
+  }
+  if (sub === 'store/txns' && method === 'GET') {
+    if (!player) return sendJson(res, 401, { error: 'login-required' })
+    return sendJson(res, 200, { txns: sid ? economy.getTxns(sid, player.mcName) : [] })
+  }
+  if (sub === 'store/buy' && method === 'POST') {
+    if (!player) return sendJson(res, 401, { error: 'login-required' })
+    if (!sid) return sendJson(res, 400, { error: 'no-server' })
+    const b = (await readBody(req).catch(() => ({}))) as { productId?: string }
+    const result = economy.purchase(sid, player.mcName, b.productId ?? '')
+    return sendJson(res, result.ok ? 200 : result.error === 'insufficient' ? 402 : 400, result)
+  }
+
+  return sendJson(res, 404, { error: 'not-found' })
+}
+
 // ---- routing ----
 async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const url = new URL(req.url ?? '/', 'http://localhost')
@@ -103,16 +206,30 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   const method = req.method ?? 'GET'
   const ip = req.socket.remoteAddress ?? 'unknown'
 
-  // ---- static panel (SPA) ----
+  // ---- static ----
   if (!path.startsWith('/api/')) {
     if (path === '/favicon.ico') {
       res.writeHead(204)
       res.end()
       return
     }
+    // Sandboxed raster uploads.
+    if (path.startsWith('/uploads/')) return serveUpload(path, res)
+    // Admin panel.
+    if (path === '/panel' || path.startsWith('/panel/')) {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+      res.end(getPanelHtml())
+      return
+    }
+    // Everything else -> public site.
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
-    res.end(getPanelHtml())
+    res.end(getPublicSiteHtml())
     return
+  }
+
+  // ---- PUBLIC API (no admin auth) — must come BEFORE the admin gate ----
+  if (path.startsWith('/api/public/')) {
+    return handlePublic(path, method, req, res, ip)
   }
 
   // ---- public auth endpoints ----
@@ -319,6 +436,8 @@ export function startWebServer(): WebStatus {
   const cfg = getConfig().web ?? { enabled: false, port: 8722, bindLan: false }
   stopWebServer()
   initAuth()
+  playerAuth.initPlayerAuth()
+  site.initSite()
   const host = cfg.bindLan ? '0.0.0.0' : '127.0.0.1'
   server = createServer((req, res) => {
     handle(req, res).catch((err) => {
@@ -354,5 +473,7 @@ export function getWebStatus(): WebStatus {
 /** Start the web server on boot if enabled. */
 export function initWebServer(): void {
   initAuth()
+  playerAuth.initPlayerAuth()
+  site.initSite()
   if (getConfig().web?.enabled) startWebServer()
 }

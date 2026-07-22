@@ -101,6 +101,12 @@ const api: MsmsApi = {
   deleteStoreProduct: (id, productId) => ipcRenderer.invoke(IPC.storeDelete, id, productId),
   addStoreBalance: (id, mcName, amount) => ipcRenderer.invoke(IPC.storeAddBalance, id, mcName, amount),
 
+  getSiteConfig: () => ipcRenderer.invoke(IPC.siteGet),
+  setSiteConfig: (patch) => ipcRenderer.invoke(IPC.siteSet, patch),
+  upsertSitePost: (post) => ipcRenderer.invoke(IPC.sitePostUpsert, post),
+  deleteSitePost: (id) => ipcRenderer.invoke(IPC.sitePostDelete, id),
+  uploadSiteImage: () => ipcRenderer.invoke(IPC.siteUpload),
+
   onServerLog: (cb) => subscribe(EVT.serverLog, cb),
   onServerStatus: (cb) => subscribe(EVT.serverStatus, cb),
   onServerStats: (cb) => subscribe(EVT.serverStats, cb),
