@@ -113,9 +113,12 @@ export function registerIpc(): void {
   H(IPC.serversScan, () => registry.scanServers())
   H(IPC.serversList, () => registry.listServers())
   H(IPC.serversAdd, (_e, path: string) => registry.addServer(path))
-  H(IPC.serversRemove, (_e, id: string, deleteFiles: boolean) =>
+  H(IPC.serversRemove, async (_e, id: string, deleteFiles: boolean) => {
+    // Stop a running server before removing it (avoids orphaned processes and
+    // locked-file deletes on Windows).
+    if (processManager.isRunning(id)) await processManager.kill(id)
     registry.removeServer(id, deleteFiles)
-  )
+  })
   H(IPC.serversUpdate, (_e, id: string, patch: Partial<ServerConfig>) =>
     registry.updateServer(id, patch)
   )
