@@ -960,6 +960,97 @@ textarea.input:focus {
   font-size: 11px;
 }
 
+/* ---------- Player cards ---------- */
+.player-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 10px;
+}
+.player-card {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+.player-card:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-strong);
+}
+.player-card.online {
+  border-left: 3px solid var(--online);
+}
+.pc-info {
+  min-width: 0;
+  flex: 1;
+}
+.pc-name {
+  font-weight: 600;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pc-badges {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  margin-top: 4px;
+  flex-wrap: wrap;
+}
+.pavatar {
+  border-radius: 7px;
+  background: var(--bg-input);
+  flex-shrink: 0;
+}
+.pavatar-fallback {
+  border-radius: 7px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+  color: #fff;
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.pdetail {
+  width: min(560px, 94vw);
+  position: relative;
+}
+.pd-close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+}
+.pd-head {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  margin-bottom: 16px;
+}
+.pd-stats {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+.pd-stat {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--bg-input);
+  border-radius: var(--radius-sm);
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+.pd-stat b {
+  margin-left: auto;
+  color: var(--text);
+}
+
 /* ---------- Mods / backups / scheduler rows ---------- */
 .mod-row {
   display: flex;

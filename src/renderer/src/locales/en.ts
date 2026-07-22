@@ -178,7 +178,16 @@ export default {
     banReason: 'Ban reason (optional):',
     needRunning: 'Start the server to manage online players and use live actions.',
     col: { player: 'Player', status: 'Status', stats: 'Health / Food / XP', pos: 'Position', playtime: 'Playtime', ip: 'IP' },
-    badge: { op: 'OP', wl: 'Whitelisted', banned: 'Banned', online: 'Online' }
+    badge: { op: 'OP', wl: 'Whitelisted', banned: 'Banned', online: 'Online' },
+    lastSeen: 'Last seen',
+    health: 'Health',
+    food: 'Food',
+    xp: 'XP level',
+    position: 'Position',
+    inventory: 'Inventory',
+    inventorySoon: 'Live inventory viewer is coming in a later update.',
+    clickHint: 'Click a player card for details and actions.',
+    offline: 'Offline'
   },
   world: {
     title: 'World & Game Controls',

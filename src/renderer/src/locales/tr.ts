@@ -181,7 +181,16 @@ const tr: typeof en = {
     banReason: 'Yasaklama nedeni (isteğe bağlı):',
     needRunning: 'Çevrimiçi oyuncuları yönetmek ve canlı işlemler için sunucuyu başlatın.',
     col: { player: 'Oyuncu', status: 'Durum', stats: 'Can / Açlık / XP', pos: 'Konum', playtime: 'Oynama süresi', ip: 'IP' },
-    badge: { op: 'OP', wl: 'Beyaz listede', banned: 'Yasaklı', online: 'Çevrimiçi' }
+    badge: { op: 'OP', wl: 'Beyaz listede', banned: 'Yasaklı', online: 'Çevrimiçi' },
+    lastSeen: 'Son görülme',
+    health: 'Can',
+    food: 'Açlık',
+    xp: 'XP seviyesi',
+    position: 'Konum',
+    inventory: 'Envanter',
+    inventorySoon: 'Canlı envanter görüntüleyici sonraki güncellemede gelecek.',
+    clickHint: 'Ayrıntılar ve işlemler için bir oyuncu kartına tıklayın.',
+    offline: 'Çevrimdışı'
   },
   world: {
     title: 'Dünya ve Oyun Kontrolleri',
