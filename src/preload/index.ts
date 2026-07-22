@@ -62,6 +62,26 @@ const api: MsmsApi = {
   worldControl: (id, cmd) => ipcRenderer.invoke(IPC.worldControl, id, cmd),
   rconConnected: (id) => ipcRenderer.invoke(IPC.rconStatus, id),
 
+  listMods: (id) => ipcRenderer.invoke(IPC.modsList, id),
+  toggleMod: (id, rel, enable) => ipcRenderer.invoke(IPC.modToggle, id, rel, enable),
+  deleteMod: (id, rel) => ipcRenderer.invoke(IPC.modDelete, id, rel),
+  addMod: (id, folder) => ipcRenderer.invoke(IPC.modAdd, id, folder),
+  searchMods: (id, query) => ipcRenderer.invoke(IPC.modSearch, id, query),
+  installMod: (id, projectId) => ipcRenderer.invoke(IPC.modInstall, id, projectId),
+
+  listBackups: (id) => ipcRenderer.invoke(IPC.backupsList, id),
+  createBackup: (id, opts) => ipcRenderer.invoke(IPC.backupCreate, id, opts),
+  deleteBackup: (backupId) => ipcRenderer.invoke(IPC.backupDelete, backupId),
+  restoreBackup: (backupId) => ipcRenderer.invoke(IPC.backupRestore, backupId),
+
+  listSchedules: () => ipcRenderer.invoke(IPC.schedulesList),
+  createSchedule: (input) => ipcRenderer.invoke(IPC.scheduleCreate, input),
+  updateSchedule: (id, patch) => ipcRenderer.invoke(IPC.scheduleUpdate, id, patch),
+  deleteSchedule: (id) => ipcRenderer.invoke(IPC.scheduleDelete, id),
+  runSchedule: (id) => ipcRenderer.invoke(IPC.scheduleRun, id),
+
+  analyzeCrash: (id) => ipcRenderer.invoke(IPC.crashAnalyze, id),
+
   onServerLog: (cb) => subscribe(EVT.serverLog, cb),
   onServerStatus: (cb) => subscribe(EVT.serverStatus, cb),
   onServerStats: (cb) => subscribe(EVT.serverStats, cb),

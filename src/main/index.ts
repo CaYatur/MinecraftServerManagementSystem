@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { loadConfig, getConfig } from './config'
 import { registerIpc } from './ipc/register'
 import { processManager } from './core/processManager'
+import { initScheduler, stopAllJobs } from './core/scheduler'
 import { resolveBaseDir } from './paths'
 import { log } from './logger'
 import { runSmoke, runWizardSmoke } from './smoke'
@@ -99,6 +100,7 @@ if (!gotLock) {
       return
     }
 
+    initScheduler()
     createWindow()
 
     app.on('activate', () => {
@@ -116,6 +118,7 @@ if (!gotLock) {
     e.preventDefault()
     log.info('Shutting down — stopping running servers…')
     try {
+      stopAllJobs()
       await processManager.stopAll()
     } catch (err) {
       log.error('Error during shutdown:', err)

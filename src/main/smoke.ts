@@ -8,6 +8,10 @@ import { createServer } from './core/createServer'
 import { removeServer } from './core/serverRegistry'
 import * as sf from './core/serverFiles'
 import * as playersMod from './core/players'
+import * as backupsMod from './core/backups'
+import * as schedulerMod from './core/scheduler'
+import * as modsMod from './core/mods'
+import { analyzeCrash } from './core/crash'
 import { CREATABLE_TYPES } from '@shared/versions'
 
 /* eslint-disable no-console */
@@ -96,6 +100,35 @@ export async function runSmoke(): Promise<void> {
   if (!rendered) return fail('renderer did not mount expected UI; last=' + renderInfo)
   console.log('SMOKE: renderer OK ->', renderInfo)
 
+  // Sweep every tab + settings + create to ensure no view crashes on mount.
+  const viewCrashed = (): Promise<boolean> =>
+    win.webContents.executeJavaScript(
+      `(()=>{const h=document.querySelector('.center-fill h3');return !!(h&&/Something went wrong/.test(h.textContent||''))})()`
+    )
+  const tabCount: number = await win.webContents.executeJavaScript(
+    `document.querySelectorAll('.tab').length`
+  )
+  for (let i = 0; i < tabCount; i++) {
+    await win.webContents.executeJavaScript(`document.querySelectorAll('.tab')[${i}]?.click()`)
+    await sleep(220)
+    if (await viewCrashed()) return fail('a view crashed on tab index ' + i)
+  }
+  await win.webContents.executeJavaScript(
+    `document.querySelector('.sidebar-foot button')?.click()`
+  )
+  await sleep(220)
+  if (await viewCrashed()) return fail('settings view crashed')
+  await win.webContents.executeJavaScript(
+    `document.querySelector('.sidebar-actions button')?.click()`
+  )
+  await sleep(300)
+  if (await viewCrashed()) return fail('create view crashed')
+  // back to console
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll('.tab')].find(b=>/./.test(b.textContent))?.click()`
+  )
+  console.log('SMOKE: all views mounted OK')
+
   // --- 2. start ---
   let statsSeen = false
   processManager.on('stats', () => (statsSeen = true))
@@ -160,6 +193,30 @@ export async function runSmoke(): Promise<void> {
   )
   if (!sawDone) return fail('never observed "Done (" readiness line')
   if (!sawStop) return fail('never observed "Stopping the server" line')
+
+  // --- 5. mods / backups / scheduler / crash (server now stopped) ---
+  const ml = modsMod.listMods(id)
+  console.log('SMOKE: mods listed =', ml.length)
+
+  const bk = await backupsMod.createBackup(id, { kind: 'full' })
+  if (!backupsMod.listBackups(id).find((b) => b.id === bk.id)) return fail('backup not listed')
+  backupsMod.deleteBackup(bk.id)
+  if (backupsMod.listBackups(id).find((b) => b.id === bk.id)) return fail('backup not deleted')
+  console.log('SMOKE: backup create/list/delete OK')
+
+  const task = schedulerMod.createTask({
+    serverId: id,
+    name: 'smoke',
+    cron: '0 4 * * *',
+    action: 'backup'
+  })
+  if (!task.nextRun) return fail('schedule nextRun not computed')
+  if (!schedulerMod.listTasks().find((tk) => tk.id === task.id)) return fail('schedule not created')
+  schedulerMod.deleteTask(task.id)
+  console.log('SMOKE: scheduler create/next/delete OK')
+
+  const cr = analyzeCrash(id)
+  console.log(`SMOKE: crash analyze source=${cr.source} findings=${cr.findings.length}`)
 
   pass()
 }

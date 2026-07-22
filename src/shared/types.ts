@@ -184,6 +184,50 @@ export interface PropsData {
   raw: string
 }
 
+export interface BackupRecord {
+  id: string
+  serverId: string
+  serverName: string
+  fileName: string
+  path: string
+  size: number
+  createdAt: number
+  kind: 'world' | 'full'
+}
+
+export interface BackupOptions {
+  kind: 'world' | 'full'
+  /** Destination directory (can be on another drive). Empty => default location. */
+  destDir?: string
+}
+
+export type ScheduleAction = 'restart' | 'stop' | 'start' | 'backup' | 'command' | 'broadcast'
+
+export interface ScheduleTask {
+  id: string
+  serverId: string
+  name: string
+  cron: string
+  action: ScheduleAction
+  payload?: string
+  enabled: boolean
+  lastRun?: number
+  nextRun?: number
+}
+
+export interface CrashFinding {
+  severity: 'error' | 'warning' | 'info'
+  title: string
+  detail: string
+  suggestion: string
+}
+
+export interface CrashReport {
+  findings: CrashFinding[]
+  logTail: string
+  source: string
+}
+
 export interface StopOptions {
   /** true => restart after stop. */
   restart?: boolean

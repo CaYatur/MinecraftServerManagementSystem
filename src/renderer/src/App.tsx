@@ -19,6 +19,7 @@ import { useStore, type ViewId } from './store'
 import { Sidebar } from './components/Sidebar'
 import { Toasts } from './components/Toasts'
 import { StatusDot } from './components/ui'
+import { ErrorBoundary } from './components/ErrorBoundary'
 import { ConsoleView } from './views/ConsoleView'
 import { DashboardView } from './views/DashboardView'
 import { SettingsView } from './views/SettingsView'
@@ -26,7 +27,10 @@ import { CreateView } from './views/CreateView'
 import { PropertiesView } from './views/PropertiesView'
 import { FilesView } from './views/FilesView'
 import { PlayersView } from './views/PlayersView'
-import { Placeholder } from './views/Placeholder'
+import { ModsView } from './views/ModsView'
+import { BackupsView } from './views/BackupsView'
+import { SchedulerView } from './views/SchedulerView'
+import { CrashView } from './views/CrashView'
 import { useState } from 'react'
 
 const TABS: { id: ViewId; icon: JSX.Element; labelKey: string }[] = [
@@ -134,13 +138,13 @@ function MainArea(): JSX.Element {
       case 'players':
         return <PlayersView />
       case 'plugins':
-        return <Placeholder titleKey="nav.plugins" />
+        return <ModsView />
       case 'backups':
-        return <Placeholder titleKey="nav.backups" />
+        return <BackupsView />
       case 'scheduler':
-        return <Placeholder titleKey="nav.scheduler" />
+        return <SchedulerView />
       case 'crash':
-        return <Placeholder titleKey="nav.crash" />
+        return <CrashView />
       default:
         return <DashboardView />
     }
@@ -172,7 +176,7 @@ function MainArea(): JSX.Element {
         ))}
       </div>
       <div className={view === 'console' || view === 'files' ? 'content no-pad' : 'content'}>
-        {renderView()}
+        <ErrorBoundary key={view}>{renderView()}</ErrorBoundary>
       </div>
     </>
   )

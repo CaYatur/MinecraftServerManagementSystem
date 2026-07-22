@@ -14,9 +14,15 @@ import type {
   LogLine,
   FileEntry,
   PropsData,
-  PlayerInfo
+  PlayerInfo,
+  BackupRecord,
+  BackupOptions,
+  ScheduleTask,
+  ScheduleAction,
+  CrashReport
 } from './types'
 import type { McVersion, BuildInfo, CreateServerOptions, CreateProgress } from './versions'
+import type { ModEntry, ModrinthHit } from './mods'
 
 /** request/response channels (renderer -> main via invoke). */
 export const IPC = {
@@ -71,7 +77,27 @@ export const IPC = {
   playerKick: 'players:kick',
   playerGamemode: 'players:gamemode',
   worldControl: 'world:control',
-  rconStatus: 'rcon:status'
+  rconStatus: 'rcon:status',
+
+  modsList: 'mods:list',
+  modToggle: 'mods:toggle',
+  modDelete: 'mods:delete',
+  modAdd: 'mods:add',
+  modSearch: 'mods:search',
+  modInstall: 'mods:install',
+
+  backupsList: 'backups:list',
+  backupCreate: 'backups:create',
+  backupDelete: 'backups:delete',
+  backupRestore: 'backups:restore',
+
+  schedulesList: 'sched:list',
+  scheduleCreate: 'sched:create',
+  scheduleUpdate: 'sched:update',
+  scheduleDelete: 'sched:delete',
+  scheduleRun: 'sched:run',
+
+  crashAnalyze: 'crash:analyze'
 } as const
 
 /** event channels (main -> renderer via webContents.send). */
@@ -163,6 +189,33 @@ export interface MsmsApi {
   setGamemode(id: string, player: PlayerInfo, gm: string): Promise<void>
   worldControl(id: string, cmd: string): Promise<void>
   rconConnected(id: string): Promise<boolean>
+
+  listMods(id: string): Promise<ModEntry[]>
+  toggleMod(id: string, rel: string, enable: boolean): Promise<void>
+  deleteMod(id: string, rel: string): Promise<void>
+  addMod(id: string, folder: 'plugins' | 'mods'): Promise<string | null>
+  searchMods(id: string, query: string): Promise<ModrinthHit[]>
+  installMod(id: string, projectId: string): Promise<string>
+
+  listBackups(id?: string): Promise<BackupRecord[]>
+  createBackup(id: string, opts: BackupOptions): Promise<BackupRecord>
+  deleteBackup(backupId: string): Promise<void>
+  restoreBackup(backupId: string): Promise<void>
+
+  listSchedules(): Promise<ScheduleTask[]>
+  createSchedule(input: {
+    serverId: string
+    name: string
+    cron: string
+    action: ScheduleAction
+    payload?: string
+    enabled?: boolean
+  }): Promise<ScheduleTask>
+  updateSchedule(id: string, patch: Partial<ScheduleTask>): Promise<ScheduleTask>
+  deleteSchedule(id: string): Promise<void>
+  runSchedule(id: string): Promise<void>
+
+  analyzeCrash(id: string): Promise<CrashReport>
 
   // event subscriptions -> return unsubscribe fn
   onServerLog(cb: (e: ServerLogEvent) => void): () => void

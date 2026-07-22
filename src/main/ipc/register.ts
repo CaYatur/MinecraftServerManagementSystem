@@ -12,6 +12,10 @@ import { createServer } from '../core/createServer'
 import * as files from '../core/serverFiles'
 import * as players from '../core/players'
 import * as rcon from '../core/rcon'
+import * as mods from '../core/mods'
+import * as backups from '../core/backups'
+import * as scheduler from '../core/scheduler'
+import { analyzeCrash } from '../core/crash'
 import { log } from '../logger'
 import type {
   Bootstrap,
@@ -184,6 +188,42 @@ export function registerIpc(): void {
   )
   H(IPC.worldControl, (_e, id: string, cmd: string) => players.worldControl(id, cmd))
   H(IPC.rconStatus, (_e, id: string) => rcon.isConnected(id))
+
+  // --- mods / plugins ---
+  H(IPC.modsList, (_e, id: string) => mods.listMods(id))
+  H(IPC.modToggle, (_e, id: string, rel: string, enable: boolean) =>
+    mods.toggleMod(id, rel, enable)
+  )
+  H(IPC.modDelete, (_e, id: string, rel: string) => mods.deleteMod(id, rel))
+  H(IPC.modAdd, async (_e, id: string, folder: 'plugins' | 'mods') => {
+    const res = await dialog.showOpenDialog({
+      properties: ['openFile'],
+      filters: [{ name: 'Jar', extensions: ['jar'] }]
+    })
+    if (res.canceled || !res.filePaths[0]) return null
+    mods.addMod(id, folder, res.filePaths[0])
+    return res.filePaths[0].split(/[\\/]/).pop() ?? null
+  })
+  H(IPC.modSearch, (_e, id: string, query: string) => mods.searchModrinth(id, query))
+  H(IPC.modInstall, (_e, id: string, projectId: string) => mods.installModrinth(id, projectId))
+
+  // --- backups ---
+  H(IPC.backupsList, (_e, id?: string) => backups.listBackups(id))
+  H(IPC.backupCreate, (_e, id: string, opts: Parameters<typeof backups.createBackup>[1]) =>
+    backups.createBackup(id, opts)
+  )
+  H(IPC.backupDelete, (_e, bid: string) => backups.deleteBackup(bid))
+  H(IPC.backupRestore, (_e, bid: string) => backups.restoreBackup(bid))
+
+  // --- scheduler ---
+  H(IPC.schedulesList, () => scheduler.listTasks())
+  H(IPC.scheduleCreate, (_e, input: scheduler.NewTask) => scheduler.createTask(input))
+  H(IPC.scheduleUpdate, (_e, id: string, patch) => scheduler.updateTask(id, patch))
+  H(IPC.scheduleDelete, (_e, id: string) => scheduler.deleteTask(id))
+  H(IPC.scheduleRun, (_e, id: string) => scheduler.runTaskNow(id))
+
+  // --- crash analyzer ---
+  H(IPC.crashAnalyze, (_e, id: string) => analyzeCrash(id))
 
   log.info('IPC handlers registered')
 }
