@@ -26,7 +26,7 @@ import type {
 } from './types'
 import type { McVersion, BuildInfo, CreateServerOptions, CreateProgress } from './versions'
 import type { ModEntry, ModrinthHit } from './mods'
-import type { WebStatus, WebUserView, WebConfig, WebRole, Scope } from './web'
+import type { WebStatus, WebUserView, WebConfig, WebRole, Scope, Product, StoreConfig } from './web'
 
 /** request/response channels (renderer -> main via invoke). */
 export const IPC = {
@@ -113,7 +113,14 @@ export const IPC = {
   webUserCreate: 'web:user-create',
   webUserDelete: 'web:user-delete',
   webUserPerms: 'web:user-perms',
-  webUserPassword: 'web:user-password'
+  webUserPassword: 'web:user-password',
+  webUserMc: 'web:user-mc',
+
+  storeGet: 'store:get',
+  storeCurrency: 'store:currency',
+  storeUpsert: 'store:upsert',
+  storeDelete: 'store:delete',
+  storeAddBalance: 'store:add-balance'
 } as const
 
 /** event channels (main -> renderer via webContents.send). */
@@ -245,10 +252,18 @@ export interface MsmsApi {
     password: string
     role: WebRole
     perms: Record<string, Scope[]>
+    mcName?: string
   }): Promise<WebUserView>
   deleteWebUser(id: string): Promise<void>
   setWebUserPerms(id: string, perms: Record<string, Scope[]>): Promise<void>
   setWebUserPassword(id: string, password: string): Promise<void>
+  setWebUserMc(id: string, mcName: string): Promise<void>
+
+  getStore(id: string): Promise<StoreConfig & { balances: Record<string, number> }>
+  setStoreCurrency(id: string, currency: string): Promise<void>
+  upsertStoreProduct(id: string, product: Product): Promise<Product>
+  deleteStoreProduct(id: string, productId: string): Promise<void>
+  addStoreBalance(id: string, mcName: string, amount: number): Promise<number>
 
   // event subscriptions -> return unsubscribe fn
   onServerLog(cb: (e: ServerLogEvent) => void): () => void

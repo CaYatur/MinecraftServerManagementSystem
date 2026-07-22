@@ -5,6 +5,8 @@ import { processManager } from './core/processManager'
 import { getConfig, updateConfig } from './config'
 import { startWebServer, stopWebServer } from './web/server'
 import * as webAuth from './web/auth'
+import * as economy from './store/economy'
+import type { Product } from '@shared/web'
 import { getProvider } from './core/versions'
 import { createServer } from './core/createServer'
 import { removeServer } from './core/serverRegistry'
@@ -428,6 +430,30 @@ export async function runWebSmoke(): Promise<void> {
     if (r.status !== 401) return fail('bad password expected 401, got ' + r.status)
 
     console.log('WEB-SMOKE: 401 (no token), 403 (wrong scope), 200 (allowed), 401 (bad pw) all correct')
+
+    // ---- double-spend: two concurrent buys with balance for one -> exactly one wins ----
+    webAuth.setUserMc(owner.id, 'Tester')
+    economy.addBalance(id, 'Tester', 100)
+    const prod = economy.upsertProduct(id, {
+      id: '',
+      type: 'item',
+      name: 'TestItem',
+      description: '',
+      price: 100,
+      commands: ['say {player} bought TestItem'],
+      rewards: []
+    } as Product)
+    const buy = (): Promise<Response> =>
+      post('/api/servers/' + id + '/store/buy', { productId: prod.id }, ot)
+    const [r1, r2] = await Promise.all([buy(), buy()])
+    const codes = [r1.status, r2.status].sort((a, b) => a - b)
+    if (!(codes[0] === 200 && codes[1] === 402)) {
+      return fail('double-spend expected [200,402], got [' + codes.join(',') + ']')
+    }
+    const finalBal = economy.getBalance(id, 'Tester')
+    if (finalBal !== 0) return fail('double-spend balance should be 0, got ' + finalBal)
+    economy.deleteProduct(id, prod.id)
+    console.log('WEB-SMOKE: double-spend prevented (one 200, one 402, balance 0)')
   } catch (e) {
     return fail('exception: ' + String(e))
   } finally {

@@ -93,6 +93,13 @@ const api: MsmsApi = {
   deleteWebUser: (id) => ipcRenderer.invoke(IPC.webUserDelete, id),
   setWebUserPerms: (id, perms) => ipcRenderer.invoke(IPC.webUserPerms, id, perms),
   setWebUserPassword: (id, password) => ipcRenderer.invoke(IPC.webUserPassword, id, password),
+  setWebUserMc: (id, mcName) => ipcRenderer.invoke(IPC.webUserMc, id, mcName),
+
+  getStore: (id) => ipcRenderer.invoke(IPC.storeGet, id),
+  setStoreCurrency: (id, currency) => ipcRenderer.invoke(IPC.storeCurrency, id, currency),
+  upsertStoreProduct: (id, product) => ipcRenderer.invoke(IPC.storeUpsert, id, product),
+  deleteStoreProduct: (id, productId) => ipcRenderer.invoke(IPC.storeDelete, id, productId),
+  addStoreBalance: (id, mcName, amount) => ipcRenderer.invoke(IPC.storeAddBalance, id, mcName, amount),
 
   onServerLog: (cb) => subscribe(EVT.serverLog, cb),
   onServerStatus: (cb) => subscribe(EVT.serverStatus, cb),

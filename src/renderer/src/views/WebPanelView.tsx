@@ -18,6 +18,7 @@ export function WebPanelView(): JSX.Element {
 
   const [newUser, setNewUser] = useState('')
   const [newPass, setNewPass] = useState('')
+  const [newMc, setNewMc] = useState('')
   const [newRole, setNewRole] = useState<WebRole>('user')
   const [permUser, setPermUser] = useState<WebUserView | null>(null)
   const [permDraft, setPermDraft] = useState<Record<string, Scope[]>>({})
@@ -50,10 +51,12 @@ export function WebPanelView(): JSX.Element {
         username: newUser.trim(),
         password: newPass,
         role: newRole,
-        perms: {}
+        perms: {},
+        mcName: newMc.trim() || undefined
       })
       setNewUser('')
       setNewPass('')
+      setNewMc('')
       toast('success', 'web.created')
       void refresh()
     } catch (e) {
@@ -138,11 +141,15 @@ export function WebPanelView(): JSX.Element {
             <label>{t('web.username')}</label>
             <input className="input" value={newUser} onChange={(e) => setNewUser(e.target.value)} />
           </div>
-          <div className="field" style={{ flex: 1, minWidth: 130, marginBottom: 0 }}>
+          <div className="field" style={{ flex: 1, minWidth: 120, marginBottom: 0 }}>
             <label>{t('web.password')}</label>
             <input className="input" type="password" value={newPass} onChange={(e) => setNewPass(e.target.value)} />
           </div>
-          <div className="field" style={{ minWidth: 160, marginBottom: 0 }}>
+          <div className="field" style={{ flex: 1, minWidth: 120, marginBottom: 0 }}>
+            <label>{t('web.mcName')}</label>
+            <input className="input" value={newMc} onChange={(e) => setNewMc(e.target.value)} placeholder="Steve" />
+          </div>
+          <div className="field" style={{ minWidth: 150, marginBottom: 0 }}>
             <label>{t('web.role')}</label>
             <select className="select" value={newRole} onChange={(e) => setNewRole(e.target.value as WebRole)}>
               <option value="user">{t('web.roleUser')}</option>

@@ -24,6 +24,7 @@ export type ViewId =
   | 'backups'
   | 'scheduler'
   | 'crash'
+  | 'store'
   | 'settings'
   | 'create'
   | 'web'

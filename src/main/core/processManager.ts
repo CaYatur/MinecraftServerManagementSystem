@@ -170,6 +170,7 @@ export class ProcessManager extends EventEmitter {
     if (join) {
       if (!mp.players.names.includes(join[1])) mp.players.names.push(join[1])
       mp.players.online = mp.players.names.length
+      this.emit('join', { id: mp.id, name: join[1] })
     }
     const left = raw.match(/\]: (\w{2,16}) left the game/)
     if (left) {

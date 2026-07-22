@@ -12,6 +12,7 @@ const tr: typeof en = {
     backups: 'Yedekler',
     scheduler: 'Zamanlayıcı',
     crash: 'Çökme Analizi',
+    store: 'Mağaza',
     settings: 'Ayarlar'
   },
   sidebar: {
@@ -319,6 +320,36 @@ const tr: typeof en = {
     suggestion: 'Öneri',
     logTail: 'Günlük sonu'
   },
+  store: {
+    title: 'Mağaza',
+    desc: 'Kontrol ettiğiniz bir sunucu para birimiyle eşya ve kasa satın. Satın alımlar oyun içinde teslim edilir (oyuncu çevrimdışıysa kuyruğa alınır). Yalnızca siz (ve Mağaza iznine sahip kullanıcılar) bakiye yükleyebilir.',
+    currency: 'Para birimi adı',
+    products: 'Ürünler',
+    addItem: 'Eşya ekle',
+    addCrate: 'Kasa ekle',
+    editItem: 'Eşya ürünü',
+    editCrate: 'Kasa ürünü',
+    name: 'Ad',
+    productDesc: 'Açıklama',
+    price: 'Fiyat',
+    icon: 'Simge URL (isteğe bağlı)',
+    commands: 'Komutlar ({player} = alıcı, satır başına bir tane)',
+    commandsHint: 'örn. give {player} minecraft:diamond 5 — komutlar güvenilirdir; yalnızca {player} yerine konur.',
+    rewards: 'Kasa ödülleri',
+    rewardName: 'Ödül adı',
+    weight: 'Ağırlık',
+    addReward: 'Ödül ekle',
+    loadBalance: 'Bakiye yükle',
+    player: 'Oyuncu (MC adı)',
+    amount: 'Miktar',
+    give: 'Ver',
+    balances: 'Bakiyeler',
+    noProducts: 'Henüz ürün yok.',
+    item: 'Eşya',
+    crate: 'Kasa',
+    saved: 'Kaydedildi',
+    delivered: '{{player}} oyuncusuna {{amount}} verildi'
+  },
   web: {
     title: 'Web Paneli',
     desc: 'Mobil uyumlu bir web paneli barındırın; siz (ve yetki verdiğiniz arkadaşlarınız) ağınızdaki bir tarayıcıdan sunucuları yönetebilirsiniz.',
@@ -335,6 +366,7 @@ const tr: typeof en = {
     addUser: 'Kullanıcı ekle',
     username: 'Kullanıcı adı',
     password: 'Parola',
+    mcName: 'MC adı',
     role: 'Rol',
     roleOwner: 'Sahip — her şeye tam erişim',
     roleUser: 'Kullanıcı — yalnızca verdiğiniz sunucu/izinler',
@@ -369,7 +401,8 @@ const tr: typeof en = {
     loading: 'Yükleniyor…',
     refresh: 'Yenile',
     apply: 'Uygula',
-    saved: 'Kaydedildi'
+    saved: 'Kaydedildi',
+    edit: 'Düzenle'
   },
   types: {
     vanilla: 'Vanilya',

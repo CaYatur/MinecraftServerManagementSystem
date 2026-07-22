@@ -10,6 +10,7 @@ export default {
     backups: 'Backups',
     scheduler: 'Scheduler',
     crash: 'Crash Analyzer',
+    store: 'Store',
     settings: 'Settings'
   },
   sidebar: {
@@ -316,6 +317,36 @@ export default {
     suggestion: 'Suggestion',
     logTail: 'Log tail'
   },
+  store: {
+    title: 'Store',
+    desc: 'Sell items and crates for a server currency you control. Purchases are delivered in-game (queued if the player is offline). Only you (and users with the Store permission) can load balances.',
+    currency: 'Currency name',
+    products: 'Products',
+    addItem: 'Add item',
+    addCrate: 'Add crate',
+    editItem: 'Item product',
+    editCrate: 'Crate product',
+    name: 'Name',
+    productDesc: 'Description',
+    price: 'Price',
+    icon: 'Icon URL (optional)',
+    commands: 'Commands ({player} = buyer, one per line)',
+    commandsHint: 'e.g. give {player} minecraft:diamond 5 — commands are trusted; only {player} is substituted.',
+    rewards: 'Crate rewards',
+    rewardName: 'Reward name',
+    weight: 'Weight',
+    addReward: 'Add reward',
+    loadBalance: 'Load balance',
+    player: 'Player (MC name)',
+    amount: 'Amount',
+    give: 'Give',
+    balances: 'Balances',
+    noProducts: 'No products yet.',
+    item: 'Item',
+    crate: 'Crate',
+    saved: 'Saved',
+    delivered: 'Given {{amount}} to {{player}}'
+  },
   web: {
     title: 'Web Panel',
     desc: 'Host a mobile-friendly web panel so you (and friends you authorize) can control servers from a browser on your network.',
@@ -332,6 +363,7 @@ export default {
     addUser: 'Add user',
     username: 'Username',
     password: 'Password',
+    mcName: 'MC name',
     role: 'Role',
     roleOwner: 'Owner — full access to everything',
     roleUser: 'User — only the servers/permissions you grant',
@@ -366,7 +398,8 @@ export default {
     loading: 'Loading…',
     refresh: 'Refresh',
     apply: 'Apply',
-    saved: 'Saved'
+    saved: 'Saved',
+    edit: 'Edit'
   },
   types: {
     vanilla: 'Vanilla',

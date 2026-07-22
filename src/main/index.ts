@@ -6,6 +6,7 @@ import { registerIpc } from './ipc/register'
 import { processManager } from './core/processManager'
 import { initScheduler, stopAllJobs } from './core/scheduler'
 import { initWebServer, stopWebServer } from './web/server'
+import { initEconomy } from './store/economy'
 import { resolveBaseDir } from './paths'
 import { log } from './logger'
 import { runSmoke, runWizardSmoke, runRealSmoke, runWebSmoke } from './smoke'
@@ -153,6 +154,7 @@ if (!gotLock) {
     }
 
     createSplash()
+    initEconomy()
     initScheduler()
     initWebServer()
     createWindow()

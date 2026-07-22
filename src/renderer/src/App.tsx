@@ -9,6 +9,7 @@ import {
   Archive,
   CalendarClock,
   Bug,
+  ShoppingCart,
   Settings as SettingsIcon,
   Play,
   Square,
@@ -31,6 +32,7 @@ import { ModsView } from './views/ModsView'
 import { BackupsView } from './views/BackupsView'
 import { SchedulerView } from './views/SchedulerView'
 import { CrashView } from './views/CrashView'
+import { StoreView } from './views/StoreView'
 import { WebPanelView } from './views/WebPanelView'
 import { useState } from 'react'
 
@@ -43,7 +45,8 @@ const TABS: { id: ViewId; icon: JSX.Element; labelKey: string }[] = [
   { id: 'plugins', icon: <Puzzle size={15} />, labelKey: 'nav.plugins' },
   { id: 'backups', icon: <Archive size={15} />, labelKey: 'nav.backups' },
   { id: 'scheduler', icon: <CalendarClock size={15} />, labelKey: 'nav.scheduler' },
-  { id: 'crash', icon: <Bug size={15} />, labelKey: 'nav.crash' }
+  { id: 'crash', icon: <Bug size={15} />, labelKey: 'nav.crash' },
+  { id: 'store', icon: <ShoppingCart size={15} />, labelKey: 'nav.store' }
 ]
 
 function ServerControls(): JSX.Element {
@@ -151,6 +154,8 @@ function MainArea(): JSX.Element {
         return <SchedulerView />
       case 'crash':
         return <CrashView />
+      case 'store':
+        return <StoreView />
       default:
         return <DashboardView />
     }

@@ -20,8 +20,9 @@ import { analyzeCrash } from '../core/crash'
 import { checkForUpdates } from '../core/updates'
 import { startWebServer, stopWebServer, getWebStatus } from '../web/server'
 import * as auth from '../web/auth'
+import * as economy from '../store/economy'
 import { log } from '../logger'
-import type { WebConfig, WebRole, Scope } from '@shared/web'
+import type { WebConfig, WebRole, Scope, Product } from '@shared/web'
 import type {
   Bootstrap,
   Language,
@@ -258,12 +259,25 @@ export function registerIpc(): void {
     return getWebStatus()
   })
   H(IPC.webUsers, () => auth.listUsers())
-  H(IPC.webUserCreate, (_e, input: { username: string; password: string; role: WebRole; perms: Record<string, Scope[]> }) =>
-    auth.createUser(input.username, input.password, input.role, input.perms)
+  H(IPC.webUserCreate, (_e, input: { username: string; password: string; role: WebRole; perms: Record<string, Scope[]>; mcName?: string }) =>
+    auth.createUser(input.username, input.password, input.role, input.perms, input.mcName)
   )
   H(IPC.webUserDelete, (_e, id: string) => auth.deleteUser(id))
   H(IPC.webUserPerms, (_e, id: string, perms: Record<string, Scope[]>) => auth.setUserPerms(id, perms))
   H(IPC.webUserPassword, (_e, id: string, password: string) => auth.setUserPassword(id, password))
+  H(IPC.webUserMc, (_e, id: string, mcName: string) => auth.setUserMc(id, mcName))
+
+  // --- store / economy (trusted desktop admin) ---
+  H(IPC.storeGet, (_e, id: string) => ({
+    ...economy.getStoreConfig(id),
+    balances: economy.listBalances(id)
+  }))
+  H(IPC.storeCurrency, (_e, id: string, currency: string) => economy.setCurrency(id, currency))
+  H(IPC.storeUpsert, (_e, id: string, product: Product) => economy.upsertProduct(id, product))
+  H(IPC.storeDelete, (_e, id: string, productId: string) => economy.deleteProduct(id, productId))
+  H(IPC.storeAddBalance, (_e, id: string, mcName: string, amount: number) =>
+    economy.addBalance(id, mcName, amount)
+  )
 
   log.info('IPC handlers registered')
 }

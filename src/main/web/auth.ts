@@ -16,6 +16,7 @@ interface StoredUser {
   hash: string
   role: WebRole
   perms: Record<string, Scope[]>
+  mcName?: string
   createdAt: number
 }
 
@@ -62,6 +63,7 @@ const view = (u: StoredUser): WebUserView => ({
   username: u.username,
   role: u.role,
   perms: u.perms,
+  mcName: u.mcName,
   createdAt: u.createdAt
 })
 
@@ -74,11 +76,13 @@ export function createUser(
   username: string,
   password: string,
   role: WebRole,
-  perms: Record<string, Scope[]> = {}
+  perms: Record<string, Scope[]> = {},
+  mcName?: string
 ): WebUserView {
   const name = username.trim()
   if (!/^[A-Za-z0-9_.-]{3,24}$/.test(name)) throw new Error('invalid-username')
   if (password.length < 4) throw new Error('password-too-short')
+  if (mcName && !/^[A-Za-z0-9_]{3,16}$/.test(mcName.trim())) throw new Error('invalid-mcname')
   if (users.some((u) => u.username.toLowerCase() === name.toLowerCase())) {
     throw new Error('username-taken')
   }
@@ -90,12 +94,22 @@ export function createUser(
     hash: hashPw(password, salt),
     role,
     perms,
+    mcName: mcName?.trim() || undefined,
     createdAt: Date.now()
   }
   users.push(u)
   save()
   log.info(`Web user created: ${name} (${role})`)
   return view(u)
+}
+
+export function setUserMc(id: string, mcName: string): void {
+  const u = users.find((x) => x.id === id)
+  if (!u) throw new Error('user-not-found')
+  const n = mcName.trim()
+  if (n && !/^[A-Za-z0-9_]{3,16}$/.test(n)) throw new Error('invalid-mcname')
+  u.mcName = n || undefined
+  save()
 }
 
 export function deleteUser(id: string): void {
@@ -126,6 +140,7 @@ export interface AuthUser {
   username: string
   role: WebRole
   perms: Record<string, Scope[]>
+  mcName?: string
 }
 
 export function login(username: string, password: string): { token: string; user: AuthUser } | null {
@@ -133,7 +148,10 @@ export function login(username: string, password: string): { token: string; user
   if (!u || !verifyPw(password, u)) return null
   const token = randomBytes(32).toString('hex')
   sessions.set(token, { userId: u.id, expires: Date.now() + SESSION_TTL })
-  return { token, user: { id: u.id, username: u.username, role: u.role, perms: u.perms } }
+  return {
+    token,
+    user: { id: u.id, username: u.username, role: u.role, perms: u.perms, mcName: u.mcName }
+  }
 }
 
 export function logout(token: string): void {
@@ -150,7 +168,7 @@ export function resolveSession(token: string | undefined): AuthUser | null {
   }
   const u = users.find((x) => x.id === s.userId)
   if (!u) return null
-  return { id: u.id, username: u.username, role: u.role, perms: u.perms }
+  return { id: u.id, username: u.username, role: u.role, perms: u.perms, mcName: u.mcName }
 }
 
 /** The core authorization check — every HTTP route calls this. */

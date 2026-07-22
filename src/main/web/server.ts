@@ -5,6 +5,8 @@ import { log } from '../logger'
 import { listServers, getServer } from '../core/serverRegistry'
 import { processManager } from '../core/processManager'
 import { getPlayers } from '../core/players'
+import * as economy from '../store/economy'
+import type { Product } from '@shared/web'
 import {
   initAuth,
   login,
@@ -221,6 +223,80 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       }
       const players = await getPlayers(id)
       return sendJson(res, 200, { players })
+    }
+  }
+
+  // ---- /api/servers/:id/store... ----
+  const sm = path.match(/^\/api\/servers\/([^/]+)\/store(?:\/(.+))?$/)
+  if (sm) {
+    const id = decodeURIComponent(sm[1])
+    const rest = sm[2] || ''
+    if (!getServer(id)) return sendJson(res, 404, { error: 'server-not-found' })
+    const gate = (scope: Scope): boolean => {
+      if (!can(user, id, scope)) {
+        sendJson(res, 403, { error: 'forbidden', need: scope })
+        return false
+      }
+      return true
+    }
+
+    if (rest === '' && method === 'GET') {
+      if (!gate('view')) return
+      return sendJson(res, 200, economy.publicStore(id))
+    }
+    if (rest === 'balance' && method === 'GET') {
+      if (!gate('view')) return
+      return sendJson(res, 200, {
+        mcName: user.mcName ?? null,
+        balance: user.mcName ? economy.getBalance(id, user.mcName) : 0,
+        currency: economy.publicStore(id).currency
+      })
+    }
+    if (rest === 'txns' && method === 'GET') {
+      if (!gate('view')) return
+      return sendJson(res, 200, { txns: user.mcName ? economy.getTxns(id, user.mcName) : [] })
+    }
+    if (rest === 'buy' && method === 'POST') {
+      if (!gate('view')) return
+      if (!user.mcName) return sendJson(res, 400, { error: 'no-mc-linked' })
+      const b = (await readBody(req).catch(() => ({}))) as { productId?: string }
+      const result = economy.purchase(id, user.mcName, b.productId ?? '')
+      return sendJson(res, result.ok ? 200 : result.error === 'insufficient' ? 402 : 400, result)
+    }
+    // ---- admin (store scope) ----
+    if (rest === 'admin' && method === 'GET') {
+      if (!gate('store')) return
+      return sendJson(res, 200, {
+        ...economy.getStoreConfig(id),
+        balances: economy.listBalances(id)
+      })
+    }
+    if (rest === 'admin/currency' && method === 'POST') {
+      if (!gate('store')) return
+      const b = (await readBody(req).catch(() => ({}))) as { currency?: string }
+      economy.setCurrency(id, b.currency ?? 'Coins')
+      return sendJson(res, 200, { ok: true })
+    }
+    if (rest === 'admin/product' && method === 'POST') {
+      if (!gate('store')) return
+      const b = (await readBody(req).catch(() => ({}))) as Product
+      return sendJson(res, 200, economy.upsertProduct(id, b))
+    }
+    if (rest === 'admin/delete' && method === 'POST') {
+      if (!gate('store')) return
+      const b = (await readBody(req).catch(() => ({}))) as { productId?: string }
+      economy.deleteProduct(id, b.productId ?? '')
+      return sendJson(res, 200, { ok: true })
+    }
+    if (rest === 'admin/balance' && method === 'POST') {
+      if (!gate('store')) return
+      const b = (await readBody(req).catch(() => ({}))) as { mcName?: string; amount?: number }
+      try {
+        const balance = economy.addBalance(id, b.mcName ?? '', Number(b.amount) || 0)
+        return sendJson(res, 200, { ok: true, balance })
+      } catch (e) {
+        return sendJson(res, 400, { error: String((e as Error)?.message ?? e) })
+      }
     }
   }
 

@@ -38,6 +38,22 @@ input,select{width:100%;padding:11px 13px;background:#101019;border:1px solid va
 .console .warn{color:#fbbf24}.console .err{color:#f87171}.console .sys{color:#60a5fa}
 .hidden{display:none}
 .err-msg{color:#f87171;font-size:13px;margin-top:8px}
+.pgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px}
+.pcard{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:8px}
+.pcard img{width:44px;height:44px;border-radius:8px;image-rendering:pixelated;background:#101019}
+.pcard .pname{font-weight:700}
+.pcard .pdesc{font-size:12px;color:var(--dim);flex:1}
+.price{color:var(--accent);font-weight:700}
+.crate-modal{position:fixed;inset:0;background:rgba(0,0,0,.7);display:grid;place-items:center;z-index:50;padding:16px}
+.crate-box{background:linear-gradient(160deg,#17151b,#0c0c11);border:1px solid rgba(220,39,39,.4);border-radius:16px;padding:22px;width:min(460px,94vw);text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.6)}
+.reel-mask{position:relative;overflow:hidden;height:88px;border:1px solid var(--border);border-radius:10px;background:#08080c}
+.reel{display:flex;gap:8px;padding:8px;transition:transform 4s cubic-bezier(.12,.7,.2,1)}
+.reel-item{min-width:120px;height:72px;border-radius:8px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;background:var(--elev);border:1px solid var(--border);font-size:13px;font-weight:600;padding:6px}
+.reel-item img{width:28px;height:28px;image-rendering:pixelated}
+.reel-marker{position:absolute;top:0;left:50%;width:2px;height:100%;background:var(--accent);box-shadow:0 0 10px var(--accent)}
+.crate-result{margin-top:14px;font-size:18px;font-weight:800;min-height:24px}
+.crate-result.win{color:var(--accent);animation:pulse .5s ease 3}
+@keyframes pulse{50%{transform:scale(1.12)}}
 .title{font-weight:800;font-size:18px;margin:4px 0 12px}
 h2{margin:6px 0}
 @media(max-width:560px){.wrap{padding:12px}.console{height:44vh}}
@@ -68,12 +84,30 @@ h2{margin:6px 0}
   <div id="detail" class="hidden">
     <div class="row"><button class="btn sm" onclick="showList()">← Back</button><div class="spacer"></div><span id="dStatus" class="badge"></span></div>
     <h2 id="dName"></h2>
-    <div id="dControls" class="row" style="margin-bottom:10px"></div>
-    <div id="dConsole" class="console"></div>
-    <div id="dCmdRow" class="row" style="margin-top:8px">
-      <input id="dCmd" placeholder="Command…" style="flex:1" onkeydown="if(event.key==='Enter')sendCmd()"/>
-      <button class="btn primary" onclick="sendCmd()">Send</button>
+    <div class="row" style="gap:6px;margin-bottom:10px">
+      <button class="btn sm" id="tabConsole" onclick="showTab('console')">Console</button>
+      <button class="btn sm" id="tabStore" onclick="showTab('store')">Store</button>
     </div>
+    <div id="dControls" class="row" style="margin-bottom:10px"></div>
+    <div id="panelConsole">
+      <div id="dConsole" class="console"></div>
+      <div id="dCmdRow" class="row" style="margin-top:8px">
+        <input id="dCmd" placeholder="Command…" style="flex:1" onkeydown="if(event.key==='Enter')sendCmd()"/>
+        <button class="btn primary" onclick="sendCmd()">Send</button>
+      </div>
+    </div>
+    <div id="panelStore" class="hidden">
+      <div class="row" style="margin-bottom:10px"><b>Store</b><div class="spacer"></div><span id="dBal" class="badge"></span></div>
+      <div id="dProducts" class="pgrid"></div>
+    </div>
+  </div>
+</div>
+
+<div id="crate" class="crate-modal hidden" onclick="closeCrate(event)">
+  <div class="crate-box">
+    <div class="reel-mask"><div id="reel" class="reel"></div><div class="reel-marker"></div></div>
+    <div id="crateResult" class="crate-result"></div>
+    <button class="btn primary" onclick="closeCrate()" style="margin-top:12px">OK</button>
   </div>
 </div>
 
@@ -99,7 +133,13 @@ function renderDetail(){show('detail');var s=current;document.getElementById('dN
  var has=function(sc){return s.scopes.indexOf(sc)>=0};
  var c=document.getElementById('dControls');c.innerHTML='';
  if(has('power')){c.innerHTML=['start','stop','restart','kill'].map(function(a){return '<button class="btn sm" onclick="power(\\''+a+'\\')">'+a+'</button>'}).join('')}
- document.getElementById('dCmdRow').style.display=has('console')?'flex':'none'}
+ document.getElementById('dCmdRow').style.display=has('console')?'flex':'none';showTab('console')}
+function showTab(tab){document.getElementById('panelConsole').classList.toggle('hidden',tab!=='console');document.getElementById('panelStore').classList.toggle('hidden',tab!=='store');document.getElementById('tabConsole').classList.toggle('primary',tab==='console');document.getElementById('tabStore').classList.toggle('primary',tab==='store');if(tab==='store')loadStore()}
+function loadStore(){api('/api/servers/'+current.id+'/store').then(function(r){if(!r.ok)return;api('/api/servers/'+current.id+'/store/balance').then(function(b){var bal=b.ok?b.body:{balance:0,mcName:null};document.getElementById('dBal').textContent=(bal.mcName?bal.mcName+': ':'')+(bal.balance||0)+' '+(r.body.currency||'');renderProducts(r.body)})})}
+function renderProducts(store){var el=document.getElementById('dProducts');if(!store.products.length){el.innerHTML='<div class="dim">No products yet.</div>';return}el.innerHTML=store.products.map(function(p){return '<div class="pcard">'+(p.icon?'<img src="'+esc(p.icon)+'"/>':'')+'<div class="pname">'+esc(p.name)+(p.type==='crate'?' 🎁':'')+'</div><div class="pdesc">'+esc(p.description||'')+'</div><div class="row"><span class="price">'+p.price+' '+esc(store.currency)+'</span><div class="spacer"></div><button class="btn primary sm" onclick="buy(\\''+p.id+'\\')">Buy</button></div></div>'}).join('')}
+function buy(pid){api('/api/servers/'+current.id+'/store/buy',{method:'POST',body:JSON.stringify({productId:pid})}).then(function(r){if(!r.ok){alert(r.body.error==='insufficient'?'Not enough balance':r.body.error==='no-mc-linked'?'No Minecraft name linked to your account':('Error: '+r.body.error));return}loadStore();if(r.body.reward&&r.body.reward.crate){openCrate(r.body.reward)}else{alert('You received: '+(r.body.reward?r.body.reward.name:''))}})}
+function openCrate(reward){var modal=document.getElementById('crate');modal.classList.remove('hidden');var reel=document.getElementById('reel');var res=document.getElementById('crateResult');res.textContent='';res.className='crate-result';var pool=reward.pool&&reward.pool.length?reward.pool:[{name:reward.name}];var strip=[];for(var i=0;i<40;i++){strip.push(pool[Math.floor(Math.random()*pool.length)])}var winIdx=strip.length-4;strip[winIdx]={name:reward.name,icon:reward.icon};reel.style.transition='none';reel.style.transform='translateX(0)';reel.innerHTML=strip.map(function(it){return '<div class="reel-item">'+(it.icon?'<img src="'+esc(it.icon)+'"/>':'')+esc(it.name)+'</div>'}).join('');var itemW=128;var mask=document.querySelector('.reel-mask').clientWidth;var offset=winIdx*itemW-(mask/2-60);requestAnimationFrame(function(){reel.style.transition='transform 4s cubic-bezier(.12,.7,.2,1)';reel.style.transform='translateX(-'+offset+'px)'});setTimeout(function(){res.textContent='🎉 '+reward.name;res.className='crate-result win'},4100)}
+function closeCrate(e){if(e&&e.target&&e.target.id!=='crate'&&e.target.tagName!=='BUTTON')return;document.getElementById('crate').classList.add('hidden')}
 function power(a){api('/api/servers/'+current.id+'/power',{method:'POST',body:JSON.stringify({action:a})})}
 function sendCmd(){var i=document.getElementById('dCmd');var v=i.value.trim();if(!v)return;api('/api/servers/'+current.id+'/command',{method:'POST',body:JSON.stringify({command:v})});i.value=''}
 function pollConsole(){if(!current)return;api('/api/servers/'+current.id+'/console').then(function(r){if(!r.ok)return;var box=document.getElementById('dConsole');var atBottom=box.scrollTop+box.clientHeight>=box.scrollHeight-40;
