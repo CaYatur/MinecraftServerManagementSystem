@@ -8,9 +8,33 @@ import { initScheduler, stopAllJobs } from './core/scheduler'
 import { resolveBaseDir } from './paths'
 import { log } from './logger'
 import { runSmoke, runWizardSmoke, runRealSmoke } from './smoke'
+import { SPLASH_HTML } from './splashHtml'
 
 let mainWindow: BrowserWindow | null = null
+let splash: BrowserWindow | null = null
+let splashShownAt = 0
 let cleanupDone = false
+
+function createSplash(): void {
+  splash = new BrowserWindow({
+    width: 440,
+    height: 290,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    alwaysOnTop: true,
+    center: true,
+    skipTaskbar: true,
+    backgroundColor: '#00000000'
+  })
+  splashShownAt = Date.now()
+  splash.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(SPLASH_HTML))
+}
+
+function closeSplash(): void {
+  if (splash && !splash.isDestroyed()) splash.close()
+  splash = null
+}
 
 function createWindow(): void {
   const devIcon = join(__dirname, '../../build/icon.png')
@@ -32,7 +56,15 @@ function createWindow(): void {
     }
   })
 
-  mainWindow.once('ready-to-show', () => mainWindow?.show())
+  mainWindow.once('ready-to-show', () => {
+    const reveal = (): void => {
+      mainWindow?.show()
+      closeSplash()
+    }
+    // Keep the splash up for a brief minimum so it doesn't just flash.
+    const elapsed = Date.now() - splashShownAt
+    setTimeout(reveal, splashShownAt ? Math.max(0, 850 - elapsed) : 0)
+  })
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:\/\//i.test(url)) shell.openExternal(url)
@@ -111,6 +143,7 @@ if (!gotLock) {
       return
     }
 
+    createSplash()
     initScheduler()
     createWindow()
 
