@@ -9,6 +9,7 @@ import * as registry from '../core/serverRegistry'
 import { processManager } from '../core/processManager'
 import { getProvider } from '../core/versions'
 import { createServer } from '../core/createServer'
+import * as files from '../core/serverFiles'
 import { log } from '../logger'
 import type { Bootstrap, Language, ThemeMode, ServerConfig, ServerType, StopOptions } from '@shared/types'
 import type { CreateServerOptions } from '@shared/versions'
@@ -136,6 +137,25 @@ export function registerIpc(): void {
       return { ok: false, error: String((err as Error)?.message ?? err) }
     }
   })
+
+  // --- files + properties ---
+  H(IPC.filesList, (_e, id: string, rel?: string) => files.listDir(id, rel))
+  H(IPC.fileRead, (_e, id: string, rel: string) => files.readTextFile(id, rel))
+  H(IPC.fileWrite, (_e, id: string, rel: string, content: string) =>
+    files.writeTextFile(id, rel, content)
+  )
+  H(IPC.fileDelete, (_e, id: string, rel: string) => files.deleteEntry(id, rel))
+  H(IPC.fileRename, (_e, id: string, rel: string, newName: string) =>
+    files.renameEntry(id, rel, newName)
+  )
+  H(IPC.folderCreate, (_e, id: string, rel: string, name: string) =>
+    files.createFolder(id, rel, name)
+  )
+  H(IPC.propsRead, (_e, id: string) => files.readProperties(id))
+  H(IPC.propsWrite, (_e, id: string, updates: Record<string, string>) =>
+    files.writeProperties(id, updates)
+  )
+  H(IPC.propsWriteRaw, (_e, id: string, raw: string) => files.writeRawProperties(id, raw))
 
   log.info('IPC handlers registered')
 }

@@ -23,6 +23,8 @@ import { ConsoleView } from './views/ConsoleView'
 import { DashboardView } from './views/DashboardView'
 import { SettingsView } from './views/SettingsView'
 import { CreateView } from './views/CreateView'
+import { PropertiesView } from './views/PropertiesView'
+import { FilesView } from './views/FilesView'
 import { Placeholder } from './views/Placeholder'
 import { useState } from 'react'
 
@@ -125,9 +127,9 @@ function MainArea(): JSX.Element {
       case 'dashboard':
         return <DashboardView />
       case 'properties':
-        return <Placeholder titleKey="nav.properties" />
+        return <PropertiesView />
       case 'files':
-        return <Placeholder titleKey="nav.files" />
+        return <FilesView />
       case 'players':
         return <Placeholder titleKey="nav.players" />
       case 'plugins':
@@ -168,7 +170,9 @@ function MainArea(): JSX.Element {
           </button>
         ))}
       </div>
-      <div className={view === 'console' ? 'content no-pad' : 'content'}>{renderView()}</div>
+      <div className={view === 'console' || view === 'files' ? 'content no-pad' : 'content'}>
+        {renderView()}
+      </div>
     </>
   )
 }

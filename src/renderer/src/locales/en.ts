@@ -151,6 +151,42 @@ export default {
     createdOk: 'Server "{{name}}" created',
     createFailed: 'Creation failed: {{error}}'
   },
+  props: {
+    title: 'Server Properties',
+    form: 'Form',
+    raw: 'Raw',
+    search: 'Search properties…',
+    restartHint: 'Changes apply on the next server start/restart.',
+    other: 'Other properties',
+    noFile: 'No server.properties yet — it will be created on first run.',
+    savedRaw: 'Saved server.properties',
+    cat: {
+      general: 'General',
+      world: 'World',
+      players: 'Players',
+      gameplay: 'Gameplay',
+      network: 'Network',
+      performance: 'Performance',
+      security: 'Security'
+    }
+  },
+  files: {
+    title: 'File Editor',
+    newFolder: 'New folder',
+    newFile: 'New file',
+    rename: 'Rename',
+    delete: 'Delete',
+    save: 'Save',
+    binary: 'Binary or too-large file — cannot edit here.',
+    empty: 'Select a file to edit.',
+    confirmDelete: 'Delete "{{name}}"?',
+    deleteBody: 'This permanently deletes the file/folder from disk.',
+    reload: 'Reload',
+    unsaved: 'Unsaved changes',
+    promptFolder: 'New folder name:',
+    promptFile: 'New file name:',
+    promptRename: 'New name:'
+  },
   common: {
     save: 'Save',
     cancel: 'Cancel',

@@ -2,6 +2,7 @@ import { spawn, execFile, type ChildProcess } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
+import pidusage from 'pidusage'
 import { getConfig } from '../config'
 import { getServer, touchServer } from './serverRegistry'
 import { detectJava, javaExecutable } from './java'
@@ -43,6 +44,38 @@ let lineCounter = 0
 
 export class ProcessManager extends EventEmitter {
   private procs = new Map<string, ManagedProcess>()
+
+  constructor() {
+    super()
+    this.setMaxListeners(50)
+    // Poll CPU/RAM for running servers and emit stats.
+    setInterval(() => void this.pollStats(), 2000)
+  }
+
+  private statsErrLogged = false
+  private async pollStats(): Promise<void> {
+    for (const mp of this.procs.values()) {
+      if (mp.status !== 'running' && mp.status !== 'starting') continue
+      const pid = mp.child?.pid
+      if (!pid) continue
+      try {
+        const u = await pidusage(pid)
+        this.emit('stats', {
+          id: mp.id,
+          cpu: Math.round(u.cpu),
+          memoryMB: Math.round(u.memory / (1024 * 1024)),
+          players: mp.players,
+          tps: mp.tps,
+          uptimeMs: Date.now() - mp.startedAt
+        })
+      } catch (err) {
+        if (!this.statsErrLogged) {
+          this.statsErrLogged = true
+          log.warn('pidusage failed:', err)
+        }
+      }
+    }
+  }
 
   isRunning(id: string): boolean {
     const mp = this.procs.get(id)

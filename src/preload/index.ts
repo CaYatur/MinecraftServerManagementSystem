@@ -43,6 +43,16 @@ const api: MsmsApi = {
   listBuilds: (type, mc, incl) => ipcRenderer.invoke(IPC.versionsBuilds, type, mc, incl),
   createServer: (opts) => ipcRenderer.invoke(IPC.serverCreate, opts),
 
+  listDir: (id, rel) => ipcRenderer.invoke(IPC.filesList, id, rel),
+  readFile: (id, rel) => ipcRenderer.invoke(IPC.fileRead, id, rel),
+  writeFile: (id, rel, content) => ipcRenderer.invoke(IPC.fileWrite, id, rel, content),
+  deleteEntry: (id, rel) => ipcRenderer.invoke(IPC.fileDelete, id, rel),
+  renameEntry: (id, rel, newName) => ipcRenderer.invoke(IPC.fileRename, id, rel, newName),
+  createFolder: (id, rel, name) => ipcRenderer.invoke(IPC.folderCreate, id, rel, name),
+  readProperties: (id) => ipcRenderer.invoke(IPC.propsRead, id),
+  writeProperties: (id, updates) => ipcRenderer.invoke(IPC.propsWrite, id, updates),
+  writeRawProperties: (id, raw) => ipcRenderer.invoke(IPC.propsWriteRaw, id, raw),
+
   onServerLog: (cb) => subscribe(EVT.serverLog, cb),
   onServerStatus: (cb) => subscribe(EVT.serverStatus, cb),
   onServerStats: (cb) => subscribe(EVT.serverStats, cb),

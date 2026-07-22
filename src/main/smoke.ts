@@ -6,6 +6,7 @@ import { getConfig } from './config'
 import { getProvider } from './core/versions'
 import { createServer } from './core/createServer'
 import { removeServer } from './core/serverRegistry'
+import * as sf from './core/serverFiles'
 import { CREATABLE_TYPES } from '@shared/versions'
 
 /* eslint-disable no-console */
@@ -95,11 +96,31 @@ export async function runSmoke(): Promise<void> {
   console.log('SMOKE: renderer OK ->', renderInfo)
 
   // --- 2. start ---
+  let statsSeen = false
+  processManager.on('stats', () => (statsSeen = true))
   console.log('SMOKE: starting server', id)
   await processManager.start(id).catch((e) => console.log('SMOKE: start threw', String(e)))
   const up = await waitFor(() => processManager.getStatus(id).status === 'running', 20000)
   if (!up) return fail('server never reached running; status=' + processManager.getStatus(id).status)
   console.log('SMOKE: running, pid=', processManager.getStatus(id).pid)
+
+  // --- 2b. properties + files + stats ---
+  const props = sf.readProperties(id)
+  if (!props.entries.find((e) => e.key === 'motd')) return fail('props: motd not found')
+  sf.writeProperties(id, { 'max-players': '42' })
+  if (sf.readProperties(id).entries.find((e) => e.key === 'max-players')?.value !== '42') {
+    return fail('props: write did not persist')
+  }
+  const dir = sf.listDir(id, '')
+  if (!dir.find((e) => e.name === 'server.jar')) return fail('files: server.jar not listed')
+  sf.writeTextFile(id, 'msms-test.txt', 'hello-msms')
+  if (sf.readTextFile(id, 'msms-test.txt').content !== 'hello-msms') return fail('files: rw mismatch')
+  sf.deleteEntry(id, 'msms-test.txt')
+  console.log('SMOKE: props/files OK')
+
+  await waitFor(() => statsSeen, 3000)
+  if (!statsSeen) return fail('no stats event received')
+  console.log('SMOKE: stats OK')
 
   // --- 3. command over stdin ---
   processManager.sendCommand(id, 'say hello-from-smoke')

@@ -11,7 +11,9 @@ import type {
   ServerStats,
   ServerType,
   StopOptions,
-  LogLine
+  LogLine,
+  FileEntry,
+  PropsData
 } from './types'
 import type { McVersion, BuildInfo, CreateServerOptions, CreateProgress } from './versions'
 
@@ -49,7 +51,17 @@ export const IPC = {
 
   versionsList: 'versions:list',
   versionsBuilds: 'versions:builds',
-  serverCreate: 'servers:create'
+  serverCreate: 'servers:create',
+
+  filesList: 'files:list',
+  fileRead: 'files:read',
+  fileWrite: 'files:write',
+  fileDelete: 'files:delete',
+  fileRename: 'files:rename',
+  folderCreate: 'files:mkdir',
+  propsRead: 'props:read',
+  propsWrite: 'props:write',
+  propsWriteRaw: 'props:write-raw'
 } as const
 
 /** event channels (main -> renderer via webContents.send). */
@@ -122,6 +134,16 @@ export interface MsmsApi {
   listVersions(type: ServerType, includeUnstable: boolean): Promise<McVersion[]>
   listBuilds(type: ServerType, mc: string, includeUnstable: boolean): Promise<BuildInfo[]>
   createServer(opts: CreateServerOptions): Promise<CreateServerResult>
+
+  listDir(id: string, rel?: string): Promise<FileEntry[]>
+  readFile(id: string, rel: string): Promise<{ content: string; binary: boolean }>
+  writeFile(id: string, rel: string, content: string): Promise<void>
+  deleteEntry(id: string, rel: string): Promise<void>
+  renameEntry(id: string, rel: string, newName: string): Promise<void>
+  createFolder(id: string, rel: string, name: string): Promise<void>
+  readProperties(id: string): Promise<PropsData>
+  writeProperties(id: string, updates: Record<string, string>): Promise<void>
+  writeRawProperties(id: string, raw: string): Promise<void>
 
   // event subscriptions -> return unsubscribe fn
   onServerLog(cb: (e: ServerLogEvent) => void): () => void

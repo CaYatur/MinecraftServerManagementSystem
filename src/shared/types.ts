@@ -143,6 +143,19 @@ export interface JavaInfo {
   major: number
 }
 
+export interface FileEntry {
+  name: string
+  path: string // relative to server root, forward-slashed
+  isDir: boolean
+  size: number
+  mtime: number
+}
+
+export interface PropsData {
+  entries: { key: string; value: string }[]
+  raw: string
+}
+
 export interface StopOptions {
   /** true => restart after stop. */
   restart?: boolean

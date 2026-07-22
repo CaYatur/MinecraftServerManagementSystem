@@ -154,6 +154,42 @@ const tr: typeof en = {
     createdOk: '"{{name}}" sunucusu oluşturuldu',
     createFailed: 'Oluşturma başarısız: {{error}}'
   },
+  props: {
+    title: 'Sunucu Ayarları',
+    form: 'Form',
+    raw: 'Ham',
+    search: 'Ayarlarda ara…',
+    restartHint: 'Değişiklikler sonraki başlatmada/yeniden başlatmada uygulanır.',
+    other: 'Diğer ayarlar',
+    noFile: 'Henüz server.properties yok — ilk çalıştırmada oluşturulur.',
+    savedRaw: 'server.properties kaydedildi',
+    cat: {
+      general: 'Genel',
+      world: 'Dünya',
+      players: 'Oyuncular',
+      gameplay: 'Oynanış',
+      network: 'Ağ',
+      performance: 'Performans',
+      security: 'Güvenlik'
+    }
+  },
+  files: {
+    title: 'Dosya Düzenleyici',
+    newFolder: 'Yeni klasör',
+    newFile: 'Yeni dosya',
+    rename: 'Yeniden adlandır',
+    delete: 'Sil',
+    save: 'Kaydet',
+    binary: 'İkili veya çok büyük dosya — burada düzenlenemez.',
+    empty: 'Düzenlemek için bir dosya seçin.',
+    confirmDelete: '"{{name}}" silinsin mi?',
+    deleteBody: 'Bu, dosyayı/klasörü diskten kalıcı olarak siler.',
+    reload: 'Yeniden yükle',
+    unsaved: 'Kaydedilmemiş değişiklikler',
+    promptFolder: 'Yeni klasör adı:',
+    promptFile: 'Yeni dosya adı:',
+    promptRename: 'Yeni ad:'
+  },
   common: {
     save: 'Kaydet',
     cancel: 'İptal',
