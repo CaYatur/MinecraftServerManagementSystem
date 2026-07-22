@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Cpu, MemoryStick, Gauge, Users, Clock, Package, Folder } from 'lucide-react'
+import { Cpu, MemoryStick, Gauge, Users, Clock, Package, Folder, Check, Trash2 } from 'lucide-react'
 import { useStore } from '../store'
 import { formatDuration } from '../components/ui'
+import { ArgsEditor } from '../components/ArgsEditor'
 import { TPS_TYPES } from '@shared/types'
 
 function Stat({
@@ -33,7 +34,17 @@ export function DashboardView(): JSX.Element {
   const server = useStore((s) => s.activeServer())
   const status = useStore((s) => (s.activeServerId ? s.statuses[s.activeServerId] : undefined))
   const stats = useStore((s) => (s.activeServerId ? s.stats[s.activeServerId] : undefined))
+  const updateServer = useStore((s) => s.updateServer)
+  const removeServer = useStore((s) => s.removeServer)
+  const toast = useStore((s) => s.toast)
   const [, force] = useState(0)
+  const [rename, setRename] = useState('')
+  const [confirmRemove, setConfirmRemove] = useState(false)
+  const [deleteFiles, setDeleteFiles] = useState(false)
+
+  useEffect(() => {
+    if (server) setRename(server.name)
+  }, [server?.id])
 
   // Refresh uptime display every second while running.
   useEffect(() => {
@@ -101,15 +112,71 @@ export function DashboardView(): JSX.Element {
         </div>
       )}
 
+      <div className="section-title">{t('server.args')}</div>
+      <ArgsEditor server={server} />
+
       <div className="section-title">{t('settings.baseDir')}</div>
       <div className="panel">
-        <div className="row" style={{ justifyContent: 'space-between' }}>
-          <span className="mono">{server.path}</span>
-          <button className="btn sm" onClick={() => window.msms.openPath(server.path)}>
-            <Folder size={14} /> {t('sidebar.openFolder')}
+        <div className="row wrap" style={{ gap: 10, alignItems: 'flex-end' }}>
+          <div className="field" style={{ flex: 1, minWidth: 200, marginBottom: 0 }}>
+            <label>{t('server.rename')}</label>
+            <input className="input" value={rename} onChange={(e) => setRename(e.target.value)} />
+          </div>
+          <button
+            className="btn primary"
+            onClick={async () => {
+              if (rename.trim()) {
+                await updateServer(server.id, { name: rename.trim() })
+                toast('success', 'common.saved')
+              }
+            }}
+          >
+            <Check size={14} /> {t('common.save')}
           </button>
         </div>
+        <div className="row" style={{ justifyContent: 'space-between', marginTop: 14 }}>
+          <span className="mono">{server.path}</span>
+          <div className="row" style={{ gap: 8 }}>
+            <button className="btn sm" onClick={() => window.msms.openPath(server.path)}>
+              <Folder size={14} /> {t('sidebar.openFolder')}
+            </button>
+            <button className="btn danger sm" onClick={() => setConfirmRemove(true)}>
+              <Trash2 size={14} /> {t('server.remove')}
+            </button>
+          </div>
+        </div>
       </div>
+
+      {confirmRemove && (
+        <div className="modal-backdrop" onClick={() => setConfirmRemove(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h3>{t('server.removeTitle')}</h3>
+            <p>{t('server.removeBody', { name: server.name })}</p>
+            <label className="switch">
+              <input
+                type="checkbox"
+                checked={deleteFiles}
+                onChange={(e) => setDeleteFiles(e.target.checked)}
+              />
+              {t('server.removeWithFiles')}
+            </label>
+            <div className="modal-actions">
+              <button className="btn" onClick={() => setConfirmRemove(false)}>
+                {t('common.cancel')}
+              </button>
+              <button
+                className="btn danger"
+                onClick={async () => {
+                  await removeServer(server.id, deleteFiles)
+                  setConfirmRemove(false)
+                }}
+              >
+                {t('server.remove')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

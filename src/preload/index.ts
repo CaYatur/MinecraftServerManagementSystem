@@ -29,6 +29,7 @@ const api: MsmsApi = {
   updateServer: (id, patch) => ipcRenderer.invoke(IPC.serversUpdate, id, patch),
   detectServerType: (path) => ipcRenderer.invoke(IPC.serversDetect, path),
   setActiveServer: (id) => ipcRenderer.invoke(IPC.serversSetActive, id),
+  previewArgs: (java, type) => ipcRenderer.invoke(IPC.argsPreview, java, type),
 
   startServer: (id) => ipcRenderer.invoke(IPC.procStart, id),
   stopServer: (id, opts) => ipcRenderer.invoke(IPC.procStop, id, opts),

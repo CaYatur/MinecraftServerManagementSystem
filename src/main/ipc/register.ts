@@ -9,6 +9,7 @@ import * as registry from '../core/serverRegistry'
 import { processManager } from '../core/processManager'
 import { getProvider } from '../core/versions'
 import { createServer } from '../core/createServer'
+import { buildLaunchArgs } from '../core/javaArgs'
 import * as files from '../core/serverFiles'
 import * as players from '../core/players'
 import * as rcon from '../core/rcon'
@@ -125,6 +126,9 @@ export function registerIpc(): void {
       c.activeServerId = id
     })
   })
+  H(IPC.argsPreview, (_e, java: Parameters<typeof buildLaunchArgs>[0], type: ServerType) =>
+    buildLaunchArgs(java, type)
+  )
 
   // --- process control ---
   H(IPC.procStart, (_e, id: string) => processManager.start(id))

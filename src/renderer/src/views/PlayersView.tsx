@@ -12,8 +12,7 @@ import {
   Moon,
   CloudRain,
   CloudLightning,
-  Save,
-  Gamepad2
+  Save
 } from 'lucide-react'
 import { useStore } from '../store'
 import { formatDuration } from '../components/ui'

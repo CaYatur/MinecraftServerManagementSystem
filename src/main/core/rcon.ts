@@ -17,6 +17,7 @@ interface Conn {
 
 const conns = new Map<string, Conn>()
 const connecting = new Set<string>()
+const aborting = new Set<string>()
 
 function propMap(id: string): Record<string, string> {
   return Object.fromEntries(readProperties(id).entries.map((e) => [e.key, e.value]))
@@ -64,8 +65,10 @@ export async function connect(id: string): Promise<void> {
   const host = map['server-ip']?.trim() || '127.0.0.1'
 
   connecting.add(id)
+  aborting.delete(id)
   try {
     for (let i = 0; i < 12; i++) {
+      if (aborting.has(id)) return // server stopped while we were retrying
       try {
         const rcon = await Rcon.connect({ host, port, password, timeout: 4000 })
         const conn: Conn = { rcon, tps: null }
@@ -82,6 +85,7 @@ export async function connect(id: string): Promise<void> {
     log.warn(`RCON could not connect for ${server.name}`)
   } finally {
     connecting.delete(id)
+    aborting.delete(id)
   }
 }
 
@@ -93,6 +97,8 @@ function teardown(id: string): void {
 }
 
 export function disconnect(id: string): void {
+  // Abort any in-flight connect retry loop as well.
+  if (connecting.has(id)) aborting.add(id)
   const c = conns.get(id)
   if (!c) return
   if (c.tpsTimer) clearInterval(c.tpsTimer)

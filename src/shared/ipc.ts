@@ -12,6 +12,7 @@ import type {
   ServerType,
   StopOptions,
   LogLine,
+  JavaArgsConfig,
   FileEntry,
   PropsData,
   PlayerInfo,
@@ -46,6 +47,7 @@ export const IPC = {
   serversUpdate: 'servers:update',
   serversDetect: 'servers:detect',
   serversSetActive: 'servers:set-active',
+  argsPreview: 'args:preview',
 
   procStart: 'process:start',
   procStop: 'process:stop',
@@ -157,6 +159,7 @@ export interface MsmsApi {
   updateServer(id: string, patch: Partial<ServerConfig>): Promise<ServerConfig>
   detectServerType(path: string): Promise<{ type: ServerType; mcVersion: string; jarFile: string }>
   setActiveServer(id: string): Promise<void>
+  previewArgs(java: JavaArgsConfig, type: ServerType): Promise<string[]>
 
   startServer(id: string): Promise<void>
   stopServer(id: string, opts?: StopOptions): Promise<void>
