@@ -1,7 +1,7 @@
 import type en from './en'
 
 const tr: typeof en = {
-  app: { title: 'Minecraft Sunucu Yöneticisi', subtitle: 'Taşınabilir kontrol paneli' },
+  app: { title: 'CaYaDev Sunucu Yöneticisi', subtitle: 'Minecraft Sunucu Yöneticisi' },
   nav: {
     dashboard: 'Panel',
     console: 'Konsol',

@@ -1,6 +1,10 @@
-# Minecraft Server Manager (MSMS)
+<p align="center">
+  <img src="build/icon.png" width="120" alt="CaYaDev Server Manager" />
+</p>
 
-> Portable, open-source desktop control panel for Minecraft servers — bilingual (English / Türkçe), built with Electron + React + TypeScript.
+# CaYaDev Server Manager (MSMS)
+
+> Portable, open-source desktop control panel for Minecraft servers — bilingual (English / Türkçe), built with Electron + React + TypeScript. A **CaYaDev** project.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-blue)

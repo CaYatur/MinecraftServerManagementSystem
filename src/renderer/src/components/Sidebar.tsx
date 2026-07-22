@@ -2,6 +2,7 @@ import { useTranslation } from 'react-i18next'
 import { Plus, FolderPlus, RefreshCw, Settings as SettingsIcon, Server, FolderOpen } from 'lucide-react'
 import { useStore } from '../store'
 import { StatusDot } from './ui'
+import { Logo } from './Logo'
 
 export function Sidebar(): JSX.Element {
   const { t } = useTranslation()
@@ -19,11 +20,11 @@ export function Sidebar(): JSX.Element {
     <div className="sidebar">
       <div className="sidebar-head">
         <div className="brand">
-          <span className="logo">
-            <Server size={16} />
-          </span>
+          <Logo size={34} />
           <div>
-            {t('app.title')}
+            <span className="wordmark">
+              CaYa<span className="accent-text">Dev</span>
+            </span>
             <small>{t('app.subtitle')}</small>
           </div>
         </div>

@@ -9,9 +9,10 @@
   --text: #e7e9ee;
   --text-dim: #9aa0ad;
   --text-faint: #6b7280;
-  --accent: #4ade80;
-  --accent-strong: #22c55e;
-  --accent-fg: #05230f;
+  --accent: #e5313f;
+  --accent-strong: #b3121f;
+  --accent-fg: #ffffff;
+  --online: #4ade80;
   --danger: #f87171;
   --danger-strong: #ef4444;
   --warning: #fbbf24;
@@ -34,9 +35,10 @@
   --text: #1a1c22;
   --text-dim: #5b6270;
   --text-faint: #8b91a0;
-  --accent: #16a34a;
-  --accent-strong: #15803d;
+  --accent: #d61f2b;
+  --accent-strong: #a80f1a;
   --accent-fg: #ffffff;
+  --online: #16a34a;
   --shadow: 0 8px 24px rgba(20, 30, 50, 0.12);
 }
 
@@ -82,6 +84,7 @@ button {
   display: grid;
   grid-template-columns: 250px 1fr;
   height: 100%;
+  background: radial-gradient(1100px 460px at 0% -8%, rgba(229, 49, 63, 0.1), transparent 62%);
 }
 
 .sidebar {
@@ -118,6 +121,14 @@ button {
   font-weight: 500;
   font-size: 11px;
   color: var(--text-faint);
+}
+.wordmark {
+  font-weight: 800;
+  font-size: 17px;
+  letter-spacing: 0.6px;
+}
+.accent-text {
+  color: var(--accent);
 }
 
 .sidebar-actions {
@@ -373,7 +384,7 @@ textarea.input:focus {
   flex-shrink: 0;
 }
 .dot.running {
-  background: var(--accent);
+  background: var(--online);
   box-shadow: 0 0 0 3px rgba(74, 222, 128, 0.18);
 }
 .dot.starting,

@@ -1,5 +1,6 @@
 import { app, BrowserWindow, shell, Menu, session } from 'electron'
 import { join } from 'node:path'
+import { existsSync } from 'node:fs'
 import { loadConfig, getConfig } from './config'
 import { registerIpc } from './ipc/register'
 import { processManager } from './core/processManager'
@@ -12,6 +13,7 @@ let mainWindow: BrowserWindow | null = null
 let cleanupDone = false
 
 function createWindow(): void {
+  const devIcon = join(__dirname, '../../build/icon.png')
   mainWindow = new BrowserWindow({
     width: 1320,
     height: 860,
@@ -20,7 +22,8 @@ function createWindow(): void {
     show: false,
     backgroundColor: '#0e0f13',
     autoHideMenuBar: true,
-    title: 'Minecraft Server Manager',
+    title: 'CaYaDev Server Manager',
+    ...(existsSync(devIcon) ? { icon: devIcon } : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,

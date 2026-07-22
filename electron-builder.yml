@@ -1,6 +1,6 @@
-appId: com.cayatur.msms
-productName: Minecraft Server Manager
-copyright: Copyright (c) 2026 CaYatur
+appId: com.cayadev.msms
+productName: CaYaDev Server Manager
+copyright: Copyright (c) 2026 CaYaDev (CaYatur)
 
 directories:
   buildResources: build

@@ -1,5 +1,5 @@
 export default {
-  app: { title: 'Minecraft Server Manager', subtitle: 'Portable control panel' },
+  app: { title: 'CaYaDev Server Manager', subtitle: 'Minecraft Server Manager' },
   nav: {
     dashboard: 'Dashboard',
     console: 'Console',
