@@ -154,7 +154,10 @@ function startTps(id: string): void {
     const r = await tryCommand(id, 'tps')
     if (!r) return
     const clean = r.replace(/§[0-9a-fk-or]/gi, '')
-    const m = clean.match(/(\d+\.?\d*)/)
+    // Paper: "TPS from last 1m, 5m, 15m: 20.0, 20.0, 20.0" — take the FIRST
+    // number AFTER the colon (a naive first-digit match grabs the "1" in "1m").
+    const after = clean.slice(clean.lastIndexOf(':') + 1)
+    const m = after.match(/(\d+(?:\.\d+)?)/)
     if (m) c.tps = Math.min(20, parseFloat(m[1]))
   }
   void poll()

@@ -11,6 +11,7 @@ import * as playersMod from './core/players'
 import * as backupsMod from './core/backups'
 import * as schedulerMod from './core/scheduler'
 import * as modsMod from './core/mods'
+import * as rcon from './core/rcon'
 import { analyzeCrash } from './core/crash'
 import { CREATABLE_TYPES } from '@shared/versions'
 
@@ -277,5 +278,74 @@ export async function runWizardSmoke(): Promise<void> {
   }
 
   console.log('WIZARD-SMOKE: PASS')
+  app.exit(0)
+}
+
+/**
+ * REAL end-to-end test against an actual Paper server: create -> start ->
+ * RCON connect -> list/tps parse -> players -> graceful stop. This exercises
+ * the RCON / TPS / NBT / graceful-stop paths the mock structurally cannot.
+ */
+export async function runRealSmoke(): Promise<void> {
+  const fail = (m: string): void => {
+    console.log('REAL-SMOKE: FAIL -', m)
+    app.exit(1)
+  }
+  const mc = process.env['MSMS_REAL_MC'] || '1.21.4'
+  let serverId = ''
+  try {
+    console.log('REAL-SMOKE: creating Paper', mc)
+    const server = await createServer(
+      {
+        name: 'RealPaper',
+        folderName: 'RealPaper',
+        type: 'paper',
+        mcVersion: mc,
+        memoryMB: 2048,
+        preset: 'basic',
+        acceptEula: true,
+        onlineMode: false,
+        port: 25599
+      },
+      (p) => console.log('REAL-SMOKE: progress', p.stage, p.percent ?? '')
+    )
+    serverId = server.id
+
+    console.log('REAL-SMOKE: starting (world gen can take a while)…')
+    await processManager.start(server.id)
+    const up = await waitFor(() => processManager.getStatus(server.id).status === 'running', 150000)
+    if (!up) return fail('paper never reached running; status=' + processManager.getStatus(server.id).status)
+    console.log('REAL-SMOKE: running')
+
+    const rconOk = await waitFor(() => rcon.isConnected(server.id), 30000)
+    if (!rconOk) return fail('rcon did not connect to real server')
+    console.log('REAL-SMOKE: rcon connected')
+
+    const list = await rcon.listPlayers(server.id)
+    console.log(`REAL-SMOKE: list parsed online=${list.online} max=${list.max}`)
+    if (list.max <= 0) return fail('list parse failed (max=0)')
+
+    await sleep(8000)
+    const tps = rcon.getTps(server.id)
+    console.log('REAL-SMOKE: tps parsed =', tps)
+    if (tps == null || tps < 10) return fail('tps parse failed (got ' + tps + ', expected ~20)')
+
+    const players = await playersMod.getPlayers(server.id)
+    console.log('REAL-SMOKE: getPlayers count =', players.length)
+
+    console.log('REAL-SMOKE: graceful stop…')
+    await processManager.stop(server.id, { countdownSeconds: 2 })
+    const down = await waitFor(
+      () => ['stopped', 'crashed'].includes(processManager.getStatus(server.id).status),
+      40000
+    )
+    if (!down) return fail('real server did not stop cleanly')
+    console.log('REAL-SMOKE: stopped')
+  } catch (e) {
+    return fail('exception: ' + String(e))
+  } finally {
+    if (serverId) removeServer(serverId, true)
+  }
+  console.log('REAL-SMOKE: PASS')
   app.exit(0)
 }

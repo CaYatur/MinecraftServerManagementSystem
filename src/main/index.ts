@@ -6,7 +6,7 @@ import { processManager } from './core/processManager'
 import { initScheduler, stopAllJobs } from './core/scheduler'
 import { resolveBaseDir } from './paths'
 import { log } from './logger'
-import { runSmoke, runWizardSmoke } from './smoke'
+import { runSmoke, runWizardSmoke, runRealSmoke } from './smoke'
 
 let mainWindow: BrowserWindow | null = null
 let cleanupDone = false
@@ -95,6 +95,14 @@ if (!gotLock) {
       runWizardSmoke().catch((e) => {
         // eslint-disable-next-line no-console
         console.log('WIZARD-SMOKE: FAIL - exception', String(e))
+        app.exit(1)
+      })
+      return
+    }
+    if (process.env['MSMS_SMOKE_REAL']) {
+      runRealSmoke().catch((e) => {
+        // eslint-disable-next-line no-console
+        console.log('REAL-SMOKE: FAIL - exception', String(e))
         app.exit(1)
       })
       return
