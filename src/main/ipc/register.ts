@@ -17,6 +17,7 @@ import * as mods from '../core/mods'
 import * as backups from '../core/backups'
 import * as scheduler from '../core/scheduler'
 import { analyzeCrash } from '../core/crash'
+import { checkForUpdates } from '../core/updates'
 import { log } from '../logger'
 import type {
   Bootstrap,
@@ -66,6 +67,7 @@ export function registerIpc(): void {
     if (/^https?:\/\//i.test(url)) return shell.openExternal(url)
     return Promise.resolve()
   })
+  H(IPC.updateCheck, () => checkForUpdates())
 
   // --- config ---
   H(IPC.configGet, () => getConfig())

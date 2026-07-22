@@ -20,7 +20,8 @@ import type {
   BackupOptions,
   ScheduleTask,
   ScheduleAction,
-  CrashReport
+  CrashReport,
+  UpdateInfo
 } from './types'
 import type { McVersion, BuildInfo, CreateServerOptions, CreateProgress } from './versions'
 import type { ModEntry, ModrinthHit } from './mods'
@@ -31,6 +32,7 @@ export const IPC = {
   appQuit: 'app:quit',
   openPath: 'app:open-path',
   openExternal: 'app:open-external',
+  updateCheck: 'app:update-check',
 
   configGet: 'config:get',
   configSetLanguage: 'config:set-language',
@@ -143,6 +145,7 @@ export interface MsmsApi {
   quit(): Promise<void>
   openPath(target: string): Promise<void>
   openExternal(url: string): Promise<void>
+  checkForUpdates(): Promise<UpdateInfo>
 
   getConfig(): Promise<AppConfig>
   setLanguage(lang: Language): Promise<AppConfig>

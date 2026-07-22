@@ -153,7 +153,7 @@ export async function runSmoke(): Promise<void> {
   sf.deleteEntry(id, 'msms-test.txt')
   console.log('SMOKE: props/files OK')
 
-  await waitFor(() => statsSeen, 3000)
+  await waitFor(() => statsSeen, 8000)
   if (!statsSeen) return fail('no stats event received')
   console.log('SMOKE: stats OK')
 

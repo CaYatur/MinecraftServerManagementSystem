@@ -13,6 +13,7 @@ const api: MsmsApi = {
   quit: () => ipcRenderer.invoke(IPC.appQuit),
   openPath: (target) => ipcRenderer.invoke(IPC.openPath, target),
   openExternal: (url) => ipcRenderer.invoke(IPC.openExternal, url),
+  checkForUpdates: () => ipcRenderer.invoke(IPC.updateCheck),
 
   getConfig: () => ipcRenderer.invoke(IPC.configGet),
   setLanguage: (lang) => ipcRenderer.invoke(IPC.configSetLanguage, lang),

@@ -87,7 +87,13 @@ const tr: typeof en = {
     baseDir: 'Veri / çalışma dizini',
     about: 'Hakkında',
     aboutBody: 'Taşınabilir, açık kaynaklı Minecraft sunucu yöneticisi. Tüm veriler uygulamanın yanında saklanır.',
-    version: 'Sürüm'
+    version: 'Sürüm',
+    updates: 'Güncellemeler',
+    checkUpdates: 'Güncellemeleri denetle',
+    checking: 'Denetleniyor…',
+    upToDate: 'En son sürümü kullanıyorsunuz.',
+    updateAvailable: '{{version}} sürümü mevcut.',
+    download: 'İndir'
   },
   server: {
     add: 'Var olan sunucuyu ekle',

@@ -50,6 +50,8 @@ export class ProcessManager extends EventEmitter {
   constructor() {
     super()
     this.setMaxListeners(50)
+    // Warm up pidusage's helper process so the first real stat isn't delayed.
+    void pidusage(process.pid).catch(() => {})
     // Poll CPU/RAM for running servers and emit stats.
     setInterval(() => void this.pollStats(), 2000)
   }

@@ -26,22 +26,28 @@ create, configure, monitor and control servers from a clean graphical interface.
 - **Optimised launch flags** — Aikar's flags presets (incl. large-heap tuning) or fully custom
   JVM arguments, with a live command preview.
 
-### 🧩 Feature roadmap
+### 🧩 Features
 | Area | Status |
 |------|--------|
 | Portable data root, config, single-instance | ✅ |
 | EN/TR i18n with auto-detect | ✅ |
 | Server discovery / add existing / detect type & version | ✅ |
 | Process manager: start / stop / restart / kill, live console | ✅ |
-| Graceful shutdown with localized player countdown | ✅ |
-| RCON control layer (auto-enable) | 🚧 |
-| Create server wizard (Vanilla, Paper, Purpur, Fabric, Forge, NeoForge, Mohist…) with live versions | 🚧 |
-| `server.properties` GUI editor + file editor | 🚧 |
-| Player management (OP, whitelist, ban, playtime, position, health…) | 🚧 |
-| Live stats: CPU, RAM, TPS, players, uptime | 🚧 |
-| Plugin / mod manager | 🚧 |
-| Backup system (incl. other drives) + scheduler | 🚧 |
-| Crash analyzer | 🚧 |
+| Graceful shutdown with localized player countdown + kick | ✅ |
+| RCON control layer (auto-enable, live TPS, world controls) | ✅ |
+| Create-server wizard (Vanilla, Paper, Folia, Purpur, Fabric, Forge, NeoForge, Mohist, Velocity) with live versions + hash-verified downloads | ✅ |
+| Optimised launch flags (Aikar presets + custom) with live preview | ✅ |
+| `server.properties` GUI editor (typed) + raw + file explorer/editor | ✅ |
+| Player management (OP, whitelist, ban, kick, gamemode, playtime, position, health, IP…) | ✅ |
+| Live stats: CPU, RAM, TPS, players, uptime | ✅ |
+| Plugin / mod manager (local + Modrinth search & install) | ✅ |
+| Backup system (world/full, any drive) + restore + retention | ✅ |
+| Cron scheduler (restart / backup / command / broadcast) | ✅ |
+| Crash analyzer (known-pattern detection with fixes) | ✅ |
+| CI + automated portable-exe releases + in-app update check | ✅ |
+
+> Notes: Forge/NeoForge run their official installer (`--installServer`) on create.
+> Spigot is intentionally not one-click (it requires BuildTools compilation).
 
 ### 🚀 Getting started (development)
 ```bash

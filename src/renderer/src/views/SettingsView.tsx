@@ -1,8 +1,8 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Coffee, Folder, Check } from 'lucide-react'
+import { Coffee, Folder, Check, RefreshCw, Download } from 'lucide-react'
 import { useStore } from '../store'
-import type { JavaPreset, Language, ThemeMode } from '@shared/types'
+import type { JavaPreset, Language, ThemeMode, UpdateInfo } from '@shared/types'
 
 const PRESETS: JavaPreset[] = ['basic', 'aikars', 'aikars-large', 'proxy']
 
@@ -23,6 +23,14 @@ export function SettingsView(): JSX.Element {
   const [preset, setPreset] = useState<JavaPreset>(d.javaPreset)
   const [countdown, setCountdown] = useState(d.stopCountdownSeconds)
   const [rcon, setRcon] = useState(d.autoEnableRcon)
+  const [update, setUpdate] = useState<UpdateInfo | null>(null)
+  const [checking, setChecking] = useState(false)
+
+  const checkUpdates = async (): Promise<void> => {
+    setChecking(true)
+    setUpdate(await window.msms.checkForUpdates())
+    setChecking(false)
+  }
 
   const browseJava = async (): Promise<void> => {
     const p = await window.msms.pickFile([{ name: 'Java', extensions: ['exe', ''] }])
@@ -162,6 +170,29 @@ export function SettingsView(): JSX.Element {
           <button className="btn sm" onClick={() => window.msms.openPath(baseDir)}>
             <Folder size={14} /> {t('sidebar.openFolder')}
           </button>
+        </div>
+      </div>
+
+      <div className="section-title">{t('settings.updates')}</div>
+      <div className="panel">
+        <div className="row" style={{ gap: 10, flexWrap: 'wrap' }}>
+          <button className="btn" onClick={checkUpdates} disabled={checking}>
+            <RefreshCw size={14} className={checking ? 'spin' : ''} />
+            {checking ? t('settings.checking') : t('settings.checkUpdates')}
+          </button>
+          {update && !update.available && <span className="badge">{t('settings.upToDate')}</span>}
+          {update && update.available && (
+            <>
+              <span className="badge op-badge">
+                {t('settings.updateAvailable', { version: update.latest })}
+              </span>
+              {update.url && (
+                <button className="btn primary sm" onClick={() => window.msms.openExternal(update.url!)}>
+                  <Download size={13} /> {t('settings.download')}
+                </button>
+              )}
+            </>
+          )}
         </div>
       </div>
 

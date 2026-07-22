@@ -143,6 +143,13 @@ export interface JavaInfo {
   major: number
 }
 
+export interface UpdateInfo {
+  current: string
+  latest?: string
+  available: boolean
+  url?: string
+}
+
 export interface PlayerInfo {
   uuid: string
   name: string

@@ -85,7 +85,13 @@ export default {
     baseDir: 'Data / launch directory',
     about: 'About',
     aboutBody: 'Portable, open-source Minecraft server manager. All data is stored next to the app.',
-    version: 'Version'
+    version: 'Version',
+    updates: 'Updates',
+    checkUpdates: 'Check for updates',
+    checking: 'Checking…',
+    upToDate: 'You are on the latest version.',
+    updateAvailable: 'Version {{version}} is available.',
+    download: 'Download'
   },
   server: {
     add: 'Add existing server',
