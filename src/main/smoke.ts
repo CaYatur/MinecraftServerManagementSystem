@@ -124,11 +124,28 @@ export async function runSmoke(): Promise<void> {
   )
   await sleep(300)
   if (await viewCrashed()) return fail('create view crashed')
-  // back to console
+  // Return to a server view (settings/create have no tab bar), then open a file
+  // to verify the CodeMirror editor mounts.
+  await win.webContents.executeJavaScript(`document.querySelector('.server-item')?.click()`)
+  await sleep(300)
   await win.webContents.executeJavaScript(
-    `[...document.querySelectorAll('.tab')].find(b=>/./.test(b.textContent))?.click()`
+    `[...document.querySelectorAll('.tab')].find(b=>/File|Dosya/.test(b.textContent))?.click()`
   )
-  console.log('SMOKE: all views mounted OK')
+  await sleep(400)
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll('.tree-row')].find(r=>/properties/.test(r.textContent))?.click()`
+  )
+  await sleep(600)
+  const diag = await win.webContents.executeJavaScript(`JSON.stringify({
+    rows: document.querySelectorAll('.tree-row').length,
+    names: [...document.querySelectorAll('.tree-name')].map(n=>n.textContent),
+    tabs: document.querySelectorAll('.editor-tab').length,
+    cm: !!document.querySelector('.cm-editor'),
+    crashed: !!document.querySelector('.center-fill h3')
+  })`)
+  const cmOk = await win.webContents.executeJavaScript(`!!document.querySelector('.cm-editor')`)
+  if (!cmOk) return fail('CodeMirror editor did not mount; diag=' + diag)
+  console.log('SMOKE: all views mounted OK (CodeMirror OK)')
 
   // --- 2. start ---
   let statsSeen = false
