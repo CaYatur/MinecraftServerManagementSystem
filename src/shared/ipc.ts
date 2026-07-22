@@ -13,7 +13,8 @@ import type {
   StopOptions,
   LogLine,
   FileEntry,
-  PropsData
+  PropsData,
+  PlayerInfo
 } from './types'
 import type { McVersion, BuildInfo, CreateServerOptions, CreateProgress } from './versions'
 
@@ -61,7 +62,16 @@ export const IPC = {
   folderCreate: 'files:mkdir',
   propsRead: 'props:read',
   propsWrite: 'props:write',
-  propsWriteRaw: 'props:write-raw'
+  propsWriteRaw: 'props:write-raw',
+
+  playersList: 'players:list',
+  playerOp: 'players:op',
+  playerWhitelist: 'players:whitelist',
+  playerBan: 'players:ban',
+  playerKick: 'players:kick',
+  playerGamemode: 'players:gamemode',
+  worldControl: 'world:control',
+  rconStatus: 'rcon:status'
 } as const
 
 /** event channels (main -> renderer via webContents.send). */
@@ -144,6 +154,15 @@ export interface MsmsApi {
   readProperties(id: string): Promise<PropsData>
   writeProperties(id: string, updates: Record<string, string>): Promise<void>
   writeRawProperties(id: string, raw: string): Promise<void>
+
+  getPlayers(id: string): Promise<PlayerInfo[]>
+  setOp(id: string, player: PlayerInfo, on: boolean): Promise<void>
+  setWhitelist(id: string, player: PlayerInfo, on: boolean): Promise<void>
+  setBan(id: string, player: PlayerInfo, on: boolean, reason?: string): Promise<void>
+  kickPlayer(id: string, player: PlayerInfo, reason?: string): Promise<void>
+  setGamemode(id: string, player: PlayerInfo, gm: string): Promise<void>
+  worldControl(id: string, cmd: string): Promise<void>
+  rconConnected(id: string): Promise<boolean>
 
   // event subscriptions -> return unsubscribe fn
   onServerLog(cb: (e: ServerLogEvent) => void): () => void

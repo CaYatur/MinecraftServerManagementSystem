@@ -7,6 +7,7 @@ import { getProvider } from './core/versions'
 import { createServer } from './core/createServer'
 import { removeServer } from './core/serverRegistry'
 import * as sf from './core/serverFiles'
+import * as playersMod from './core/players'
 import { CREATABLE_TYPES } from '@shared/versions'
 
 /* eslint-disable no-console */
@@ -121,6 +122,20 @@ export async function runSmoke(): Promise<void> {
   await waitFor(() => statsSeen, 3000)
   if (!statsSeen) return fail('no stats event received')
   console.log('SMOKE: stats OK')
+
+  // --- 2c. RCON auto-enable + player JSON merge ---
+  const pm = Object.fromEntries(sf.readProperties(id).entries.map((e) => [e.key, e.value]))
+  if (pm['enable-rcon'] !== 'true') return fail('rcon not auto-enabled in properties')
+  if (!pm['rcon.password']) return fail('rcon password not generated')
+  const uuid = '11111111-1111-1111-1111-111111111111'
+  sf.writeTextFile(id, 'usercache.json', JSON.stringify([{ name: 'Steve', uuid }]))
+  sf.writeTextFile(id, 'ops.json', JSON.stringify([{ uuid, name: 'Steve', level: 4 }]))
+  const plist = await playersMod.getPlayers(id)
+  const steve = plist.find((p) => p.name === 'Steve')
+  sf.deleteEntry(id, 'usercache.json')
+  sf.deleteEntry(id, 'ops.json')
+  if (!steve || !steve.op) return fail('players: op merge failed')
+  console.log('SMOKE: rcon-enable + players merge OK')
 
   // --- 3. command over stdin ---
   processManager.sendCommand(id, 'say hello-from-smoke')

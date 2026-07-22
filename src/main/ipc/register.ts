@@ -10,8 +10,18 @@ import { processManager } from '../core/processManager'
 import { getProvider } from '../core/versions'
 import { createServer } from '../core/createServer'
 import * as files from '../core/serverFiles'
+import * as players from '../core/players'
+import * as rcon from '../core/rcon'
 import { log } from '../logger'
-import type { Bootstrap, Language, ThemeMode, ServerConfig, ServerType, StopOptions } from '@shared/types'
+import type {
+  Bootstrap,
+  Language,
+  ThemeMode,
+  ServerConfig,
+  ServerType,
+  StopOptions,
+  PlayerInfo
+} from '@shared/types'
 import type { CreateServerOptions } from '@shared/versions'
 
 function broadcast(channel: string, payload: unknown): void {
@@ -156,6 +166,24 @@ export function registerIpc(): void {
     files.writeProperties(id, updates)
   )
   H(IPC.propsWriteRaw, (_e, id: string, raw: string) => files.writeRawProperties(id, raw))
+
+  // --- players + world controls ---
+  H(IPC.playersList, (_e, id: string) => players.getPlayers(id))
+  H(IPC.playerOp, (_e, id: string, p: PlayerInfo, on: boolean) => players.setOp(id, p, on))
+  H(IPC.playerWhitelist, (_e, id: string, p: PlayerInfo, on: boolean) =>
+    players.setWhitelist(id, p, on)
+  )
+  H(IPC.playerBan, (_e, id: string, p: PlayerInfo, on: boolean, reason?: string) =>
+    players.setBan(id, p, on, reason)
+  )
+  H(IPC.playerKick, (_e, id: string, p: PlayerInfo, reason?: string) =>
+    players.kick(id, p, reason)
+  )
+  H(IPC.playerGamemode, (_e, id: string, p: PlayerInfo, gm: string) =>
+    players.setGamemode(id, p, gm)
+  )
+  H(IPC.worldControl, (_e, id: string, cmd: string) => players.worldControl(id, cmd))
+  H(IPC.rconStatus, (_e, id: string) => rcon.isConnected(id))
 
   log.info('IPC handlers registered')
 }

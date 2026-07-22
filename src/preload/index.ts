@@ -53,6 +53,15 @@ const api: MsmsApi = {
   writeProperties: (id, updates) => ipcRenderer.invoke(IPC.propsWrite, id, updates),
   writeRawProperties: (id, raw) => ipcRenderer.invoke(IPC.propsWriteRaw, id, raw),
 
+  getPlayers: (id) => ipcRenderer.invoke(IPC.playersList, id),
+  setOp: (id, player, on) => ipcRenderer.invoke(IPC.playerOp, id, player, on),
+  setWhitelist: (id, player, on) => ipcRenderer.invoke(IPC.playerWhitelist, id, player, on),
+  setBan: (id, player, on, reason) => ipcRenderer.invoke(IPC.playerBan, id, player, on, reason),
+  kickPlayer: (id, player, reason) => ipcRenderer.invoke(IPC.playerKick, id, player, reason),
+  setGamemode: (id, player, gm) => ipcRenderer.invoke(IPC.playerGamemode, id, player, gm),
+  worldControl: (id, cmd) => ipcRenderer.invoke(IPC.worldControl, id, cmd),
+  rconConnected: (id) => ipcRenderer.invoke(IPC.rconStatus, id),
+
   onServerLog: (cb) => subscribe(EVT.serverLog, cb),
   onServerStatus: (cb) => subscribe(EVT.serverStatus, cb),
   onServerStats: (cb) => subscribe(EVT.serverStats, cb),

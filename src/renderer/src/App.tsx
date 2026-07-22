@@ -25,6 +25,7 @@ import { SettingsView } from './views/SettingsView'
 import { CreateView } from './views/CreateView'
 import { PropertiesView } from './views/PropertiesView'
 import { FilesView } from './views/FilesView'
+import { PlayersView } from './views/PlayersView'
 import { Placeholder } from './views/Placeholder'
 import { useState } from 'react'
 
@@ -131,7 +132,7 @@ function MainArea(): JSX.Element {
       case 'files':
         return <FilesView />
       case 'players':
-        return <Placeholder titleKey="nav.players" />
+        return <PlayersView />
       case 'plugins':
         return <Placeholder titleKey="nav.plugins" />
       case 'backups':

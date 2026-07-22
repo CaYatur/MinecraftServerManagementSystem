@@ -7,6 +7,7 @@ import { getConfig } from '../config'
 import { getServer, touchServer } from './serverRegistry'
 import { detectJava, javaExecutable } from './java'
 import { buildLaunchArgs } from './javaArgs'
+import * as rcon from './rcon'
 import { mt } from '../i18n'
 import { log } from '../logger'
 import { TPS_TYPES } from '@shared/types'
@@ -38,6 +39,7 @@ interface ManagedProcess {
   exitResolvers: Array<() => void>
   players: { online: number; max: number; names: string[] }
   tps: number | null
+  ips: Record<string, string>
 }
 
 let lineCounter = 0
@@ -58,6 +60,16 @@ export class ProcessManager extends EventEmitter {
       if (mp.status !== 'running' && mp.status !== 'starting') continue
       const pid = mp.child?.pid
       if (!pid) continue
+      // Reconcile authoritative player list + live TPS from RCON when available.
+      if (rcon.isConnected(mp.id)) {
+        rcon
+          .listPlayers(mp.id)
+          .then((l) => {
+            mp.players = { online: l.online, max: l.max || mp.players.max, names: l.names }
+          })
+          .catch(() => {})
+      }
+      mp.tps = rcon.getTps(mp.id) ?? mp.tps
       try {
         const u = await pidusage(pid)
         this.emit('stats', {
@@ -143,7 +155,11 @@ export class ProcessManager extends EventEmitter {
     if (mp.status === 'starting' && /Done \(|For help, type "help"|Listening on/.test(raw)) {
       mp.status = 'running'
       this.emitStatus(mp)
+      void rcon.connect(mp.id)
     }
+    const login = raw.match(/(\w{2,16})\[\/?([\d.]+):\d+\] logged in/)
+    if (login) mp.ips[login[1]] = login[2]
+
     const join = raw.match(/\]: (\w{2,16}) joined the game/)
     if (join) {
       if (!mp.players.names.includes(join[1])) mp.players.names.push(join[1])
@@ -162,6 +178,15 @@ export class ProcessManager extends EventEmitter {
     if (this.isRunning(id)) return
     const server = getServer(id)
     if (!server) throw new Error(`Server not found: ${id}`)
+
+    // Enable RCON in server.properties before launch so we can drive the console.
+    if (getConfig().defaults.autoEnableRcon) {
+      try {
+        rcon.ensureRconEnabled(id)
+      } catch (err) {
+        log.warn('ensureRconEnabled failed:', err)
+      }
+    }
 
     const javaInfo = await detectJava(server.java.javaPath || getConfig().defaults.javaPath)
     const javaBin = javaInfo?.path ?? javaExecutable(server.java.javaPath)
@@ -198,7 +223,8 @@ export class ProcessManager extends EventEmitter {
       exitCode: null,
       exitResolvers: [],
       players: { online: 0, max: 0, names: [] },
-      tps: null
+      tps: null,
+      ips: {}
     }
     this.procs.set(id, mp)
     touchServer(id)
@@ -222,6 +248,7 @@ export class ProcessManager extends EventEmitter {
 
     child.on('exit', (code, signal) => {
       mp.exitCode = code
+      rcon.disconnect(id)
       const crashed = !mp.stopRequested && code !== 0 && code !== null
       mp.status = crashed ? 'crashed' : 'stopped'
       this.systemLine(
@@ -250,7 +277,8 @@ export class ProcessManager extends EventEmitter {
         exitCode: null,
         exitResolvers: [],
         players: { online: 0, max: 0, names: [] },
-        tps: null
+        tps: null,
+        ips: {}
       }
       this.procs.set(id, mp)
     }
@@ -333,6 +361,9 @@ export class ProcessManager extends EventEmitter {
       this.write(mp, `say ${mt('broadcast.saving')}`)
       this.write(mp, 'save-all')
       await wait(1500)
+      // Kick everyone with a localized reason before stopping (1.13+ supports @a).
+      this.write(mp, `kick @a ${mt(isRestart ? 'kick.restart' : 'kick.shutdown')}`)
+      await wait(300)
       mp.status = 'stopping'
       this.emitStatus(mp)
       this.write(mp, 'stop')

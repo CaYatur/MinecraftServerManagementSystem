@@ -143,6 +143,34 @@ export interface JavaInfo {
   major: number
 }
 
+export interface PlayerInfo {
+  uuid: string
+  name: string
+  online: boolean
+  op: boolean
+  opLevel?: number
+  whitelisted: boolean
+  banned: boolean
+  banReason?: string
+  position?: { x: number; y: number; z: number; dimension?: string }
+  health?: number
+  food?: number
+  xpLevel?: number
+  lastSeen?: number
+  playtimeHours?: number
+  ip?: string
+}
+
+export type PlayerAction =
+  | 'op'
+  | 'deop'
+  | 'whitelist-add'
+  | 'whitelist-remove'
+  | 'ban'
+  | 'pardon'
+  | 'kick'
+  | 'gamemode'
+
 export interface FileEntry {
   name: string
   path: string // relative to server root, forward-slashed
