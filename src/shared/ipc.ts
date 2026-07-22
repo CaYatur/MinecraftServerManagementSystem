@@ -26,6 +26,7 @@ import type {
 } from './types'
 import type { McVersion, BuildInfo, CreateServerOptions, CreateProgress } from './versions'
 import type { ModEntry, ModrinthHit } from './mods'
+import type { WebStatus, WebUserView, WebConfig, WebRole, Scope } from './web'
 
 /** request/response channels (renderer -> main via invoke). */
 export const IPC = {
@@ -104,7 +105,15 @@ export const IPC = {
   scheduleDelete: 'sched:delete',
   scheduleRun: 'sched:run',
 
-  crashAnalyze: 'crash:analyze'
+  crashAnalyze: 'crash:analyze',
+
+  webStatus: 'web:status',
+  webSetConfig: 'web:set-config',
+  webUsers: 'web:users',
+  webUserCreate: 'web:user-create',
+  webUserDelete: 'web:user-delete',
+  webUserPerms: 'web:user-perms',
+  webUserPassword: 'web:user-password'
 } as const
 
 /** event channels (main -> renderer via webContents.send). */
@@ -227,6 +236,19 @@ export interface MsmsApi {
   runSchedule(id: string): Promise<void>
 
   analyzeCrash(id: string): Promise<CrashReport>
+
+  getWebStatus(): Promise<WebStatus>
+  setWebConfig(cfg: WebConfig): Promise<WebStatus>
+  listWebUsers(): Promise<WebUserView[]>
+  createWebUser(input: {
+    username: string
+    password: string
+    role: WebRole
+    perms: Record<string, Scope[]>
+  }): Promise<WebUserView>
+  deleteWebUser(id: string): Promise<void>
+  setWebUserPerms(id: string, perms: Record<string, Scope[]>): Promise<void>
+  setWebUserPassword(id: string, password: string): Promise<void>
 
   // event subscriptions -> return unsubscribe fn
   onServerLog(cb: (e: ServerLogEvent) => void): () => void

@@ -123,6 +123,7 @@ export interface AppConfig {
   servers: ServerConfig[]
   activeServerId?: string
   defaults: AppDefaults
+  web?: import('./web').WebConfig
   /** Absolute base/launch directory the app is operating from. */
   baseDir?: string
   /** User overrides for server-facing broadcast/kick messages (key -> text). */

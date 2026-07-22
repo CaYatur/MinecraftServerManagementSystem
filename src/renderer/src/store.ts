@@ -26,6 +26,7 @@ export type ViewId =
   | 'crash'
   | 'settings'
   | 'create'
+  | 'web'
 
 export interface Toast {
   id: string

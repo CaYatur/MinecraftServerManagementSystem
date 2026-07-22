@@ -19,6 +19,7 @@ function defaultConfig(): AppConfig {
       stopCountdownSeconds: 10,
       autoEnableRcon: true
     },
+    web: { enabled: false, port: 8722, bindLan: false },
     baseDir: resolveBaseDir()
   }
 }
@@ -33,6 +34,7 @@ function migrate(raw: Partial<AppConfig>): AppConfig {
     ...raw,
     version: CONFIG_VERSION,
     defaults: { ...base.defaults, ...(raw.defaults ?? {}) },
+    web: { ...base.web!, ...(raw.web ?? {}) },
     servers: Array.isArray(raw.servers) ? raw.servers : [],
     baseDir: resolveBaseDir()
   }

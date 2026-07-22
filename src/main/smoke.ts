@@ -2,7 +2,9 @@ import { app, BrowserWindow } from 'electron'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { processManager } from './core/processManager'
-import { getConfig } from './config'
+import { getConfig, updateConfig } from './config'
+import { startWebServer, stopWebServer } from './web/server'
+import * as webAuth from './web/auth'
 import { getProvider } from './core/versions'
 import { createServer } from './core/createServer'
 import { removeServer } from './core/serverRegistry'
@@ -364,5 +366,78 @@ export async function runRealSmoke(): Promise<void> {
     if (serverId) removeServer(serverId, true)
   }
   console.log('REAL-SMOKE: PASS')
+  app.exit(0)
+}
+
+/**
+ * Web-panel RBAC smoke: proves the DENIALS (401 no-token, 403 wrong-scope) and
+ * a couple of allows, headlessly via fetch to 127.0.0.1.
+ */
+export async function runWebSmoke(): Promise<void> {
+  const fail = (m: string): void => {
+    console.log('WEB-SMOKE: FAIL -', m)
+    app.exit(1)
+  }
+  webAuth.initAuth()
+  for (const u of webAuth.listUsers()) {
+    if (u.username === 'owner_t' || u.username === 'friend_t') webAuth.deleteUser(u.id)
+  }
+  const id = getConfig().servers[0]?.id
+  if (!id) return fail('no server')
+  const owner = webAuth.createUser('owner_t', 'ownerpass', 'owner', {})
+  const friend = webAuth.createUser('friend_t', 'friendpass', 'user', { [id]: ['view', 'console'] })
+  updateConfig((c) => {
+    c.web = { enabled: true, port: 8799, bindLan: false }
+  })
+  startWebServer()
+  await sleep(500)
+
+  const base = 'http://127.0.0.1:8799'
+  const post = (p: string, body: unknown, tok?: string): Promise<Response> =>
+    fetch(base + p, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(tok ? { Authorization: 'Bearer ' + tok } : {}) },
+      body: JSON.stringify(body)
+    })
+  const get = (p: string, tok?: string): Promise<Response> =>
+    fetch(base + p, { headers: tok ? { Authorization: 'Bearer ' + tok } : {} })
+
+  try {
+    let r = await post('/api/login', { username: 'owner_t', password: 'ownerpass' })
+    if (r.status !== 200) return fail('owner login ' + r.status)
+    const ot = ((await r.json()) as { token: string }).token
+
+    r = await get('/api/servers')
+    if (r.status !== 401) return fail('no-token expected 401, got ' + r.status)
+
+    r = await get('/api/servers', ot)
+    if (r.status !== 200) return fail('owner /servers ' + r.status)
+    const servers = ((await r.json()) as { servers: { id: string }[] }).servers
+    if (!servers.find((s) => s.id === id)) return fail('owner cannot see server')
+
+    r = await post('/api/login', { username: 'friend_t', password: 'friendpass' })
+    const ft = ((await r.json()) as { token: string }).token
+
+    r = await post('/api/servers/' + id + '/power', { action: 'start' }, ft)
+    if (r.status !== 403) return fail('friend power expected 403, got ' + r.status)
+
+    r = await get('/api/servers/' + id + '/console', ft)
+    if (r.status !== 200) return fail('friend console expected 200, got ' + r.status)
+
+    r = await post('/api/login', { username: 'friend_t', password: 'wrongpw' })
+    if (r.status !== 401) return fail('bad password expected 401, got ' + r.status)
+
+    console.log('WEB-SMOKE: 401 (no token), 403 (wrong scope), 200 (allowed), 401 (bad pw) all correct')
+  } catch (e) {
+    return fail('exception: ' + String(e))
+  } finally {
+    webAuth.deleteUser(owner.id)
+    webAuth.deleteUser(friend.id)
+    stopWebServer()
+    updateConfig((c) => {
+      c.web = { enabled: false, port: 8722, bindLan: false }
+    })
+  }
+  console.log('WEB-SMOKE: PASS')
   app.exit(0)
 }

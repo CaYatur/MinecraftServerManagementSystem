@@ -86,6 +86,14 @@ const api: MsmsApi = {
 
   analyzeCrash: (id) => ipcRenderer.invoke(IPC.crashAnalyze, id),
 
+  getWebStatus: () => ipcRenderer.invoke(IPC.webStatus),
+  setWebConfig: (cfg) => ipcRenderer.invoke(IPC.webSetConfig, cfg),
+  listWebUsers: () => ipcRenderer.invoke(IPC.webUsers),
+  createWebUser: (input) => ipcRenderer.invoke(IPC.webUserCreate, input),
+  deleteWebUser: (id) => ipcRenderer.invoke(IPC.webUserDelete, id),
+  setWebUserPerms: (id, perms) => ipcRenderer.invoke(IPC.webUserPerms, id, perms),
+  setWebUserPassword: (id, password) => ipcRenderer.invoke(IPC.webUserPassword, id, password),
+
   onServerLog: (cb) => subscribe(EVT.serverLog, cb),
   onServerStatus: (cb) => subscribe(EVT.serverStatus, cb),
   onServerStats: (cb) => subscribe(EVT.serverStats, cb),

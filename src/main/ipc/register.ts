@@ -18,7 +18,10 @@ import * as backups from '../core/backups'
 import * as scheduler from '../core/scheduler'
 import { analyzeCrash } from '../core/crash'
 import { checkForUpdates } from '../core/updates'
+import { startWebServer, stopWebServer, getWebStatus } from '../web/server'
+import * as auth from '../web/auth'
 import { log } from '../logger'
+import type { WebConfig, WebRole, Scope } from '@shared/web'
 import type {
   Bootstrap,
   Language,
@@ -243,6 +246,24 @@ export function registerIpc(): void {
 
   // --- crash analyzer ---
   H(IPC.crashAnalyze, (_e, id: string) => analyzeCrash(id))
+
+  // --- web panel + users (trusted desktop side) ---
+  H(IPC.webStatus, () => getWebStatus())
+  H(IPC.webSetConfig, (_e, cfg: WebConfig) => {
+    updateConfig((c) => {
+      c.web = { enabled: !!cfg.enabled, port: Number(cfg.port) || 8722, bindLan: !!cfg.bindLan }
+    })
+    if (getConfig().web?.enabled) startWebServer()
+    else stopWebServer()
+    return getWebStatus()
+  })
+  H(IPC.webUsers, () => auth.listUsers())
+  H(IPC.webUserCreate, (_e, input: { username: string; password: string; role: WebRole; perms: Record<string, Scope[]> }) =>
+    auth.createUser(input.username, input.password, input.role, input.perms)
+  )
+  H(IPC.webUserDelete, (_e, id: string) => auth.deleteUser(id))
+  H(IPC.webUserPerms, (_e, id: string, perms: Record<string, Scope[]>) => auth.setUserPerms(id, perms))
+  H(IPC.webUserPassword, (_e, id: string, password: string) => auth.setUserPassword(id, password))
 
   log.info('IPC handlers registered')
 }
