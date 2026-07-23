@@ -8,6 +8,7 @@ import { listJavaInstalls } from '../core/javaScan'
 import { detectServer } from '../core/serverDetect'
 import * as registry from '../core/serverRegistry'
 import { processManager } from '../core/processManager'
+import * as audit from '../core/audit'
 import { getProvider } from '../core/versions'
 import { createServer } from '../core/createServer'
 import { buildLaunchArgs } from '../core/javaArgs'
@@ -139,6 +140,7 @@ export function registerIpc(): void {
   H(IPC.serversRemove, async (_e, id: string, deleteFiles: boolean) => {
     // Stop a running server before removing it (avoids orphaned processes and
     // locked-file deletes on Windows).
+    audit.record({ source: 'panel', action: 'server.remove', actor: 'operator', serverId: id, detail: deleteFiles ? 'with files' : 'kept files' })
     if (processManager.isRunning(id)) await processManager.kill(id)
     registry.removeServer(id, deleteFiles)
     alerts.dropServer(id)
@@ -160,11 +162,31 @@ export function registerIpc(): void {
   )
 
   // --- process control ---
-  H(IPC.procStart, (_e, id: string) => processManager.start(id))
-  H(IPC.procStop, (_e, id: string, opts?: StopOptions) => processManager.stop(id, opts))
-  H(IPC.procRestart, (_e, id: string, opts?: StopOptions) => processManager.restart(id, opts))
-  H(IPC.procKill, (_e, id: string) => processManager.kill(id))
-  H(IPC.procCommand, (_e, id: string, command: string) => processManager.sendCommand(id, command))
+  // Desktop actions are the local operator; server control is the 'panel'
+  // source, typed console commands the 'console' source.
+  const opAudit = (action: string, id: string): void => {
+    audit.record({ source: 'panel', action, actor: 'operator', serverId: id })
+  }
+  H(IPC.procStart, (_e, id: string) => {
+    opAudit('server.start', id)
+    return processManager.start(id)
+  })
+  H(IPC.procStop, (_e, id: string, opts?: StopOptions) => {
+    opAudit('server.stop', id)
+    return processManager.stop(id, opts)
+  })
+  H(IPC.procRestart, (_e, id: string, opts?: StopOptions) => {
+    opAudit('server.restart', id)
+    return processManager.restart(id, opts)
+  })
+  H(IPC.procKill, (_e, id: string) => {
+    opAudit('server.kill', id)
+    return processManager.kill(id)
+  })
+  H(IPC.procCommand, (_e, id: string, command: string) => {
+    audit.record({ source: 'console', action: 'command.run', actor: 'operator', serverId: id, target: command })
+    return processManager.sendCommand(id, command)
+  })
   H(IPC.procStatus, (_e, id: string) => processManager.getStatus(id))
   H(IPC.procStatusAll, () => processManager.getAllStatus())
   H(IPC.procLogHistory, (_e, id: string) => processManager.getLogHistory(id))
@@ -179,8 +201,10 @@ export function registerIpc(): void {
   H(IPC.serverCreate, async (_e, opts: CreateServerOptions) => {
     try {
       const server = await createServer(opts, (p) => broadcast(EVT.createProgress, p))
+      audit.record({ source: 'panel', action: 'server.create', actor: 'operator', serverId: server.id, target: server.name, detail: `${opts.type} ${opts.mcVersion}` })
       return { ok: true, server }
     } catch (err) {
+      audit.record({ source: 'panel', action: 'server.create', actor: 'operator', ok: false, target: opts.name, detail: String((err as Error)?.message ?? err) })
       return { ok: false, error: String((err as Error)?.message ?? err) }
     }
   })
