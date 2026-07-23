@@ -95,12 +95,16 @@ function serverSummary(user: AuthUser, id: string): Record<string, unknown> | nu
   const scopes: Scope[] = user.role === 'owner'
     ? (['view', 'console', 'power', 'players', 'files', 'backups', 'settings', 'store'] as Scope[])
     : user.perms[id] ?? []
+  // Live bits the panel shows in the list without a second request.
+  const rt = processManager.getRuntime(id)
   return {
     id: s.id,
     name: s.name,
     type: s.type,
     mcVersion: s.mcVersion,
     status: st.status,
+    startedAt: st.startedAt,
+    players: rt ? { online: rt.players.online, max: rt.players.max } : undefined,
     scopes
   }
 }
