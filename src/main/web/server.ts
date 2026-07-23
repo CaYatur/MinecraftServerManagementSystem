@@ -12,7 +12,7 @@ import * as economy from '../store/economy'
 import * as site from './site'
 import * as playerAuth from './playerAuth'
 import { getPublicSiteHtml } from './publicSiteHtml'
-import type { Product } from '@shared/web'
+import type { Product, SitePost } from '@shared/web'
 import {
   initAuth,
   login,
@@ -141,7 +141,8 @@ async function handlePublic(
   const sub = path.slice('/api/public/'.length)
 
   if (sub === 'site' && method === 'GET') return sendJson(res, 200, site.publicSite())
-  if (sub === 'status' && method === 'GET') return sendJson(res, 200, site.publicSite().status)
+  if (sub === 'status' && method === 'GET')
+    return sendJson(res, 200, { servers: site.publicSite().servers })
 
   if (sub === 'register/start' && method === 'POST') {
     const b = (await readBody(req).catch(() => ({}))) as { mcName?: string }
@@ -441,6 +442,30 @@ async function handlePanel(req: IncomingMessage, res: ServerResponse): Promise<v
         balances: economy.listBalances(id),
         currency: economy.publicStore(id).currency
       })
+    }
+  }
+
+  // ---- site / news management from the admin panel ----
+  if (path.startsWith('/api/site')) {
+    const canSite = user.role === 'owner' || can(user, site.siteServerId(), 'settings')
+    if (!canSite) return sendJson(res, 403, { error: 'forbidden', need: 'settings' })
+    if (path === '/api/site/posts' && method === 'GET') {
+      return sendJson(res, 200, { posts: site.getSiteConfig().posts })
+    }
+    // Existing uploads can be attached from the panel; uploading itself stays a
+    // desktop-only action (no unauthenticated/large-body upload endpoint).
+    if (path === '/api/site/uploads' && method === 'GET') {
+      return sendJson(res, 200, { uploads: site.listUploads() })
+    }
+    if (path === '/api/site/posts' && method === 'POST') {
+      const b = (await readBody(req).catch(() => ({}))) as Partial<SitePost>
+      // author is taken from the session — never from the client
+      return sendJson(res, 200, site.upsertPost(b, user.username))
+    }
+    if (path === '/api/site/posts/delete' && method === 'POST') {
+      const b = (await readBody(req).catch(() => ({}))) as { id?: string }
+      site.deletePost(b.id ?? '')
+      return sendJson(res, 200, { ok: true })
     }
   }
 

@@ -110,6 +110,9 @@ const api: MsmsApi = {
   upsertSitePost: (post) => ipcRenderer.invoke(IPC.sitePostUpsert, post),
   deleteSitePost: (id) => ipcRenderer.invoke(IPC.sitePostDelete, id),
   uploadSiteImage: () => ipcRenderer.invoke(IPC.siteUpload),
+  listSiteUploads: () => ipcRenderer.invoke(IPC.siteUploads),
+  addSiteLanguage: (code, copyFrom) => ipcRenderer.invoke(IPC.siteLangAdd, code, copyFrom),
+  removeSiteLanguage: (code) => ipcRenderer.invoke(IPC.siteLangRemove, code),
 
   onServerLog: (cb) => subscribe(EVT.serverLog, cb),
   onServerStatus: (cb) => subscribe(EVT.serverStatus, cb),

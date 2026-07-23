@@ -294,7 +294,10 @@ export function registerIpc(): void {
   // --- public site / CMS (trusted desktop admin) ---
   H(IPC.siteGet, () => site.getSiteConfig())
   H(IPC.siteSet, (_e, patch: Partial<SiteConfig>) => site.setSiteConfig(patch))
-  H(IPC.sitePostUpsert, (_e, post: Partial<SitePost>) => site.upsertPost(post))
+  H(IPC.sitePostUpsert, (_e, post: Partial<SitePost>) => site.upsertPost(post, post.author))
+  H(IPC.siteUploads, () => site.listUploads())
+  H(IPC.siteLangAdd, (_e, code: string, copyFrom?: string) => site.addLanguage(code, copyFrom))
+  H(IPC.siteLangRemove, (_e, code: string) => site.removeLanguage(code))
   H(IPC.sitePostDelete, (_e, id: string) => site.deletePost(id))
   H(IPC.siteUpload, async () => {
     const res = await dialog.showOpenDialog({

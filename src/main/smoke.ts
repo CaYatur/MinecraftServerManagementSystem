@@ -8,6 +8,7 @@ import { startWebServer, stopWebServer } from './web/server'
 import * as webAuth from './web/auth'
 import * as webPlayerAuth from './web/playerAuth'
 import * as economy from './store/economy'
+import * as siteMod from './web/site'
 import type { Product } from '@shared/web'
 import { getProvider } from './core/versions'
 import { createServer } from './core/createServer'
@@ -591,6 +592,35 @@ export async function runWebSmoke(): Promise<void> {
     console.log(
       'WEB-SMOKE: listener isolation + public routes + player/admin separation + traversal all correct'
     )
+
+    // ---- site: custom language (A5) ----
+    siteMod.addLanguage('de', 'en')
+    siteMod.setLangString('de', 'nav.home', 'Startseite')
+    let sres = await sget('/api/public/site')
+    let sjson = (await sres.json()) as { i18n: { langs: Record<string, Record<string, string>> } }
+    if (!sjson.i18n.langs.de) return fail('custom language not exposed on the site')
+    if (sjson.i18n.langs.de['nav.home'] !== 'Startseite') return fail('custom language string not saved')
+    if (!sjson.i18n.langs.en || !sjson.i18n.langs.tr) return fail('built-in languages missing')
+    siteMod.removeLanguage('de')
+    console.log('WEB-SMOKE: site i18n OK (en+tr built in, custom lang add/edit/remove)')
+
+    // ---- site: publishing news FROM THE PANEL with author attribution (A6) ----
+    // a user without 'settings' on the store server must be refused
+    r = await post('/api/site/posts', { title: 'nope', body: 'x' }, ft)
+    if (r.status !== 403) return fail('unprivileged panel post expected 403, got ' + r.status)
+
+    r = await post('/api/site/posts', { title: 'From panel', body: 'Posted via the web panel.' }, ot)
+    if (r.status !== 200) return fail('panel post expected 200, got ' + r.status)
+    const created = (await r.json()) as { id: string; author?: string; at: number }
+    if (created.author !== 'owner_t') return fail('post author not taken from session, got ' + created.author)
+    // it must be visible publicly
+    sres = await sget('/api/public/site')
+    const pubPosts = ((await sres.json()) as { posts: { id: string; author?: string }[] }).posts
+    if (!pubPosts.some((p) => p.id === created.id && p.author === 'owner_t')) {
+      return fail('panel-created post not published to the site')
+    }
+    await post('/api/site/posts/delete', { id: created.id }, ot)
+    console.log('WEB-SMOKE: panel news publishing OK (author attributed, 403 for unprivileged)')
   } catch (e) {
     return fail('exception: ' + String(e))
   } finally {

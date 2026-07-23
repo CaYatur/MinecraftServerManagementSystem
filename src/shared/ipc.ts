@@ -139,7 +139,10 @@ export const IPC = {
   siteSet: 'site:set',
   sitePostUpsert: 'site:post-upsert',
   sitePostDelete: 'site:post-delete',
-  siteUpload: 'site:upload'
+  siteUpload: 'site:upload',
+  siteUploads: 'site:uploads',
+  siteLangAdd: 'site:lang-add',
+  siteLangRemove: 'site:lang-remove'
 } as const
 
 /** event channels (main -> renderer via webContents.send). */
@@ -291,6 +294,9 @@ export interface MsmsApi {
   upsertSitePost(post: Partial<SitePost>): Promise<SitePost>
   deleteSitePost(id: string): Promise<void>
   uploadSiteImage(): Promise<string | null>
+  listSiteUploads(): Promise<string[]>
+  addSiteLanguage(code: string, copyFrom?: string): Promise<SiteConfig>
+  removeSiteLanguage(code: string): Promise<SiteConfig>
 
   // event subscriptions -> return unsubscribe fn
   onServerLog(cb: (e: ServerLogEvent) => void): () => void

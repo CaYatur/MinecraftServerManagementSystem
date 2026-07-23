@@ -78,7 +78,29 @@ h2{margin:6px 0}
   </div>
 
   <div id="app" class="hidden">
+    <div class="row" style="margin-bottom:10px">
+      <button class="btn sm primary" id="tabServersBtn" onclick="showSection('servers')">Servers</button>
+      <button class="btn sm" id="tabNewsBtn" onclick="showSection('news')">News</button>
+    </div>
     <div id="list"></div>
+    <div id="newsSection" class="hidden">
+      <div class="card">
+        <div class="title" id="newsFormTitle">New post</div>
+        <input id="npTitle" placeholder="Title"/>
+        <input id="npExcerpt" placeholder="Short summary (optional)"/>
+        <textarea id="npBody" rows="7" placeholder="Write your post…" style="width:100%;padding:11px 13px;background:#101019;border:1px solid var(--border);border-radius:9px;color:var(--text);font-family:inherit;font-size:15px;margin:6px 0"></textarea>
+        <div class="row" style="margin:6px 0">
+          <select id="npCover" style="flex:1"></select>
+          <button class="btn sm" onclick="loadUploads()">↻</button>
+        </div>
+        <div class="row">
+          <button class="btn primary" onclick="savePost()">Publish</button>
+          <button class="btn sm" onclick="resetPostForm()">Clear</button>
+          <span class="dim" id="npHint" style="font-size:12px"></span>
+        </div>
+      </div>
+      <div id="newsList"></div>
+    </div>
   </div>
 
   <div id="detail" class="hidden">
@@ -149,6 +171,43 @@ function pollConsole(){if(!current)return;api('/api/servers/'+current.id+'/conso
 function startPoll(){stopPoll();pollConsole();pollTimer=setInterval(pollConsole,2000)}
 function stopPoll(){if(pollTimer){clearInterval(pollTimer);pollTimer=null}}
 function showList(){stopPoll();current=null;loadServers()}
+/* ---- news (publish to the public website from the panel) ---- */
+var editingPost=null;
+function showSection(which){
+ document.getElementById('list').classList.toggle('hidden',which!=='servers');
+ document.getElementById('newsSection').classList.toggle('hidden',which!=='news');
+ document.getElementById('tabServersBtn').className='btn sm'+(which==='servers'?' primary':'');
+ document.getElementById('tabNewsBtn').className='btn sm'+(which==='news'?' primary':'');
+ if(which==='news'){loadPosts();loadUploads()}}
+function loadUploads(){api('/api/site/uploads').then(function(r){var sel=document.getElementById('npCover');if(!sel)return;
+ if(!r.ok){sel.innerHTML='<option value="">(no cover)</option>';return}
+ sel.innerHTML='<option value="">(no cover)</option>'+(r.body.uploads||[]).map(function(u){return '<option value="'+esc(u)+'">'+esc(u)+'</option>'}).join('')})}
+function loadPosts(){api('/api/site/posts').then(function(r){var el=document.getElementById('newsList');if(!el)return;
+ if(!r.ok){el.innerHTML='<div class="card dim">No permission to manage news.</div>';return}
+ var posts=r.body.posts||[];
+ if(!posts.length){el.innerHTML='<div class="card dim">No posts yet.</div>';return}
+ el.innerHTML=posts.map(function(p){return '<div class="srv"><div class="meta"><div class="name">'+esc(p.title)+'</div>'+
+  '<div class="dim">'+new Date(p.at).toLocaleString()+(p.author?' · by '+esc(p.author):'')+(p.updatedAt?' · updated':'')+'</div></div>'+
+  '<button class="btn sm" onclick="editPost(\\''+p.id+'\\')">Edit</button>'+
+  '<button class="btn sm" onclick="deletePost(\\''+p.id+'\\')">✕</button></div>'}).join('')})}
+function editPost(id){api('/api/site/posts').then(function(r){if(!r.ok)return;
+ var p=(r.body.posts||[]).find(function(x){return x.id===id});if(!p)return;
+ editingPost=p.id;document.getElementById('npTitle').value=p.title||'';
+ document.getElementById('npExcerpt').value=p.excerpt||'';document.getElementById('npBody').value=p.body||'';
+ document.getElementById('npCover').value=p.cover||'';
+ document.getElementById('newsFormTitle').textContent='Edit post';
+ document.getElementById('npHint').textContent='editing';window.scrollTo(0,0)})}
+function resetPostForm(){editingPost=null;['npTitle','npExcerpt','npBody'].forEach(function(i){document.getElementById(i).value=''});
+ document.getElementById('npCover').value='';document.getElementById('newsFormTitle').textContent='New post';document.getElementById('npHint').textContent=''}
+function savePost(){var body={id:editingPost||undefined,title:document.getElementById('npTitle').value,
+ excerpt:document.getElementById('npExcerpt').value,body:document.getElementById('npBody').value,
+ cover:document.getElementById('npCover').value||undefined};
+ if(!body.title.trim()){alert('Title required');return}
+ api('/api/site/posts',{method:'POST',body:JSON.stringify(body)}).then(function(r){
+  if(!r.ok){alert('Failed: '+(r.body.error||r.status));return}
+  resetPostForm();loadPosts()})}
+function deletePost(id){if(!confirm('Delete this post?'))return;
+ api('/api/site/posts/delete',{method:'POST',body:JSON.stringify({id:id})}).then(function(){loadPosts()})}
 if(token){loadServers()}else{show('login')}
 </script>
 </body></html>`

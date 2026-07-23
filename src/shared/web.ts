@@ -129,30 +129,76 @@ export interface BuyResult {
 export interface SitePost {
   id: string
   title: string
+  /** Short summary shown in the list (optional; falls back to a body excerpt). */
+  excerpt?: string
+  /** Long body text. */
   body: string
-  image?: string // uploads filename
+  /** Cover image (uploads filename) shown in the list + detail header. */
+  cover?: string
+  /** Gallery images (uploads filenames). */
+  images: string[]
+  /** Admin username that published it. */
+  author?: string
   at: number
+  updatedAt?: number
+}
+
+export type SiteLayout = 'modern' | 'classic' | 'compact'
+export type HeroStyle = 'gradient' | 'image' | 'minimal'
+
+export interface SiteTheme {
+  accent: string
+  bg: string
+  card: string
+  text: string
+  layout: SiteLayout
+  heroStyle: HeroStyle
+  heroImage?: string
+  /** Uploaded logo filename (falls back to the CaYaDev mark). */
+  logo?: string
+  radius: number
+}
+
+export interface SiteI18n {
+  defaultLang: string
+  /** lang code -> (key -> text). 'en' and 'tr' ship built in; owners can add more. */
+  langs: Record<string, Record<string, string>>
 }
 
 export interface SiteConfig {
-  serverId: string
+  /** Servers shown on the site (profiles). */
+  serverIds: string[]
+  /** Which server the store belongs to. */
+  storeServerId: string
   siteName: string
   tagline: string
   description: string
-  accent: string
   discordUrl: string
   showStore: boolean
+  theme: SiteTheme
+  i18n: SiteI18n
   posts: SitePost[]
+}
+
+export interface ServerCard {
+  id: string
+  name: string
+  version: string
+  type: string
+  running: boolean
+  online: number
+  max: number
 }
 
 export interface PublicSite {
   siteName: string
   tagline: string
   description: string
-  accent: string
   discordUrl: string
   showStore: boolean
-  status: { running: boolean; online: number; max: number; serverName: string; version: string }
+  theme: SiteTheme
+  i18n: SiteI18n
+  servers: ServerCard[]
   posts: SitePost[]
 }
 
