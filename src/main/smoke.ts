@@ -2604,6 +2604,29 @@ export async function runWebSmoke(): Promise<void> {
 
     console.log('WEB-SMOKE: 401 (no token), 403 (wrong scope), 200 (allowed), 401 (bad pw) all correct')
 
+    // ---- audit attribution (Stage 15 slice 2): web actions leave a trail ----
+    {
+      const af = join(auditDir(), 'audit.jsonl')
+      const snap = existsSync(af) ? readFileSync(af, 'utf-8') : null
+      try {
+        rmSync(af, { force: true })
+        auditMod._reset()
+        await post('/api/login', { username: 'owner_t', password: 'nope' }) // 401
+        await post('/api/login', { username: 'owner_t', password: 'ownerpass' }) // 200
+        const logins = auditMod.query({ sources: ['webpanel'], actions: ['login'] })
+        const okE = logins.entries.find((e) => e.ok)
+        const failE = logins.entries.find((e) => !e.ok)
+        if (!okE || okE.actor !== 'owner_t') return fail('a successful web login was not audited with its actor')
+        if (!okE.ip) return fail('a web audit entry carries no source IP')
+        if (!failE || failE.actor !== 'owner_t') return fail('a denied web login was not audited (who tried is the point)')
+        if (failE.ok !== false) return fail('a denied login was audited as ok')
+        console.log('WEB-SMOKE: web-panel login audited — success + denied, with actor + IP')
+      } finally {
+        if (snap == null) rmSync(af, { force: true })
+        else writeFileSync(af, snap, 'utf-8')
+      }
+    }
+
     // ---- double-spend: two concurrent buys with balance for one -> exactly one wins ----
     webAuth.setUserMc(owner.id, 'Tester')
     economy.addBalance(id, 'Tester', 100)

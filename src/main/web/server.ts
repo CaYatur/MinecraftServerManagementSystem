@@ -10,6 +10,7 @@ import { processManager } from '../core/processManager'
 import { getPlayers } from '../core/players'
 import * as metrics from '../core/metrics'
 import * as events from '../core/events'
+import * as audit from '../core/audit'
 import * as economy from '../store/economy'
 import * as site from './site'
 import * as playerAuth from './playerAuth'
@@ -162,11 +163,15 @@ async function handlePublic(
       password?: string
     }
     const r = playerAuth.verify((b.mcName ?? '').trim(), b.code ?? '', b.password ?? '')
+    if (r.ok) {
+      audit.record({ source: 'public', action: 'account.register', actor: r.mcName, ok: true, ip, serverId: site.siteServerId() })
+    }
     return sendJson(res, r.ok ? 200 : 400, r.ok ? { token: r.token, mcName: r.mcName } : r)
   }
   if (sub === 'login' && method === 'POST') {
     const b = (await readBody(req).catch(() => ({}))) as { mcName?: string; password?: string }
     const r = playerAuth.login((b.mcName ?? '').trim(), b.password ?? '')
+    audit.record({ source: 'public', action: 'login', actor: (b.mcName ?? '').trim() || 'unknown', ok: r.ok, ip })
     if (!r.ok) return sendJson(res, 401, { error: 'invalid-credentials' })
     return sendJson(res, 200, { token: r.token, mcName: r.mcName })
   }
@@ -201,6 +206,16 @@ async function handlePublic(
     if (!sid) return sendJson(res, 400, { error: 'no-server' })
     const b = (await readBody(req).catch(() => ({}))) as { productId?: string }
     const result = economy.purchase(sid, player.mcName, b.productId ?? '')
+    audit.record({
+      source: 'public',
+      action: 'purchase',
+      actor: player.mcName,
+      ok: result.ok,
+      ip,
+      serverId: sid,
+      target: b.productId ?? '',
+      ...(result.ok ? {} : { detail: result.error })
+    })
     return sendJson(res, result.ok ? 200 : result.error === 'insufficient' ? 402 : 400, result)
   }
 
@@ -257,8 +272,10 @@ async function handlePanel(req: IncomingMessage, res: ServerResponse): Promise<v
     const result = login(body.username ?? '', body.password ?? '')
     if (!result) {
       noteFail(ip)
+      audit.record({ source: 'webpanel', action: 'login', actor: body.username || 'unknown', ok: false, ip })
       return sendJson(res, 401, { error: 'invalid-credentials' })
     }
+    audit.record({ source: 'webpanel', action: 'login', actor: result.user.username, ok: true, ip })
     const ids = visibleServerIds(result.user)
     const servers = (ids === 'all' ? listServers().map((s) => s.id) : ids)
       .map((id) => serverSummary(result.user, id))
@@ -338,6 +355,7 @@ async function handlePanel(req: IncomingMessage, res: ServerResponse): Promise<v
         default:
           return sendJson(res, 400, { error: 'bad-action' })
       }
+      audit.record({ source: 'webpanel', action: 'server.' + b.action, actor: user.username, ok: true, ip, serverId: id })
       return sendJson(res, 200, { ok: true })
     }
     if (sub === 'command' && method === 'POST') {
@@ -348,8 +366,10 @@ async function handlePanel(req: IncomingMessage, res: ServerResponse): Promise<v
       try {
         processManager.sendCommand(id, cmd)
       } catch {
+        audit.record({ source: 'webpanel', action: 'command.run', actor: user.username, ok: false, ip, serverId: id, target: cmd })
         return sendJson(res, 409, { error: 'server-not-running' })
       }
+      audit.record({ source: 'webpanel', action: 'command.run', actor: user.username, ok: true, ip, serverId: id, target: cmd })
       return sendJson(res, 200, { ok: true })
     }
     if (sub === 'players' && method === 'GET') {
