@@ -60,6 +60,10 @@ export async function runSmoke(): Promise<void> {
   const id = getConfig().servers[0]?.id
   if (!id) return fail('no server in config')
 
+  // A long file so we can prove the editor scrolls.
+  const longLines = Array.from({ length: 400 }, (_, i) => `line ${i + 1} — scroll test content`)
+  sf.writeTextFile(id, 'scrolltest.txt', longLines.join('\n'))
+
   // --- 1. renderer render check ---
   const win = new BrowserWindow({
     width: 1280,
@@ -139,9 +143,9 @@ export async function runSmoke(): Promise<void> {
   )
   await sleep(400)
   await win.webContents.executeJavaScript(
-    `[...document.querySelectorAll('.tree-row')].find(r=>/properties/.test(r.textContent))?.click()`
+    `[...document.querySelectorAll('.tree-row')].find(r=>/scrolltest/.test(r.textContent))?.click()`
   )
-  await sleep(600)
+  await sleep(900)
   const diag = await win.webContents.executeJavaScript(`JSON.stringify({
     rows: document.querySelectorAll('.tree-row').length,
     names: [...document.querySelectorAll('.tree-name')].map(n=>n.textContent),
@@ -151,7 +155,19 @@ export async function runSmoke(): Promise<void> {
   })`)
   const cmOk = await win.webContents.executeJavaScript(`!!document.querySelector('.cm-editor')`)
   if (!cmOk) return fail('CodeMirror editor did not mount; diag=' + diag)
-  console.log('SMOKE: all views mounted OK (CodeMirror OK)')
+
+  // Prove the editor actually scrolls (scroller must overflow AND respond).
+  const scrollInfo = await win.webContents.executeJavaScript(`(()=>{
+    const s=document.querySelector('.cm-scroller'); if(!s) return JSON.stringify({no:1});
+    const before=s.scrollTop; s.scrollTop=250; const after=s.scrollTop;
+    return JSON.stringify({sh:s.scrollHeight,ch:s.clientHeight,before:before,after:after,ov:getComputedStyle(s).overflowY});
+  })()`)
+  const si = JSON.parse(scrollInfo)
+  if (si.no) return fail('no .cm-scroller found')
+  if (!(si.sh > si.ch + 20)) return fail('editor does not overflow (no scroll): ' + scrollInfo)
+  if (si.after <= si.before) return fail('editor scroller did not scroll: ' + scrollInfo)
+  sf.deleteEntry(id, 'scrolltest.txt')
+  console.log(`SMOKE: editor scrolls OK (scrollHeight=${si.sh} clientHeight=${si.ch} scrollTop=${si.after})`)
 
   // --- 2. start ---
   let statsSeen = false
@@ -435,12 +451,13 @@ export async function runWebSmoke(): Promise<void> {
   const owner = webAuth.createUser('owner_t', 'ownerpass', 'owner', {})
   const friend = webAuth.createUser('friend_t', 'friendpass', 'user', { [id]: ['view', 'console'] })
   updateConfig((c) => {
-    c.web = { enabled: true, port: 8799, bindLan: false }
+    c.web = { enabled: true, port: 8799, bindLan: false, siteEnabled: true, sitePort: 8798 }
   })
   startWebServer()
   await sleep(500)
 
-  const base = 'http://127.0.0.1:8799'
+  const base = 'http://127.0.0.1:8799' // admin panel listener
+  const siteBase = 'http://127.0.0.1:8798' // public website listener
   const post = (p: string, body: unknown, tok?: string): Promise<Response> =>
     fetch(base + p, {
       method: 'POST',
@@ -449,6 +466,15 @@ export async function runWebSmoke(): Promise<void> {
     })
   const get = (p: string, tok?: string): Promise<Response> =>
     fetch(base + p, { headers: tok ? { Authorization: 'Bearer ' + tok } : {} })
+  // public website listener (separate port)
+  const spost = (p: string, body: unknown, tok?: string): Promise<Response> =>
+    fetch(siteBase + p, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(tok ? { Authorization: 'Bearer ' + tok } : {}) },
+      body: JSON.stringify(body)
+    })
+  const sget = (p: string, tok?: string): Promise<Response> =>
+    fetch(siteBase + p, { headers: tok ? { Authorization: 'Bearer ' + tok } : {} })
 
   try {
     let r = await post('/api/login', { username: 'owner_t', password: 'ownerpass' })
@@ -501,32 +527,70 @@ export async function runWebSmoke(): Promise<void> {
     economy.deleteProduct(id, prod.id)
     console.log('WEB-SMOKE: double-spend prevented (one 200, one 402, balance 0)')
 
-    // ---- public site + player/admin token SEPARATION + traversal ----
-    r = await get('/api/public/site')
-    if (r.status !== 200) return fail('public /site expected 200, got ' + r.status)
+    // ---- currency management (grant / remove / set) + audit ledger ----
+    const balUrl = '/api/servers/' + id + '/store/admin/balance'
+    // a user WITHOUT the 'store' scope must be refused
+    r = await post(balUrl, { mcName: 'Tester', amount: 999 }, ft)
+    if (r.status !== 403) return fail('non-store user granting balance expected 403, got ' + r.status)
 
-    r = await post('/api/public/register/start', { mcName: 'Offliney' })
+    r = await post(balUrl, { mcName: 'Tester', amount: 250, reason: 'test grant' }, ot)
+    if (r.status !== 200) return fail('grant expected 200, got ' + r.status)
+    r = await post(balUrl, { mcName: 'Tester', amount: -100, reason: 'test remove' }, ot)
+    if (r.status !== 200) return fail('remove expected 200, got ' + r.status)
+    r = await post(balUrl, { mcName: 'Tester', amount: 50, mode: 'set', reason: 'test set' }, ot)
+    if (r.status !== 200) return fail('set expected 200, got ' + r.status)
+
+    r = await get('/api/servers/' + id + '/store/admin/ledger', ot)
+    const led = ((await r.json()) as { ledger: { by: string; kind: string }[] }).ledger
+    for (const kind of ['grant', 'remove', 'set', 'purchase']) {
+      if (!led.some((e) => e.kind === kind)) return fail('ledger missing a "' + kind + '" entry')
+    }
+    if (!led.some((e) => e.kind === 'grant' && e.by === 'owner_t')) {
+      return fail('ledger did not record the acting admin')
+    }
+    const finalBalance = economy.getBalance(id, 'Tester')
+    if (finalBalance !== 50) return fail('balance after set should be 50, got ' + finalBalance)
+    console.log('WEB-SMOKE: currency grant/remove/set + ledger OK (admin attributed, 403 for non-store)')
+
+    // ---- public site (SITE listener) + separation + traversal ----
+    r = await sget('/api/public/site')
+    if (r.status !== 200) return fail('site /api/public/site expected 200, got ' + r.status)
+
+    // the two listeners must be isolated: admin API must NOT exist on the site port
+    r = await sget('/api/servers', ot)
+    if (r.status !== 404) return fail('admin API must not exist on the site port, got ' + r.status)
+    // ...and the public API must not exist on the panel port. Use a valid admin
+    // token so we get past the auth gate — a 404 then proves no such route.
+    r = await get('/api/public/site', ot)
+    if (r.status !== 404) return fail('public API must not exist on the panel port, got ' + r.status)
+    // unauthenticated it must not leak either
+    r = await get('/api/public/site')
+    if (r.status === 200) return fail('public API leaked on the panel port')
+
+    r = await spost('/api/public/register/start', { mcName: 'Offliney' })
     if (r.status === 200) return fail('register-start should fail when the server is offline')
 
-    r = await post('/api/public/register/verify', { mcName: 'Offliney', code: '000000', password: 'pw12' })
+    r = await spost('/api/public/register/verify', { mcName: 'Offliney', code: '000000', password: 'pw12' })
     if (r.status === 200) return fail('verify with a wrong/absent code should fail')
 
     // an ADMIN token must NOT satisfy player auth
-    r = await post('/api/public/store/buy', { productId: 'x' }, ot)
+    r = await spost('/api/public/store/buy', { productId: 'x' }, ot)
     if (r.status !== 401) return fail('admin token on player route expected 401, got ' + r.status)
 
     // a PLAYER token must NOT satisfy admin auth (the dangerous direction)
     webPlayerAuth._testCreateAccount('PlayerT', 'playerpass')
-    r = await post('/api/public/login', { mcName: 'PlayerT', password: 'playerpass' })
+    r = await spost('/api/public/login', { mcName: 'PlayerT', password: 'playerpass' })
     const pt = ((await r.json()) as { token: string }).token
     r = await post('/api/servers/' + id + '/power', { action: 'start' }, pt)
     if (r.status !== 401) return fail('player token on admin route expected 401, got ' + r.status)
 
-    // uploads path-traversal sandbox
-    r = await get('/uploads/..%2F..%2Fconfig.json')
+    // uploads path-traversal sandbox (site listener)
+    r = await sget('/uploads/..%2F..%2Fconfig.json')
     if (r.status !== 404) return fail('uploads traversal expected 404, got ' + r.status)
 
-    console.log('WEB-SMOKE: public routes + player/admin separation + traversal all correct')
+    console.log(
+      'WEB-SMOKE: listener isolation + public routes + player/admin separation + traversal all correct'
+    )
   } catch (e) {
     return fail('exception: ' + String(e))
   } finally {
@@ -534,7 +598,7 @@ export async function runWebSmoke(): Promise<void> {
     webAuth.deleteUser(friend.id)
     stopWebServer()
     updateConfig((c) => {
-      c.web = { enabled: false, port: 8722, bindLan: false }
+      c.web = { enabled: false, port: 8722, bindLan: false, siteEnabled: false, sitePort: 8723 }
     })
   }
   console.log('WEB-SMOKE: PASS')

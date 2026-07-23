@@ -23,9 +23,10 @@ import {
   type AuthUser
 } from './auth'
 import { getPanelHtml } from './panelHtml'
-import type { Scope, WebStatus } from '@shared/web'
+import type { Scope, WebStatus, WebConfig } from '@shared/web'
 
 let server: Server | null = null
+let siteServer: Server | null = null
 
 // ---- helpers ----
 function sendJson(res: ServerResponse, code: number, body: unknown): void {
@@ -199,37 +200,47 @@ async function handlePublic(
   return sendJson(res, 404, { error: 'not-found' })
 }
 
-// ---- routing ----
-async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
+// ---- PUBLIC WEBSITE listener (separate port; no admin routes exist here) ----
+async function handleSite(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const url = new URL(req.url ?? '/', 'http://localhost')
   const path = url.pathname
   const method = req.method ?? 'GET'
   const ip = req.socket.remoteAddress ?? 'unknown'
 
-  // ---- static ----
   if (!path.startsWith('/api/')) {
     if (path === '/favicon.ico') {
       res.writeHead(204)
       res.end()
       return
     }
-    // Sandboxed raster uploads.
     if (path.startsWith('/uploads/')) return serveUpload(path, res)
-    // Admin panel.
-    if (path === '/panel' || path.startsWith('/panel/')) {
-      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
-      res.end(getPanelHtml())
-      return
-    }
-    // Everything else -> public site.
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
     res.end(getPublicSiteHtml())
     return
   }
+  if (path.startsWith('/api/public/')) return handlePublic(path, method, req, res, ip)
+  sendJson(res, 404, { error: 'not-found' })
+}
 
-  // ---- PUBLIC API (no admin auth) — must come BEFORE the admin gate ----
-  if (path.startsWith('/api/public/')) {
-    return handlePublic(path, method, req, res, ip)
+// ---- ADMIN PANEL routing ----
+async function handlePanel(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const url = new URL(req.url ?? '/', 'http://localhost')
+  const path = url.pathname
+  const method = req.method ?? 'GET'
+  const ip = req.socket.remoteAddress ?? 'unknown'
+
+  // ---- static (admin panel listener) ----
+  if (!path.startsWith('/api/')) {
+    if (path === '/favicon.ico') {
+      res.writeHead(204)
+      res.end()
+      return
+    }
+    // Sandboxed raster uploads (for post image previews in the panel).
+    if (path.startsWith('/uploads/')) return serveUpload(path, res)
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+    res.end(getPanelHtml())
+    return
   }
 
   // ---- public auth endpoints ----
@@ -407,13 +418,29 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     }
     if (rest === 'admin/balance' && method === 'POST') {
       if (!gate('store')) return
-      const b = (await readBody(req).catch(() => ({}))) as { mcName?: string; amount?: number }
+      const b = (await readBody(req).catch(() => ({}))) as {
+        mcName?: string
+        amount?: number
+        reason?: string
+        mode?: 'add' | 'set'
+      }
       try {
-        const balance = economy.addBalance(id, b.mcName ?? '', Number(b.amount) || 0)
+        const balance =
+          b.mode === 'set'
+            ? economy.setBalance(id, b.mcName ?? '', Number(b.amount) || 0, user.username, b.reason ?? '')
+            : economy.addBalance(id, b.mcName ?? '', Number(b.amount) || 0, user.username, b.reason ?? '')
         return sendJson(res, 200, { ok: true, balance })
       } catch (e) {
         return sendJson(res, 400, { error: String((e as Error)?.message ?? e) })
       }
+    }
+    if (rest === 'admin/ledger' && method === 'GET') {
+      if (!gate('store')) return
+      return sendJson(res, 200, {
+        ledger: economy.getLedger(id, url.searchParams.get('mcName') ?? undefined),
+        balances: economy.listBalances(id),
+        currency: economy.publicStore(id).currency
+      })
     }
   }
 
@@ -432,21 +459,43 @@ export function lanUrls(port: number): string[] {
   return urls
 }
 
+function webCfg(): Required<WebConfig> {
+  const c = getConfig().web
+  return {
+    enabled: c?.enabled ?? false,
+    port: c?.port ?? 8722,
+    bindLan: c?.bindLan ?? false,
+    siteEnabled: c?.siteEnabled ?? false,
+    sitePort: c?.sitePort ?? 8723
+  }
+}
+
+function listen(
+  handler: (req: IncomingMessage, res: ServerResponse) => Promise<void>,
+  port: number,
+  host: string,
+  label: string
+): Server {
+  const s = createServer((req, res) => {
+    handler(req, res).catch((err) => {
+      log.warn(`${label} request error:`, err)
+      if (!res.headersSent) sendJson(res, 500, { error: 'server-error' })
+    })
+  })
+  s.on('error', (err) => log.error(`${label} error:`, err))
+  s.listen(port, host, () => log.info(`${label} on ${host}:${port}`))
+  return s
+}
+
 export function startWebServer(): WebStatus {
-  const cfg = getConfig().web ?? { enabled: false, port: 8722, bindLan: false }
+  const cfg = webCfg()
   stopWebServer()
   initAuth()
   playerAuth.initPlayerAuth()
   site.initSite()
   const host = cfg.bindLan ? '0.0.0.0' : '127.0.0.1'
-  server = createServer((req, res) => {
-    handle(req, res).catch((err) => {
-      log.warn('web request error:', err)
-      if (!res.headersSent) sendJson(res, 500, { error: 'server-error' })
-    })
-  })
-  server.on('error', (err) => log.error('web server error:', err))
-  server.listen(cfg.port, host, () => log.info(`Web panel on ${host}:${cfg.port}`))
+  if (cfg.enabled) server = listen(handlePanel, cfg.port, host, 'Web panel')
+  if (cfg.siteEnabled) siteServer = listen(handleSite, cfg.sitePort, host, 'Website')
   return getWebStatus()
 }
 
@@ -455,18 +504,34 @@ export function stopWebServer(): void {
     server.close()
     server = null
   }
+  if (siteServer) {
+    siteServer.close()
+    siteServer = null
+  }
+}
+
+function urlsFor(port: number, bindLan: boolean): string[] {
+  const urls = [`http://127.0.0.1:${port}`]
+  if (bindLan) urls.push(...lanUrls(port))
+  return urls
 }
 
 export function getWebStatus(): WebStatus {
-  const cfg = getConfig().web ?? { enabled: false, port: 8722, bindLan: false }
-  const urls = [`http://127.0.0.1:${cfg.port}`]
-  if (cfg.bindLan) urls.push(...lanUrls(cfg.port))
+  const cfg = webCfg()
   return {
-    running: !!server && server.listening,
-    enabled: cfg.enabled,
-    port: cfg.port,
     bindLan: cfg.bindLan,
-    urls
+    panel: {
+      enabled: cfg.enabled,
+      running: !!server && server.listening,
+      port: cfg.port,
+      urls: urlsFor(cfg.port, cfg.bindLan)
+    },
+    site: {
+      enabled: cfg.siteEnabled,
+      running: !!siteServer && siteServer.listening,
+      port: cfg.sitePort,
+      urls: urlsFor(cfg.sitePort, cfg.bindLan)
+    }
   }
 }
 
@@ -475,5 +540,6 @@ export function initWebServer(): void {
   initAuth()
   playerAuth.initPlayerAuth()
   site.initSite()
-  if (getConfig().web?.enabled) startWebServer()
+  const cfg = webCfg()
+  if (cfg.enabled || cfg.siteEnabled) startWebServer()
 }

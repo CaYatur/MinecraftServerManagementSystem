@@ -35,7 +35,8 @@ import type {
   Product,
   StoreConfig,
   SiteConfig,
-  SitePost
+  SitePost,
+  LedgerEntry
 } from './web'
 
 /** request/response channels (renderer -> main via invoke). */
@@ -131,6 +132,8 @@ export const IPC = {
   storeUpsert: 'store:upsert',
   storeDelete: 'store:delete',
   storeAddBalance: 'store:add-balance',
+  storeSetBalance: 'store:set-balance',
+  storeLedger: 'store:ledger',
 
   siteGet: 'site:get',
   siteSet: 'site:set',
@@ -279,7 +282,9 @@ export interface MsmsApi {
   setStoreCurrency(id: string, currency: string): Promise<void>
   upsertStoreProduct(id: string, product: Product): Promise<Product>
   deleteStoreProduct(id: string, productId: string): Promise<void>
-  addStoreBalance(id: string, mcName: string, amount: number): Promise<number>
+  addStoreBalance(id: string, mcName: string, amount: number, reason?: string): Promise<number>
+  setStoreBalance(id: string, mcName: string, amount: number, reason?: string): Promise<number>
+  getStoreLedger(id: string, mcName?: string): Promise<LedgerEntry[]>
 
   getSiteConfig(): Promise<SiteConfig>
   setSiteConfig(patch: Partial<SiteConfig>): Promise<SiteConfig>

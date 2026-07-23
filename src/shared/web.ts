@@ -23,9 +23,20 @@ export const SCOPES: Scope[] = [
 export type WebRole = 'owner' | 'user'
 
 export interface WebConfig {
+  /** Admin panel listener. */
   enabled: boolean
   port: number
   bindLan: boolean
+  /** Public website listener (separate port + toggle). */
+  siteEnabled: boolean
+  sitePort: number
+}
+
+export interface ListenerStatus {
+  enabled: boolean
+  running: boolean
+  port: number
+  urls: string[]
 }
 
 /** User as exposed to the desktop UI (never includes the password hash). */
@@ -84,6 +95,19 @@ export interface StoreConfig {
   products: Product[]
 }
 
+/** Audit trail for every balance change (grants, removals, purchases). */
+export interface LedgerEntry {
+  id: string
+  mcName: string
+  delta: number
+  balanceAfter: number
+  reason: string
+  /** Admin username that performed it, or 'purchase'. */
+  by: string
+  kind: 'grant' | 'remove' | 'set' | 'purchase'
+  at: number
+}
+
 export interface Txn {
   id: string
   mcName: string
@@ -133,9 +157,7 @@ export interface PublicSite {
 }
 
 export interface WebStatus {
-  running: boolean
-  enabled: boolean
-  port: number
   bindLan: boolean
-  urls: string[]
+  panel: ListenerStatus
+  site: ListenerStatus
 }

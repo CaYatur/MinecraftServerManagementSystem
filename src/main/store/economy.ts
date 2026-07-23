@@ -7,6 +7,7 @@ import { log } from '../logger'
 import type {
   BuyResult,
   CrateReward,
+  LedgerEntry,
   Product,
   ProductPublic,
   StoreConfig,
@@ -19,6 +20,7 @@ interface StoreState {
   products: Product[]
   balances: Record<string, number>
   txns: Txn[]
+  ledger: LedgerEntry[]
   queue: { mcName: string; commands: string[]; at: number }[]
 }
 
@@ -43,9 +45,26 @@ function save(): void {
 
 function getStore(serverId: string): StoreState {
   if (!stores[serverId]) {
-    stores[serverId] = { currency: 'Coins', products: [], balances: {}, txns: [], queue: [] }
+    stores[serverId] = {
+      currency: 'Coins',
+      products: [],
+      balances: {},
+      txns: [],
+      ledger: [],
+      queue: []
+    }
   }
+  // migrate older files that predate the ledger
+  if (!stores[serverId].ledger) stores[serverId].ledger = []
   return stores[serverId]
+}
+
+function pushLedger(
+  st: StoreState,
+  entry: Omit<LedgerEntry, 'id' | 'at'>
+): void {
+  st.ledger.unshift({ ...entry, id: randomUUID(), at: Date.now() })
+  if (st.ledger.length > 1000) st.ledger.length = 1000
 }
 
 export function initEconomy(): void {
@@ -138,6 +157,14 @@ export function purchase(serverId: string, mcName: string, productId: string): B
     at: Date.now()
   })
   if (st.txns.length > 500) st.txns.length = 500
+  pushLedger(st, {
+    mcName,
+    delta: -p.price,
+    balanceAfter: st.balances[mcName],
+    reason: p.name,
+    by: 'purchase',
+    kind: 'purchase'
+  })
   save() // persist deduction + txn immediately
 
   // Deliver asynchronously (queues if the player is offline).
@@ -200,13 +227,63 @@ export function deleteProduct(serverId: string, productId: string): void {
   st.products = st.products.filter((p) => p.id !== productId)
   save()
 }
-export function addBalance(serverId: string, mcName: string, amount: number): number {
+/** Add (or, with a negative amount, remove) balance. Audited. */
+export function addBalance(
+  serverId: string,
+  mcName: string,
+  amount: number,
+  by = 'desktop',
+  reason = ''
+): number {
   if (!MC_NAME.test(mcName)) throw new Error('invalid-mcname')
   const st = getStore(serverId)
-  st.balances[mcName] = Math.max(0, (st.balances[mcName] ?? 0) + Math.floor(amount))
+  const before = st.balances[mcName] ?? 0
+  const delta = Math.floor(amount)
+  st.balances[mcName] = Math.max(0, before + delta)
+  pushLedger(st, {
+    mcName,
+    delta: st.balances[mcName] - before,
+    balanceAfter: st.balances[mcName],
+    reason,
+    by,
+    kind: delta < 0 ? 'remove' : 'grant'
+  })
   save()
   return st.balances[mcName]
 }
+
+/** Set an absolute balance. Audited. */
+export function setBalance(
+  serverId: string,
+  mcName: string,
+  amount: number,
+  by = 'desktop',
+  reason = ''
+): number {
+  if (!MC_NAME.test(mcName)) throw new Error('invalid-mcname')
+  const st = getStore(serverId)
+  const before = st.balances[mcName] ?? 0
+  st.balances[mcName] = Math.max(0, Math.floor(amount))
+  pushLedger(st, {
+    mcName,
+    delta: st.balances[mcName] - before,
+    balanceAfter: st.balances[mcName],
+    reason,
+    by,
+    kind: 'set'
+  })
+  save()
+  return st.balances[mcName]
+}
+
 export function listBalances(serverId: string): Record<string, number> {
   return getStore(serverId).balances
+}
+
+export function getLedger(serverId: string, mcName?: string, limit = 200): LedgerEntry[] {
+  const l = getStore(serverId).ledger
+  return (mcName ? l.filter((e) => e.mcName.toLowerCase() === mcName.toLowerCase()) : l).slice(
+    0,
+    limit
+  )
 }

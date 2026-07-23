@@ -253,9 +253,16 @@ export function registerIpc(): void {
   H(IPC.webStatus, () => getWebStatus())
   H(IPC.webSetConfig, (_e, cfg: WebConfig) => {
     updateConfig((c) => {
-      c.web = { enabled: !!cfg.enabled, port: Number(cfg.port) || 8722, bindLan: !!cfg.bindLan }
+      c.web = {
+        enabled: !!cfg.enabled,
+        port: Number(cfg.port) || 8722,
+        bindLan: !!cfg.bindLan,
+        siteEnabled: !!cfg.siteEnabled,
+        sitePort: Number(cfg.sitePort) || 8723
+      }
     })
-    if (getConfig().web?.enabled) startWebServer()
+    const w = getConfig().web
+    if (w?.enabled || w?.siteEnabled) startWebServer()
     else stopWebServer()
     return getWebStatus()
   })
@@ -276,9 +283,13 @@ export function registerIpc(): void {
   H(IPC.storeCurrency, (_e, id: string, currency: string) => economy.setCurrency(id, currency))
   H(IPC.storeUpsert, (_e, id: string, product: Product) => economy.upsertProduct(id, product))
   H(IPC.storeDelete, (_e, id: string, productId: string) => economy.deleteProduct(id, productId))
-  H(IPC.storeAddBalance, (_e, id: string, mcName: string, amount: number) =>
-    economy.addBalance(id, mcName, amount)
+  H(IPC.storeAddBalance, (_e, id: string, mcName: string, amount: number, reason?: string) =>
+    economy.addBalance(id, mcName, amount, 'desktop', reason ?? '')
   )
+  H(IPC.storeSetBalance, (_e, id: string, mcName: string, amount: number, reason?: string) =>
+    economy.setBalance(id, mcName, amount, 'desktop', reason ?? '')
+  )
+  H(IPC.storeLedger, (_e, id: string, mcName?: string) => economy.getLedger(id, mcName))
 
   // --- public site / CMS (trusted desktop admin) ---
   H(IPC.siteGet, () => site.getSiteConfig())

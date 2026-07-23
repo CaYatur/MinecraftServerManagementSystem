@@ -22,6 +22,12 @@ export function SiteView(): JSX.Element {
 
   if (!cfg) return <div className="center-fill" />
 
+  /** Base URL of the public website listener (falls back to the panel one). */
+  const siteBase = (): string =>
+    web?.site.urls?.[0] ??
+    web?.panel.urls?.[0] ??
+    `http://127.0.0.1:${web?.site.port ?? 8723}`
+
   const patch = (p: Partial<SiteConfig>): void => setCfg({ ...cfg, ...p })
   const saveSettings = async (): Promise<void> => {
     const next = await window.msms.setSiteConfig({
@@ -37,7 +43,7 @@ export function SiteView(): JSX.Element {
     toast('success', 'site.saved')
   }
   const openSite = (): void => {
-    const url = web?.urls?.[0] ?? `http://127.0.0.1:${web?.port ?? 8722}`
+    const url = siteBase()
     void window.msms.openExternal(url)
   }
   const savePost = async (): Promise<void> => {
@@ -51,8 +57,7 @@ export function SiteView(): JSX.Element {
     const name = await window.msms.uploadSiteImage()
     if (name && post) setPost({ ...post, image: name })
   }
-  const imgUrl = (name: string): string =>
-    `${web?.urls?.[0] ?? `http://127.0.0.1:${web?.port ?? 8722}`}/uploads/${encodeURIComponent(name)}`
+  const imgUrl = (name: string): string => `${siteBase()}/uploads/${encodeURIComponent(name)}`
 
   return (
     <div style={{ maxWidth: 860 }}>
@@ -157,7 +162,9 @@ export function SiteView(): JSX.Element {
                   </>
                 )}
               </div>
-              {!web?.running && <p className="hint" style={{ marginTop: 4 }}>Enable the web panel to preview images.</p>}
+              {!(web?.site.running || web?.panel.running) && (
+                <p className="hint" style={{ marginTop: 4 }}>{t('site.enableForPreview')}</p>
+              )}
             </div>
             <div className="modal-actions">
               <button className="btn" onClick={() => setPost(null)}>{t('common.cancel')}</button>

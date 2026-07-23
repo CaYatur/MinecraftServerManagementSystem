@@ -19,7 +19,7 @@ function defaultConfig(): AppConfig {
       stopCountdownSeconds: 10,
       autoEnableRcon: true
     },
-    web: { enabled: false, port: 8722, bindLan: false },
+    web: { enabled: false, port: 8722, bindLan: false, siteEnabled: false, sitePort: 8723 },
     baseDir: resolveBaseDir()
   }
 }

@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Check, Trash2, Plus, Package, Gift, Coins, X } from 'lucide-react'
+import { Check, Trash2, Plus, Minus, Package, Gift, Coins, X } from 'lucide-react'
 import { useStore } from '../store'
-import type { Product, CrateReward, StoreConfig } from '@shared/web'
+import type { Product, CrateReward, StoreConfig, LedgerEntry } from '@shared/web'
 
 type StoreData = StoreConfig & { balances: Record<string, number> }
 const uid = (): string => Math.random().toString(36).slice(2)
@@ -19,6 +19,8 @@ export function StoreView(): JSX.Element {
   const [currency, setCurrency] = useState('Coins')
   const [balPlayer, setBalPlayer] = useState('')
   const [balAmount, setBalAmount] = useState(100)
+  const [balReason, setBalReason] = useState('')
+  const [ledger, setLedger] = useState<LedgerEntry[]>([])
   const [edit, setEdit] = useState<Product | null>(null)
   const [cmdText, setCmdText] = useState('')
 
@@ -26,6 +28,7 @@ export function StoreView(): JSX.Element {
     const d = await window.msms.getStore(id)
     setData(d)
     setCurrency(d.currency)
+    setLedger(await window.msms.getStoreLedger(id))
   }
   useEffect(() => {
     void load()
@@ -37,12 +40,15 @@ export function StoreView(): JSX.Element {
     toast('success', 'store.saved')
     void load()
   }
-  const giveBalance = async (): Promise<void> => {
-    if (!balPlayer.trim()) return
+  const changeBalance = async (mode: 'add' | 'remove' | 'set'): Promise<void> => {
+    const name = balPlayer.trim()
+    if (!name) return
+    const amount = Number(balAmount)
     try {
-      await window.msms.addStoreBalance(id, balPlayer.trim(), Number(balAmount))
-      toast('success', 'store.delivered', { player: balPlayer.trim(), amount: balAmount })
-      setBalPlayer('')
+      if (mode === 'set') await window.msms.setStoreBalance(id, name, amount, balReason)
+      else await window.msms.addStoreBalance(id, name, mode === 'remove' ? -amount : amount, balReason)
+      toast('success', 'store.delivered', { player: name, amount })
+      setBalReason('')
       void load()
     } catch (e) {
       toast('error', String((e as Error)?.message ?? e))
@@ -93,22 +99,67 @@ export function StoreView(): JSX.Element {
       <div className="section-title">{t('store.loadBalance')}</div>
       <div className="panel">
         <div className="row wrap" style={{ gap: 10, alignItems: 'flex-end' }}>
-          <div className="field" style={{ flex: 1, minWidth: 150, marginBottom: 0 }}>
+          <div className="field" style={{ flex: 1, minWidth: 140, marginBottom: 0 }}>
             <label>{t('store.player')}</label>
             <input className="input" value={balPlayer} onChange={(e) => setBalPlayer(e.target.value)} placeholder="Steve" />
           </div>
-          <div className="field" style={{ width: 140, marginBottom: 0 }}>
+          <div className="field" style={{ width: 120, marginBottom: 0 }}>
             <label>{t('store.amount')}</label>
             <input className="input" type="number" value={balAmount} onChange={(e) => setBalAmount(Number(e.target.value))} />
           </div>
-          <button className="btn primary" onClick={giveBalance}>
-            <Coins size={14} /> {t('store.give')}
+          <div className="field" style={{ flex: 1, minWidth: 140, marginBottom: 0 }}>
+            <label>{t('store.reason')}</label>
+            <input className="input" value={balReason} onChange={(e) => setBalReason(e.target.value)} />
+          </div>
+        </div>
+        <div className="row wrap" style={{ gap: 8, marginTop: 10 }}>
+          <button className="btn primary" onClick={() => changeBalance('add')}>
+            <Plus size={14} /> {t('store.give')}
+          </button>
+          <button className="btn" onClick={() => changeBalance('remove')}>
+            <Minus size={14} /> {t('store.remove')}
+          </button>
+          <button className="btn" onClick={() => changeBalance('set')}>
+            <Coins size={14} /> {t('store.set')}
           </button>
         </div>
+
         {data && Object.keys(data.balances).length > 0 && (
-          <div className="row wrap" style={{ gap: 6, marginTop: 12 }}>
-            {Object.entries(data.balances).map(([n, b]) => (
-              <span key={n} className="badge">{n}: {b} {currency}</span>
+          <>
+            <div className="field-label" style={{ marginTop: 16 }}>{t('store.balances')}</div>
+            <div className="bal-grid">
+              {Object.entries(data.balances).map(([n, b]) => (
+                <div key={n} className="bal-row">
+                  <span className="mod-name" style={{ flex: 1 }}>{n}</span>
+                  <span className="price">{b} {currency}</span>
+                  <button className="btn ghost sm" title={t('store.player')} onClick={() => setBalPlayer(n)}>
+                    <Coins size={13} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+
+      <div className="section-title">{t('store.ledger')}</div>
+      <div className="panel" style={{ padding: 0 }}>
+        {ledger.length === 0 ? (
+          <p className="dim" style={{ margin: 0, padding: 14 }}>{t('store.noLedger')}</p>
+        ) : (
+          <div style={{ maxHeight: 300, overflow: 'auto' }}>
+            {ledger.map((e) => (
+              <div key={e.id} className="mod-row">
+                <span className={`badge ${e.delta >= 0 ? 'op-badge' : 'error-badge'}`}>
+                  {e.delta >= 0 ? '+' : ''}{e.delta}
+                </span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div className="mod-name">{e.mcName} <span className="dim" style={{ fontWeight: 400 }}>→ {e.balanceAfter} {currency}</span></div>
+                  <div className="dim" style={{ fontSize: 11 }}>
+                    {e.kind} · {t('store.by')} {e.by}{e.reason ? ` · ${e.reason}` : ''} · {new Date(e.at).toLocaleString()}
+                  </div>
+                </div>
+              </div>
             ))}
           </div>
         )}

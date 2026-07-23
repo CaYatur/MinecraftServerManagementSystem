@@ -15,6 +15,8 @@ export function WebPanelView(): JSX.Element {
   const [enabled, setEnabled] = useState(false)
   const [port, setPort] = useState(8722)
   const [bindLan, setBindLan] = useState(false)
+  const [siteEnabled, setSiteEnabled] = useState(false)
+  const [sitePort, setSitePort] = useState(8723)
 
   const [newUser, setNewUser] = useState('')
   const [newPass, setNewPass] = useState('')
@@ -28,8 +30,10 @@ export function WebPanelView(): JSX.Element {
   const refresh = async (): Promise<void> => {
     const st = await window.msms.getWebStatus()
     setStatus(st)
-    setEnabled(st.enabled)
-    setPort(st.port)
+    setEnabled(st.panel.enabled)
+    setPort(st.panel.port)
+    setSiteEnabled(st.site.enabled)
+    setSitePort(st.site.port)
     setBindLan(st.bindLan)
     setUsers(await window.msms.listWebUsers())
   }
@@ -44,7 +48,13 @@ export function WebPanelView(): JSX.Element {
   }, [])
 
   const saveConfig = async (): Promise<void> => {
-    const st = await window.msms.setWebConfig({ enabled, port: Number(port), bindLan })
+    const st = await window.msms.setWebConfig({
+      enabled,
+      port: Number(port),
+      bindLan,
+      siteEnabled,
+      sitePort: Number(sitePort)
+    })
     setStatus(st)
     toast('success', 'web.saved')
   }
@@ -100,16 +110,64 @@ export function WebPanelView(): JSX.Element {
       <p className="hint" style={{ marginTop: 0 }}>{t('web.desc')}</p>
 
       <div className="panel">
-        <label className="switch" style={{ marginBottom: 12 }}>
-          <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
-          {t('web.enable')}
-        </label>
-        <div className="row wrap" style={{ gap: 12, alignItems: 'flex-end' }}>
-          <div className="field" style={{ width: 140, marginBottom: 0 }}>
-            <label>{t('web.port')}</label>
-            <input className="input" type="number" value={port} onChange={(e) => setPort(Number(e.target.value))} />
+        <div className="listener-grid">
+          <div className="listener">
+            <div className="mod-name" style={{ marginBottom: 8 }}>
+              {t('web.panelSection')}
+              <span className={`badge ${status?.panel.running ? 'op-badge' : ''}`}>
+                <span className={`dot ${status?.panel.running ? 'running' : 'stopped'}`} />
+                {status?.panel.running ? t('web.running') : t('web.stopped')}
+              </span>
+            </div>
+            <label className="switch" style={{ marginBottom: 10 }}>
+              <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
+              {t('web.enable')}
+            </label>
+            <div className="field" style={{ width: 140 }}>
+              <label>{t('web.port')}</label>
+              <input className="input" type="number" value={port} onChange={(e) => setPort(Number(e.target.value))} />
+            </div>
+            {status?.panel.running && (
+              <div className="row wrap" style={{ gap: 6 }}>
+                {status.panel.urls.map((u) => (
+                  <button key={u} className="btn sm" onClick={() => window.msms.openExternal(u)}>
+                    <ExternalLink size={12} /> {u}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
-          <label className="switch" style={{ paddingBottom: 8 }}>
+
+          <div className="listener">
+            <div className="mod-name" style={{ marginBottom: 8 }}>
+              {t('web.siteSection')}
+              <span className={`badge ${status?.site.running ? 'op-badge' : ''}`}>
+                <span className={`dot ${status?.site.running ? 'running' : 'stopped'}`} />
+                {status?.site.running ? t('web.running') : t('web.stopped')}
+              </span>
+            </div>
+            <label className="switch" style={{ marginBottom: 10 }}>
+              <input type="checkbox" checked={siteEnabled} onChange={(e) => setSiteEnabled(e.target.checked)} />
+              {t('web.siteEnable')}
+            </label>
+            <div className="field" style={{ width: 140 }}>
+              <label>{t('web.sitePort')}</label>
+              <input className="input" type="number" value={sitePort} onChange={(e) => setSitePort(Number(e.target.value))} />
+            </div>
+            {status?.site.running && (
+              <div className="row wrap" style={{ gap: 6 }}>
+                {status.site.urls.map((u) => (
+                  <button key={u} className="btn sm" onClick={() => window.msms.openExternal(u)}>
+                    <ExternalLink size={12} /> {u}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="row wrap" style={{ gap: 12, alignItems: 'center', marginTop: 12 }}>
+          <label className="switch">
             <input type="checkbox" checked={bindLan} onChange={(e) => setBindLan(e.target.checked)} />
             {t('web.lan')}
           </label>
@@ -118,25 +176,6 @@ export function WebPanelView(): JSX.Element {
           </button>
         </div>
         {bindLan && <p className="hint" style={{ color: 'var(--warning)' }}>⚠ {t('web.lanWarn')}</p>}
-
-        <div className="row" style={{ gap: 8, marginTop: 12, alignItems: 'center' }}>
-          <span className={`badge ${status?.running ? 'op-badge' : ''}`}>
-            <span className={`dot ${status?.running ? 'running' : 'stopped'}`} />
-            {status?.running ? t('web.running') : t('web.stopped')}
-          </span>
-        </div>
-        {status?.running && (
-          <div style={{ marginTop: 8 }}>
-            <label className="dim" style={{ fontSize: 12 }}>{t('web.urls')}</label>
-            <div className="row wrap" style={{ gap: 8, marginTop: 4 }}>
-              {status.urls.map((u) => (
-                <button key={u} className="btn sm" onClick={() => window.msms.openExternal(u)}>
-                  <ExternalLink size={13} /> {u}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
       </div>
 
       <div className="section-title">{t('web.users')}</div>
