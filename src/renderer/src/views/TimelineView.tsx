@@ -57,7 +57,9 @@ const LABEL: Record<ServerEventType, string> = {
   'world.deleted': 'events.worldDeleted',
   'world.renamed': 'events.worldRenamed',
   'world.cloned': 'events.worldCloned',
-  'world.reset': 'events.worldReset'
+  'world.reset': 'events.worldReset',
+  'world.exported': 'events.worldExported',
+  'world.imported': 'events.worldImported'
 }
 
 const ICON: Record<ServerEventType, JSX.Element> = {
@@ -80,7 +82,9 @@ const ICON: Record<ServerEventType, JSX.Element> = {
   'world.deleted': <Globe2 size={14} />,
   'world.renamed': <Globe2 size={14} />,
   'world.cloned': <Globe2 size={14} />,
-  'world.reset': <Globe2 size={14} />
+  'world.reset': <Globe2 size={14} />,
+  'world.exported': <Globe2 size={14} />,
+  'world.imported': <Globe2 size={14} />
 }
 
 const SEV_CLASS: Record<EventSeverity, string> = {

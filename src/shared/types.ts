@@ -205,6 +205,8 @@ export type ServerEventType =
   | 'world.renamed'
   | 'world.cloned'
   | 'world.reset'
+  | 'world.exported'
+  | 'world.imported'
 
 /**
  * One thing that happened to a server. The message is NOT stored: the UI

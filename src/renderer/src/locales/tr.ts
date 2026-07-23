@@ -100,7 +100,9 @@ const tr: typeof en = {
     worldDeleted: '"{{text}}" dünyası silindi ({{folders}} klasör)',
     worldRenamed: '"{{from}}" dünyası "{{to}}" olarak adlandırıldı',
     worldCloned: '"{{from}}" dünyası "{{to}}" olarak kopyalandı',
-    worldReset: '"{{text}}" dünyasının {{dimension}} boyutu sıfırlandı'
+    worldReset: '"{{text}}" dünyasının {{dimension}} boyutu sıfırlandı',
+    worldExported: '"{{text}}" dünyası dışa aktarıldı',
+    worldImported: '"{{text}}" dünyası içe aktarıldı ({{folders}} klasör)'
   },
   sidebar: {
     servers: 'Sunucular',
@@ -401,6 +403,12 @@ const tr: typeof en = {
     newName: 'Yeni ad',
     renamed: 'Dünya yeniden adlandırıldı',
     cloned: 'Dünya kopyalandı',
+    export: 'Zip olarak dışa aktar',
+    exported: 'Dünya dışa aktarıldı',
+    import: 'İçe aktar',
+    imported: 'Dünya içe aktarıldı',
+    importAs: 'Bir zipten dünya içe aktar, şu adla',
+    importPlaceholder: 'içe aktarılan dünyanın adı',
     reset: 'Sıfırla',
     resetDim: '{{dim}} sıfırla',
     resetTitle: '"{{name}}" dünyasının {{dim}} boyutu sıfırlansın mı?',
@@ -413,7 +421,10 @@ const tr: typeof en = {
       'invalid-name': 'Bu ad bir klasör adı olarak kullanılamaz.',
       'target-exists': 'Bu adda bir dünya (ya da boyut klasörlerinden biri) zaten var.',
       'cannot-reset-overworld': 'Ana dünya sıfırlanamaz — bu, dünyayı silmek olurdu.',
-      'dimension-not-found': 'Bu boyut henüz üretilmemiş.'
+      'dimension-not-found': 'Bu boyut henüz üretilmemiş.',
+      'archive-missing': 'Bu zip dosyası bulunamadı.',
+      'unsafe-archive': 'Bu zip güvenli olmayan yollar içeriyor ve reddedildi — üzerinde oynanmış olabilir.',
+      'not-a-world': 'Bu zipte bir Minecraft dünyası (level.dat) bulunamadı.'
     },
     dim: {
       overworld: 'Ana dünya',

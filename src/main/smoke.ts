@@ -1,7 +1,8 @@
 import { app, BrowserWindow } from 'electron'
-import { existsSync, writeFileSync, readFileSync, mkdirSync, rmSync, copyFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, writeFileSync, readFileSync, readdirSync, mkdirSync, rmSync, copyFileSync } from 'node:fs'
+import { join, resolve } from 'node:path'
 import { gzipSync } from 'node:zlib'
+import AdmZip from 'adm-zip'
 import * as nbt from 'prismarine-nbt'
 import { processManager } from './core/processManager'
 import { getConfig, updateConfig } from './config'
@@ -39,6 +40,59 @@ import { CREATABLE_TYPES } from '@shared/versions'
 /* eslint-disable no-console */
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
+
+/**
+ * Build a zip by hand so a malicious entry name survives - adm-zip strips
+ * `../` on addFile, so its own API cannot produce the archive a zip-slip guard
+ * has to defend against. Stored (uncompressed) entries, which is all a test
+ * needs.
+ */
+function craftZip(entries: Array<{ name: string; data: Buffer }>): Buffer {
+  const crc32 = (buf: Buffer): number => {
+    let c = ~0
+    for (let i = 0; i < buf.length; i++) {
+      c ^= buf[i]
+      for (let k = 0; k < 8; k++) c = (c >>> 1) ^ (0xedb88320 & -(c & 1))
+    }
+    return ~c >>> 0
+  }
+  const u16 = (n: number): Buffer => {
+    const b = Buffer.alloc(2)
+    b.writeUInt16LE(n >>> 0)
+    return b
+  }
+  const u32 = (n: number): Buffer => {
+    const b = Buffer.alloc(4)
+    b.writeUInt32LE(n >>> 0)
+    return b
+  }
+  const locals: Buffer[] = []
+  const centrals: Buffer[] = []
+  let offset = 0
+  for (const e of entries) {
+    const name = Buffer.from(e.name)
+    const crc = crc32(e.data)
+    const lfh = Buffer.concat([
+      u32(0x04034b50), u16(20), u16(0), u16(0), u16(0), u16(0),
+      u32(crc), u32(e.data.length), u32(e.data.length), u16(name.length), u16(0), name, e.data
+    ])
+    centrals.push(
+      Buffer.concat([
+        u32(0x02014b50), u16(20), u16(20), u16(0), u16(0), u16(0), u16(0),
+        u32(crc), u32(e.data.length), u32(e.data.length),
+        u16(name.length), u16(0), u16(0), u16(0), u16(0), u32(0), u32(offset), name
+      ])
+    )
+    locals.push(lfh)
+    offset += lfh.length
+  }
+  const cd = Buffer.concat(centrals)
+  const eocd = Buffer.concat([
+    u32(0x06054b50), u16(0), u16(0), u16(entries.length), u16(entries.length),
+    u32(cd.length), u32(offset), u16(0)
+  ])
+  return Buffer.concat([...locals, cd, eocd])
+}
 
 function waitFor(pred: () => boolean, ms: number): Promise<boolean> {
   return new Promise((res) => {
@@ -752,6 +806,58 @@ export async function runWorldsSmoke(): Promise<void> {
 
     const changes = eventsMod.query(SID, { types: ['world.renamed', 'world.cloned', 'world.reset'] })
     if (changes.events.length !== 5) return fail('world changes on the timeline: ' + changes.events.length)
+
+    // --- 10. export -> import round-trip ------------------------------------
+    const zipPath = join(app.getPath('temp'), 'msms-world-export.zip')
+    rmSync(zipPath, { force: true })
+    worldsMod.exportWorld(SID, 'paper_world', zipPath)
+    if (!existsSync(zipPath)) return fail('export wrote no file')
+    // The archive keeps on-disk folder names, so a Paper world carries three.
+    const exported = new AdmZip(zipPath).getEntries().map((e) => e.entryName.replace(/\\/g, '/'))
+    if (!exported.some((n) => n.startsWith('paper_world/'))) return fail('export missing the overworld')
+    if (!exported.some((n) => n.startsWith('paper_world_nether/'))) return fail('export missing the nether')
+
+    await worldsMod.importWorld(SID, zipPath, 'imported_world')
+    const back = (await worldsMod.listWorlds(SID)).find((w) => w.name === 'imported_world')
+    if (!back) return fail('imported world did not appear')
+    if (back.dimensions.join('+') !== 'overworld+nether') return fail('import lost a dimension: ' + back.dimensions.join('+'))
+    if (back.seed !== '12345') return fail('imported world lost its level.dat')
+    if (existsSync(join(root, 'paper_world', 'level.dat')) === false) return fail('export mutated the source')
+    // A second import under the same name must refuse, not merge.
+    if (!(await refuses('re-importing onto an existing world', () => worldsMod.importWorld(SID, zipPath, 'imported_world'), 'target-exists'))) return
+    console.log('WORLDS-SMOKE: export/import round-trips, dimensions and level.dat intact')
+
+    // --- 11. a hostile archive is refused before anything is written --------
+    // Hand-crafted, because adm-zip strips `../` from anything it writes - so a
+    // real attacker's zip is the only way to exercise the guard.
+    const evilZip = join(app.getPath('temp'), 'msms-world-evil.zip')
+    writeFileSync(
+      evilZip,
+      craftZip([
+        { name: 'world/level.dat', data: levelDat(1, '1.21', 0, false) },
+        // staging is root/.msms-import-*, so ../../ lands above the server root.
+        { name: '../../pwned.txt', data: Buffer.from('gotcha') }
+      ])
+    )
+    const escapeTarget = resolve(join(root, '..', 'pwned.txt'))
+    rmSync(escapeTarget, { force: true })
+    if (!(await refuses('a zip-slip archive', () => worldsMod.importWorld(SID, evilZip, 'evil'), 'unsafe-archive'))) return
+    if (existsSync(escapeTarget)) return fail('a zip-slip entry escaped the target')
+    if (existsSync(join(root, 'evil'))) return fail('a rejected import still created the world')
+    // ...and a zip with no world in it is refused too.
+    const emptyZip = join(app.getPath('temp'), 'msms-world-empty.zip')
+    const empty = new AdmZip()
+    empty.addFile('readme.txt', Buffer.from('not a world'))
+    empty.writeZip(emptyZip)
+    if (!(await refuses('a zip with no level.dat', () => worldsMod.importWorld(SID, emptyZip, 'nope'), 'not-a-world'))) return
+    if (existsSync(join(root, 'nope'))) return fail('a worldless import left a folder behind')
+    // No staging directory may survive any of that.
+    const strays = readdirSync(root).filter((n) => n.startsWith('.msms-import-'))
+    if (strays.length) return fail('an import left staging behind: ' + strays.join(','))
+    rmSync(zipPath, { force: true })
+    rmSync(evilZip, { force: true })
+    rmSync(emptyZip, { force: true })
+    console.log('WORLDS-SMOKE: import refuses zip-slip and worldless archives, cleans up after itself')
 
     cleanup()
     console.log('WORLDS-SMOKE: PASS')
@@ -1791,7 +1897,16 @@ export async function runSmoke(): Promise<void> {
       if (!wv.badge) return fail('the active world is not badged in the UI')
       if (!wv.delDisabled) return fail('the UI offers to delete the active world')
       if (/worlds\.|\{\{/.test(wv.name + wv.meta)) return fail('world row not translated: ' + wv.meta)
-      console.log(`SMOKE: worlds view OK (${wv.rows} world(s), "${wv.name}", delete disabled)`)
+      // Export is the one world action allowed while running - its button must
+      // be enabled even though delete/clone/rename are not.
+      const exportBtn = JSON.parse(
+        await win.webContents.executeJavaScript(
+          `(()=>{const b=[...document.querySelectorAll('.world-row .btn.ghost')].find(x=>/Export|Zip/i.test(x.title||''));
+           return JSON.stringify({present:!!b,disabled:!!b?.disabled})})()`
+        )
+      ) as { present: boolean; disabled: boolean }
+      if (!exportBtn.present) return fail('the export button did not render')
+      console.log(`SMOKE: worlds view OK (${wv.rows} world(s), "${wv.name}", delete disabled, export present)`)
 
       // Close the IPC seam: the three-argument calls are the ones a swapped
       // preload binding would break at runtime and nowhere else. Clone is the

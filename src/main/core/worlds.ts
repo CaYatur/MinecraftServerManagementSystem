@@ -19,9 +19,10 @@
  * `level-name` in server.properties is the single source of truth for which
  * world is active; nothing else decides it.
  */
-import { existsSync, readdirSync, renameSync, rmSync, statSync, type Dirent } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync, type Dirent } from 'node:fs'
 import { cp, readFile } from 'node:fs/promises'
-import { basename, join, resolve, sep } from 'node:path'
+import { basename, dirname, join, relative, resolve, sep } from 'node:path'
+import AdmZip from 'adm-zip'
 import * as nbt from 'prismarine-nbt'
 import { getServer } from './serverRegistry'
 import { readProperties, writeProperties } from './serverFiles'
@@ -337,6 +338,107 @@ export function resetDimension(id: string, name: string, dimension: WorldDimensi
 
   events.record(id, 'world.reset', { text: name, data: { dimension, folders: targets.length } })
   log.info(`Dimension ${dimension} of "${name}" reset for ${id}`)
+}
+
+// ------------------------------------------------------------------ transfer
+
+/**
+ * Pack a world and its dimension folders into one zip. Allowed while running
+ * (like a backup) - the copy is a snapshot, and the caller chose the path.
+ */
+export function exportWorld(id: string, name: string, destZip: string): void {
+  const root = serverRoot(id)
+  const dir = safeWorldPath(root, name)
+  if (!isWorldFolder(dir)) throw new Error('world-not-found')
+  const zip = new AdmZip()
+  for (const folder of worldFolders(root, name)) {
+    // Keep the on-disk names, so re-importing detects the layout for free.
+    zip.addLocalFolder(folder, basename(folder))
+  }
+  mkdirSync(dirname(destZip), { recursive: true })
+  zip.writeZip(destZip)
+  events.record(id, 'world.exported', { text: name })
+  log.info(`World "${name}" exported to ${destZip} for ${id}`)
+}
+
+/**
+ * The base world folder inside an extracted archive: a folder with a
+ * `level.dat` that is not itself an `X_nether`/`X_the_end` of another folder
+ * present alongside it. Searches the root and one level down, which covers a
+ * bare export, a single wrapping folder, and a hand-made zip.
+ */
+function findBaseWorld(dir: string): string | null {
+  if (isWorldFolder(dir)) return dir
+  let names: string[]
+  try {
+    names = readdirSync(dir, { withFileTypes: true })
+      .filter((d) => d.isDirectory())
+      .map((d) => d.name)
+  } catch {
+    return null
+  }
+  const present = new Set(names)
+  const bases = names.filter((name) => {
+    if (!isWorldFolder(join(dir, name))) return false
+    for (const suffix of [NETHER_SUFFIX, END_SUFFIX]) {
+      if (name.endsWith(suffix) && present.has(name.slice(0, -suffix.length))) return false
+    }
+    return true
+  })
+  // Exactly one base world makes an unambiguous import; anything else, refuse.
+  return bases.length === 1 ? join(dir, bases[0]) : null
+}
+
+/** Reject a zip that would write outside the folder it claims to fill. */
+function assertNoZipSlip(zip: AdmZip, target: string): void {
+  const root = resolve(target)
+  for (const entry of zip.getEntries()) {
+    const p = resolve(join(root, entry.entryName))
+    if (p !== root && !p.startsWith(root + sep)) throw new Error('unsafe-archive')
+  }
+}
+
+/**
+ * Bring a world in from a zip under a new name. The archive is untrusted -
+ * it may come from anyone - so every entry is checked before a single file is
+ * written, and it is extracted to a temp folder inside the server root (never
+ * over an existing world) before the base world is identified and moved into
+ * place with its dimensions.
+ */
+export async function importWorld(id: string, zipPath: string, newName: string): Promise<void> {
+  const root = serverRoot(id)
+  assertStopped(id)
+  if (!existsSync(zipPath)) throw new Error('archive-missing')
+  assertTargetFree(root, newName)
+
+  const staging = join(root, `.msms-import-${Date.now()}`)
+  try {
+    const zip = new AdmZip(zipPath)
+    assertNoZipSlip(zip, staging)
+    mkdirSync(staging, { recursive: true })
+    zip.extractAllTo(staging, true)
+
+    const base = findBaseWorld(staging)
+    if (!base) throw new Error('not-a-world')
+    const baseName = basename(base)
+    const parent = dirname(base)
+
+    // Move the base and any companions that shipped with it, remapping the
+    // name the same way a rename does.
+    let moved = 0
+    for (const suffix of ['', NETHER_SUFFIX, END_SUFFIX]) {
+      const from = join(parent, baseName + suffix)
+      if (existsSync(from) && isWorldFolder(from)) {
+        renameSync(from, join(root, newName + suffix))
+        moved++
+      }
+    }
+    if (!moved) throw new Error('not-a-world')
+    events.record(id, 'world.imported', { text: newName, data: { folders: moved } })
+    log.info(`World imported as "${newName}" for ${id} (${moved} folder(s))`)
+  } finally {
+    rmSync(staging, { recursive: true, force: true })
+  }
 }
 
 /** Delete a world and every dimension folder that belongs to it. */

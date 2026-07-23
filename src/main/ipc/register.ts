@@ -258,6 +258,24 @@ export function registerIpc(): void {
   H(IPC.worldReset, (_e, id: string, name: string, dim: WorldDimension) =>
     worlds.resetDimension(id, name, dim)
   )
+  H(IPC.worldExport, async (_e, id: string, name: string) => {
+    const res = await dialog.showSaveDialog({
+      defaultPath: `${name}.zip`,
+      filters: [{ name: 'Zip', extensions: ['zip'] }]
+    })
+    if (res.canceled || !res.filePath) return null
+    worlds.exportWorld(id, name, res.filePath)
+    return res.filePath
+  })
+  H(IPC.worldImport, async (_e, id: string, newName: string) => {
+    const res = await dialog.showOpenDialog({
+      properties: ['openFile'],
+      filters: [{ name: 'World zip', extensions: ['zip'] }]
+    })
+    if (res.canceled || !res.filePaths[0]) return null
+    await worlds.importWorld(id, res.filePaths[0], newName)
+    return newName
+  })
 
   // --- backups ---
   H(IPC.backupsList, (_e, id?: string) => backups.listBackups(id))

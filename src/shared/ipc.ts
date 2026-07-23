@@ -126,6 +126,8 @@ export const IPC = {
   worldRename: 'worlds:rename',
   worldClone: 'worlds:clone',
   worldReset: 'worlds:reset',
+  worldExport: 'worlds:export',
+  worldImport: 'worlds:import',
 
   backupsList: 'backups:list',
   backupCreate: 'backups:create',
@@ -291,6 +293,10 @@ export interface MsmsApi {
   renameWorld(id: string, name: string, newName: string): Promise<void>
   cloneWorld(id: string, name: string, newName: string): Promise<void>
   resetDimension(id: string, name: string, dimension: WorldDimension): Promise<void>
+  /** Prompts for a destination; returns the path written, or null if cancelled. */
+  exportWorld(id: string, name: string): Promise<string | null>
+  /** Prompts for a zip; returns the imported name, or null if cancelled. */
+  importWorld(id: string, newName: string): Promise<string | null>
 
   listBackups(id?: string): Promise<BackupRecord[]>
   createBackup(id: string, opts: BackupOptions): Promise<BackupRecord>

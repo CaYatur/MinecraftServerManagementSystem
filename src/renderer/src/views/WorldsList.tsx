@@ -9,7 +9,9 @@ import {
   Sparkles,
   Copy,
   Pencil,
-  RotateCcw
+  RotateCcw,
+  Download,
+  Upload
 } from 'lucide-react'
 import { useStore } from '../store'
 import { formatBytes } from '../components/ui'
@@ -34,6 +36,7 @@ export function WorldsList(): JSX.Element {
   const [confirmDelete, setConfirmDelete] = useState<WorldInfo | null>(null)
   const [confirmReset, setConfirmReset] = useState<{ world: WorldInfo; dim: WorldDimension } | null>(null)
   const [dialog, setDialog] = useState<NameDialog | null>(null)
+  const [importName, setImportName] = useState('')
 
   const stopped = status === 'stopped' || status === 'crashed'
 
@@ -91,6 +94,33 @@ export function WorldsList(): JSX.Element {
     )
   }
 
+  const doExport = async (w: WorldInfo): Promise<void> => {
+    try {
+      const path = await window.msms.exportWorld(id, w.name)
+      if (path) toast('success', 'worlds.exported')
+    } catch (e) {
+      toast('error', explain(e))
+    }
+  }
+
+  const doImport = async (): Promise<void> => {
+    const name = importName.trim()
+    if (!name) return
+    setBusy(true)
+    try {
+      const done = await window.msms.importWorld(id, name)
+      if (done) {
+        setImportName('')
+        toast('success', 'worlds.imported')
+        void load()
+      }
+      // null means the file dialog was cancelled - stay quiet.
+    } catch (e) {
+      toast('error', explain(e))
+    }
+    setBusy(false)
+  }
+
   const dimIcon = (d: WorldDimension): JSX.Element =>
     d === 'nether' ? <Flame size={11} /> : d === 'end' ? <Sparkles size={11} /> : <Globe2 size={11} />
 
@@ -105,9 +135,31 @@ export function WorldsList(): JSX.Element {
             <RefreshCw size={13} className={busy ? 'spin' : ''} /> {t('common.refresh')}
           </button>
         </div>
-        <p className="hint" style={{ marginBottom: 0 }}>
+        <p className="hint" style={{ marginBottom: 10 }}>
           {stopped ? t('worlds.hint') : t('worlds.runningHint')}
         </p>
+        <div className="row wrap" style={{ gap: 8, alignItems: 'flex-end' }}>
+          <div className="field" style={{ marginBottom: 0, minWidth: 180 }}>
+            <label>{t('worlds.importAs')}</label>
+            <input
+              className="input"
+              value={importName}
+              placeholder={t('worlds.importPlaceholder')}
+              disabled={!stopped || busy}
+              onChange={(e) => setImportName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void doImport()
+              }}
+            />
+          </div>
+          <button
+            className="btn sm"
+            disabled={!stopped || busy || !importName.trim()}
+            onClick={() => void doImport()}
+          >
+            <Upload size={13} /> {t('worlds.import')}
+          </button>
+        </div>
       </div>
 
       {list.length === 0 ? (
@@ -164,6 +216,14 @@ export function WorldsList(): JSX.Element {
                   <CheckCircle2 size={13} /> {t('worlds.activate')}
                 </button>
               )}
+              <button
+                className="btn ghost sm"
+                disabled={busy}
+                title={t('worlds.export')}
+                onClick={() => void doExport(w)}
+              >
+                <Download size={13} />
+              </button>
               <button
                 className="btn ghost sm"
                 disabled={!stopped || busy}

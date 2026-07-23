@@ -98,7 +98,9 @@ export default {
     worldDeleted: 'World "{{text}}" deleted ({{folders}} folders)',
     worldRenamed: 'World "{{from}}" renamed to "{{to}}"',
     worldCloned: 'World "{{from}}" duplicated as "{{to}}"',
-    worldReset: 'The {{dimension}} of "{{text}}" was reset'
+    worldReset: 'The {{dimension}} of "{{text}}" was reset',
+    worldExported: 'World "{{text}}" exported',
+    worldImported: 'World "{{text}}" imported ({{folders}} folders)'
   },
   sidebar: {
     servers: 'Servers',
@@ -398,6 +400,12 @@ export default {
     newName: 'New name',
     renamed: 'World renamed',
     cloned: 'World duplicated',
+    export: 'Export to zip',
+    exported: 'World exported',
+    import: 'Import',
+    imported: 'World imported',
+    importAs: 'Import a world from a zip, as',
+    importPlaceholder: 'name for the imported world',
     reset: 'Reset',
     resetDim: 'Reset the {{dim}}',
     resetTitle: 'Reset the {{dim}} of "{{name}}"?',
@@ -410,7 +418,10 @@ export default {
       'invalid-name': 'That name cannot be used for a folder.',
       'target-exists': 'A world with that name already exists (or one of its dimension folders does).',
       'cannot-reset-overworld': 'The overworld cannot be reset — that would be deleting the world.',
-      'dimension-not-found': 'That dimension has not been generated yet.'
+      'dimension-not-found': 'That dimension has not been generated yet.',
+      'archive-missing': 'That zip file could not be found.',
+      'unsafe-archive': 'This zip contains unsafe paths and was rejected — it may be tampered with.',
+      'not-a-world': 'No Minecraft world (a level.dat) was found in that zip.'
     },
     dim: {
       overworld: 'Overworld',
