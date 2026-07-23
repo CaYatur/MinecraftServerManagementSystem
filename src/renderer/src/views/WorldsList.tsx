@@ -135,7 +135,7 @@ export function WorldsList(): JSX.Element {
             <h3>{t('worlds.confirmDelete', { name: confirmDelete.name })}</h3>
             <p>
               {t('worlds.deleteBody', {
-                folders: confirmDelete.dimensions.length,
+                folders: confirmDelete.folders,
                 size: formatBytes(confirmDelete.sizeBytes)
               })}
             </p>

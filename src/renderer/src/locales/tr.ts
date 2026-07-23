@@ -383,7 +383,7 @@ const tr: typeof en = {
     lastPlayed: 'son yazma {{when}}',
     seed: 'seed {{seed}}',
     confirmDelete: '"{{name}}" kalıcı olarak silinsin mi?',
-    deleteBody: 'Bu işlem {{folders}} klasörü, toplam {{size}}, nether ve end dahil siler. Geri alınamaz; ileride lazım olabilecekse önce yedek al.',
+    deleteBody: 'Bu işlem {{folders}} klasörü, toplam {{size}}, dünyayı ve içindeki tüm boyutları siler. Geri alınamaz; ileride lazım olabilecekse önce yedek al.',
     dim: {
       overworld: 'Ana dünya',
       nether: 'Nether',

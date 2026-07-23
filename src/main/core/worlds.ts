@@ -65,6 +65,7 @@ async function folderSize(dir: string): Promise<number> {
   } catch {
     return 0
   }
+  let seen = 0
   for (const e of entries) {
     const full = join(dir, e.name)
     if (e.isDirectory()) {
@@ -76,8 +77,9 @@ async function folderSize(dir: string): Promise<number> {
         /* vanished mid-walk */
       }
     }
-    // Region files come in hundreds; let the UI breathe between them.
-    if (total % 64 === 0) await Promise.resolve()
+    // A region folder holds hundreds of files; yield periodically so a big
+    // world does not freeze the window while it is measured.
+    if (++seen % 64 === 0) await Promise.resolve()
   }
   return total
 }
@@ -173,8 +175,9 @@ export async function listWorlds(id: string): Promise<WorldInfo[]> {
   const out: WorldInfo[] = []
   for (const name of worldNames(root)) {
     const dir = join(root, name)
+    const folders = worldFolders(root, name)
     let size = 0
-    for (const folder of worldFolders(root, name)) size += await folderSize(folder)
+    for (const folder of folders) size += await folderSize(folder)
     let lastPlayed = 0
     try {
       lastPlayed = statSync(join(dir, 'level.dat')).mtimeMs
@@ -187,6 +190,7 @@ export async function listWorlds(id: string): Promise<WorldInfo[]> {
       sizeBytes: size,
       lastPlayed,
       dimensions: dimensionsOf(root, name),
+      folders: folders.length,
       ...(await readLevelDat(dir))
     })
   }

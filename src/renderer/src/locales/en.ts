@@ -380,7 +380,7 @@ export default {
     lastPlayed: 'last written {{when}}',
     seed: 'seed {{seed}}',
     confirmDelete: 'Delete "{{name}}" permanently?',
-    deleteBody: 'This removes {{folders}} folder(s), {{size}} — including its nether and end. There is no undo; take a backup first if you might want it back.',
+    deleteBody: 'This removes {{folders}} folder(s), {{size}} — the world and every dimension in it. There is no undo; take a backup first if you might want it back.',
     dim: {
       overworld: 'Overworld',
       nether: 'Nether',

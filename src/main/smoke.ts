@@ -515,6 +515,10 @@ export async function runWorldsSmoke(): Promise<void> {
       return fail('DIM-1 not detected as the nether: ' + vanilla.dimensions.join('+'))
     }
     if (vanilla.active) return fail('a second world claims to be active')
+    // Folders on disk are NOT the dimension count: the confirm dialog quotes
+    // this number, and for a vanilla world two dimensions live in one folder.
+    if (main.folders !== 3) return fail('paper world reports ' + main.folders + ' folders, expected 3')
+    if (vanilla.folders !== 1) return fail('vanilla world reports ' + vanilla.folders + ' folders, expected 1')
     // Size must cover the companion folders, not just the base one.
     if (main.sizeBytes < 3584) return fail('world size ' + main.sizeBytes + ' excludes its dimensions')
     console.log(`WORLDS-SMOKE: grouping OK (3 worlds from 5 level.dat folders, ${main.dimensions.length} dims on the active one)`)

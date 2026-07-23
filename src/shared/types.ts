@@ -349,6 +349,12 @@ export interface WorldInfo {
   /** level.dat mtime — when the world was last written. */
   lastPlayed: number
   dimensions: WorldDimension[]
+  /**
+   * How many folders on disk a delete would remove. NOT the same as
+   * `dimensions.length`: vanilla keeps DIM-1/DIM1 inside the world (2-3
+   * dimensions, one folder), Paper puts them beside it (one folder each).
+   */
+  folders: number
   seed?: string
   gameMode?: number
   hardcore?: boolean
