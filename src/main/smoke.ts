@@ -9,6 +9,7 @@ import * as webAuth from './web/auth'
 import * as webPlayerAuth from './web/playerAuth'
 import * as economy from './store/economy'
 import * as siteMod from './web/site'
+import { pickSiteLang } from './web/siteLang'
 import type { Product } from '@shared/web'
 import { getProvider } from './core/versions'
 import { createServer } from './core/createServer'
@@ -603,6 +604,29 @@ export async function runWebSmoke(): Promise<void> {
     if (!sjson.i18n.langs.en || !sjson.i18n.langs.tr) return fail('built-in languages missing')
     siteMod.removeLanguage('de')
     console.log('WEB-SMOKE: site i18n OK (en+tr built in, custom lang add/edit/remove)')
+
+    // ---- site: visitors get their BROWSER language, English when unsupported ----
+    // Same function the page runs (it is inlined into the site via .toString()).
+    const av = ['en', 'tr', 'de']
+    const langCases: [string, string][] = [
+      [pickSiteLang(av, null, ['tr-TR', 'en-US']), 'tr'], // regional -> base subtag
+      [pickSiteLang(av, null, ['de']), 'de'], // custom language added by the owner
+      [pickSiteLang(av, null, ['fr-FR', 'es']), 'en'], // unsupported -> English
+      [pickSiteLang(av, null, []), 'en'], // no browser hint at all
+      [pickSiteLang(av, 'tr', ['en-US']), 'tr'], // explicit choice beats the browser
+      [pickSiteLang(av, 'de', ['tr']), 'de'],
+      [pickSiteLang(['en', 'tr'], 'de', ['fr']), 'en'], // stale choice (lang removed)
+      [pickSiteLang(av, null, ['TR_tr']), 'tr'], // odd casing/separator
+      [pickSiteLang(av, null, ['fr'], 'tr'), 'tr'] // owner-set fallback wins over en
+    ]
+    for (let i = 0; i < langCases.length; i++) {
+      const [got, want] = langCases[i]
+      if (got !== want) return fail(`lang case ${i}: expected ${want}, got ${got}`)
+    }
+    // and the page must actually ship that logic
+    const siteHtml = await (await sget('/')).text()
+    if (!siteHtml.includes('navigator.languages')) return fail('site html does not read navigator.languages')
+    console.log('WEB-SMOKE: site language auto-detect OK (browser lang, en fallback, saved choice wins)')
 
     // ---- site: publishing news FROM THE PANEL with author attribution (A6) ----
     // a user without 'settings' on the store server must be refused

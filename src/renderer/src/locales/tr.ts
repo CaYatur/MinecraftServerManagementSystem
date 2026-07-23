@@ -341,7 +341,9 @@ const tr: typeof en = {
     heroImage: 'Hero görseli',
     radius: 'Köşe yuvarlaklığı',
     editLang: 'Düzenlenecek dil',
-    defaultLang: 'Varsayılan dil',
+    defaultLang: 'Yedek dil',
+    langAuto:
+      'Ziyaretçiler otomatik olarak tarayıcı dilini görür. Bu yedek dil yalnızca ziyaretçinin dili sitede yoksa kullanılır.',
     newLang: 'Yeni kod',
     addLang: 'Dil ekle',
     excerpt: 'Kısa özet',

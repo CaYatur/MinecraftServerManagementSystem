@@ -338,7 +338,9 @@ export default {
     heroImage: 'Hero image',
     radius: 'Corner radius',
     editLang: 'Edit language',
-    defaultLang: 'Default language',
+    defaultLang: 'Fallback language',
+    langAuto:
+      "Visitors automatically get their browser's language. This fallback is used only when their language isn't available on the site.",
     newLang: 'New code',
     addLang: 'Add language',
     excerpt: 'Short summary',

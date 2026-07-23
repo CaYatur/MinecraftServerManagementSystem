@@ -251,6 +251,7 @@ export function SiteView(): JSX.Element {
                 {Object.keys(cfg.i18n.langs).map((c) => <option key={c} value={c}>{c}</option>)}
               </select>
             </div>
+            <div className="hint" style={{ flexBasis: '100%', marginTop: 2 }}>{t('site.langAuto')}</div>
             <div className="field" style={{ width: 130, marginBottom: 0 }}>
               <label>{t('site.newLang')}</label>
               <input className="input" value={newLang} onChange={(e) => setNewLang(e.target.value)} placeholder="de" />

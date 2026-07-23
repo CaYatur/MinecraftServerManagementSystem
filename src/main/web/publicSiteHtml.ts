@@ -1,6 +1,8 @@
 // Public, themeable, multi-page server website.
 // Pages: #/ (home) · #/news · #/news/:id · #/store · #/servers
 // Everything user-authored is escaped before rendering.
+import { pickSiteLang } from './siteLang'
+
 export function getPublicSiteHtml(): string {
   return `<!doctype html><html lang="en"><head>
 <meta charset="utf-8"/>
@@ -171,7 +173,7 @@ function T(k){var L=(S&&S.i18n&&S.i18n.langs[LANG])||{};var E=(S&&S.i18n&&S.i18n
 function api(p,body,tok){var o={headers:{'Content-Type':'application/json'}};if(body){o.method='POST';o.body=JSON.stringify(body)}if(tok)o.headers.Authorization='Bearer '+tok;
  return fetch(p,o).then(function(r){return r.json().then(function(j){return{s:r.status,ok:r.ok,j:j}}).catch(function(){return{s:r.status,ok:r.ok,j:{}}})})}
 function up(n){return '/uploads/'+encodeURIComponent(n)}
-function fmtDate(ts){try{return new Date(ts).toLocaleString(LANG==='tr'?'tr-TR':undefined,{dateStyle:'medium',timeStyle:'short'})}catch(e){return new Date(ts).toLocaleString()}}
+function fmtDate(ts){try{return new Date(ts).toLocaleString(LANG,{dateStyle:'medium',timeStyle:'short'})}catch(e){return new Date(ts).toLocaleString()}}
 
 function applyTheme(){var t=S.theme||{};var r=document.documentElement.style;
  r.setProperty('--accent',t.accent||'#dc2727');r.setProperty('--bg',t.bg||'#0b0b10');
@@ -292,11 +294,15 @@ function render(){
 }
 window.addEventListener('hashchange',render);
 
-function setLang(l){LANG=l;localStorage.setItem('msms_lang',l);render()}
-function loadSite(){api('/api/public/site').then(function(r){if(!r.ok)return;S=r.j;
- var saved=localStorage.getItem('msms_lang');
- LANG=(saved&&S.i18n.langs[saved])?saved:(S.i18n.defaultLang||'en');
- render()})}
+function setLang(l){LANG=l;localStorage.setItem('msms_lang',l);document.documentElement.lang=l;render()}
+/* Shared with the main process so the smoke suite can unit-test the same code. */
+var pickSiteLang=${pickSiteLang.toString()};
+/* Explicit visitor choice -> browser language ('pt-br' then 'pt') -> English. */
+function pickLang(){
+ var nav=(navigator.languages&&navigator.languages.length)?Array.prototype.slice.call(navigator.languages):[navigator.language||'en'];
+ return pickSiteLang(Object.keys(S.i18n.langs),localStorage.getItem('msms_lang'),nav,S.i18n.defaultLang);
+}
+function loadSite(){api('/api/public/site').then(function(r){if(!r.ok)return;S=r.j;LANG=pickLang();document.documentElement.lang=LANG;render()})}
 function pollStatus(){api('/api/public/site').then(function(r){if(!r.ok||!S)return;S.servers=r.j.servers;
  if((location.hash||'#/')==='#/'||location.hash==='#/servers')render()})}
 
