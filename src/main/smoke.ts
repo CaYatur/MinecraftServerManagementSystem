@@ -2680,6 +2680,24 @@ export async function runWebSmoke(): Promise<void> {
       console.log('WEB-SMOKE: site logo set + clear both persist')
     }
 
+    // ---- site server IP (Stage 14): trimmed, capped, served to the site ----
+    {
+      const originalIp = siteMod.getSiteConfig().serverIp
+      siteMod.setSiteConfig({ serverIp: '  play.example.com  ' })
+      if (siteMod.getSiteConfig().serverIp !== 'play.example.com') {
+        return fail('server IP was not trimmed on save: ' + JSON.stringify(siteMod.getSiteConfig().serverIp))
+      }
+      siteMod.setSiteConfig({ serverIp: 'x'.repeat(200) })
+      if (siteMod.getSiteConfig().serverIp.length !== 120) return fail('server IP was not capped at 120')
+      siteMod.setSiteConfig({ serverIp: 'mc.demo.net:25566' })
+      sres = await sget('/api/public/site')
+      if (((await sres.json()) as { serverIp?: string }).serverIp !== 'mc.demo.net:25566') {
+        return fail('server IP was not served to the public site')
+      }
+      siteMod.setSiteConfig({ serverIp: originalIp })
+      console.log('WEB-SMOKE: site server IP trims, caps, and reaches the public payload')
+    }
+
     // ---- telemetry over HTTP (Stage 1): scope-gated, real rows ----
     // Snapshot the server's real history so the synthetic rows never survive.
     const mdir = metrics.metricsDirFor(id)

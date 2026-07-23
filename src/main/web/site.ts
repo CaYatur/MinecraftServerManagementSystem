@@ -29,6 +29,7 @@ function defaults(): SiteConfig {
     tagline: 'Join the adventure',
     description: 'Welcome to our community. Connect and play with us!',
     discordUrl: '',
+    serverIp: '',
     showStore: true,
     theme: {
       accent: '#dc2727',
@@ -118,6 +119,8 @@ export function setSiteConfig(patch: Partial<SiteConfig>): SiteConfig {
   if (patch.tagline !== undefined) s.tagline = patch.tagline.slice(0, 140)
   if (patch.description !== undefined) s.description = patch.description.slice(0, 4000)
   if (patch.discordUrl !== undefined) s.discordUrl = patch.discordUrl.slice(0, 300)
+  // A connect address: no spaces, escaped on display. Trim + cap only.
+  if (patch.serverIp !== undefined) s.serverIp = patch.serverIp.trim().slice(0, 120)
   if (patch.showStore !== undefined) s.showStore = !!patch.showStore
   if (patch.theme) {
     const t = patch.theme
@@ -245,6 +248,7 @@ export function publicSite(): PublicSite {
     tagline: s.tagline,
     description: s.description,
     discordUrl: s.discordUrl,
+    serverIp: s.serverIp,
     showStore: s.showStore && !!getServer(s.storeServerId),
     theme: s.theme,
     i18n: s.i18n,

@@ -563,6 +563,7 @@ export default {
     description: 'Description',
     accent: 'Accent colour',
     discord: 'Discord URL',
+    serverIp: 'Server IP (shown on the site)',
     showStore: 'Show store on the site',
     open: 'Open site',
     posts: 'News posts',

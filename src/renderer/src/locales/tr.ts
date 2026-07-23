@@ -566,6 +566,7 @@ const tr: typeof en = {
     description: 'Açıklama',
     accent: 'Vurgu rengi',
     discord: 'Discord adresi',
+    serverIp: 'Sunucu IP (sitede gösterilir)',
     showStore: 'Sitede mağazayı göster',
     open: 'Siteyi aç',
     posts: 'Haberler',

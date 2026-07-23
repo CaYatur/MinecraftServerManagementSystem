@@ -59,6 +59,7 @@ export function SiteView(): JSX.Element {
       tagline: cfg.tagline,
       description: cfg.description,
       discordUrl: cfg.discordUrl,
+      serverIp: cfg.serverIp,
       showStore: cfg.showStore,
       theme: cfg.theme,
       i18n: cfg.i18n
@@ -129,6 +130,10 @@ export function SiteView(): JSX.Element {
           <div className="field">
             <label>{t('site.description')}</label>
             <textarea className="input" style={{ minHeight: 80 }} value={cfg.description} onChange={(e) => patch({ description: e.target.value })} />
+          </div>
+          <div className="field">
+            <label>{t('site.serverIp')}</label>
+            <input className="input" value={cfg.serverIp} onChange={(e) => patch({ serverIp: e.target.value })} placeholder="play.example.com" />
           </div>
           <div className="row wrap" style={{ gap: 12, alignItems: 'flex-end' }}>
             <div className="field" style={{ flex: 1, minWidth: 200, marginBottom: 0 }}>

@@ -74,6 +74,10 @@ select.lang{background:var(--elev);color:var(--text);border:1px solid var(--line
 .hero .tag{color:var(--accent);font-weight:850;font-size:clamp(15px,2.2vw,22px);margin-bottom:18px;letter-spacing:.3px}
 .hero .desc{color:var(--dim);max-width:660px;margin:0 auto 32px;font-size:17px}
 .cta{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
+.connect{display:inline-flex;align-items:center;gap:12px;margin-top:24px;padding:8px 8px 8px 18px;border-radius:999px;
+  background:color-mix(in srgb,var(--card) 82%,transparent);border:1px solid var(--line);backdrop-filter:blur(8px);flex-wrap:wrap;justify-content:center}
+.connect .connect-lbl{font-size:11.5px;text-transform:uppercase;letter-spacing:.09em;color:var(--dim);font-weight:800}
+.connect code{font-family:ui-monospace,SFMono-Regular,Menlo,'Cascadia Code',monospace;font-size:16px;font-weight:800;color:var(--text);letter-spacing:.3px;user-select:all}
 .pill{display:inline-flex;align-items:center;gap:9px;padding:9px 18px;border-radius:999px;background:color-mix(in srgb,var(--card) 80%,transparent);border:1px solid var(--line);font-weight:700;font-size:14px;margin-bottom:22px;backdrop-filter:blur(8px)}
 .dot{width:9px;height:9px;border-radius:50%;background:#6b7280;flex:none}
 .dot.on{background:#4ade80;box-shadow:0 0 10px #4ade80;animation:beat 2s ease-in-out infinite}
@@ -303,6 +307,21 @@ function revealAll(){
 }
 function statusPill(sv){return '<span class="pill"><span class="dot'+(sv.running?' on':'')+'"></span>'+
   (sv.running?esc(T('status.online'))+' — '+sv.online+' / '+sv.max+' '+esc(T('status.players')):esc(T('status.offline')))+'</span>'}
+/* Copy the connect address. navigator.clipboard needs a secure context, which a
+   plain-http LAN site is not, so fall back to selecting the text + execCommand
+   (both run inside the button's click gesture). Either way flash "Copied!". */
+function copyIp(btn){
+ var el=document.getElementById('ipVal');if(!el)return;
+ var flash=function(){var o=btn.getAttribute('data-o')||btn.textContent;btn.setAttribute('data-o',o);
+  btn.textContent=T('connect.copied');clearTimeout(btn.__t);btn.__t=setTimeout(function(){btn.textContent=o},1400)};
+ var txt=el.textContent||'';
+ if(navigator.clipboard&&navigator.clipboard.writeText){
+  navigator.clipboard.writeText(txt).then(flash,function(){if(legacyCopy(el))flash()})
+ }else if(legacyCopy(el))flash()
+}
+function legacyCopy(el){try{var r=document.createRange();r.selectNodeContents(el);
+ var s=window.getSelection();s.removeAllRanges();s.addRange(r);var ok=document.execCommand('copy');
+ s.removeAllRanges();return ok}catch(e){return false}}
 
 /* ---------- pages ---------- */
 function pageHome(){
@@ -315,7 +334,11 @@ function pageHome(){
    '<p class="desc">'+esc(S.description)+'</p><div class="cta">'+
    (S.showStore?'<a class="btn primary lg" href="#/store">'+esc(T('hero.cta'))+'</a>':'')+
    (S.discordUrl?'<a class="btn lg" target="_blank" rel="noopener" href="'+esc(S.discordUrl)+'">'+esc(T('hero.discord'))+'</a>':'')+
-   '</div>'+statStrip()+'</div></section>';
+   '</div>'+
+   (S.serverIp?'<div class="connect"><span class="connect-lbl">'+esc(T('connect.ip'))+
+     '</span><code id="ipVal">'+esc(S.serverIp)+'</code>'+
+     '<button type="button" class="btn sm" onclick="copyIp(this)">'+esc(T('connect.copy'))+'</button></div>':'')+
+   statStrip()+'</div></section>';
  if(S.servers.length){h+='<section class="section"><div class="wrap"><div class="section-head"><h2>'+esc(T('servers.title'))+'</h2>'+
    ((S.servers.length>3)?'<a class="btn sm" href="#/servers">'+esc(T('nav.servers'))+'</a>':'')+'</div>'+serverGrid(S.servers.slice(0,6))+'</div></section>'}
  var recent=(S.posts||[]).slice(0,3);

@@ -55,6 +55,9 @@ export const SITE_STRINGS_EN: Record<string, string> = {
   'crate.opening': 'Opening crate…',
   'crate.congrats': 'You won',
   'crate.ok': 'Awesome!',
+  'connect.ip': 'Server IP',
+  'connect.copy': 'Copy',
+  'connect.copied': 'Copied!',
   'common.close': 'Close',
   'common.loading': 'Loading…',
   'footer.poweredBy': 'Powered by CaYaDev Server Manager'
@@ -115,6 +118,9 @@ export const SITE_STRINGS_TR: Record<string, string> = {
   'crate.opening': 'Kasa açılıyor…',
   'crate.congrats': 'Kazandınız',
   'crate.ok': 'Harika!',
+  'connect.ip': 'Sunucu IP',
+  'connect.copy': 'Kopyala',
+  'connect.copied': 'Kopyalandı!',
   'common.close': 'Kapat',
   'common.loading': 'Yükleniyor…',
   'footer.poweredBy': 'CaYaDev Server Manager ile güçlendirilmiştir'

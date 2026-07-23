@@ -174,6 +174,8 @@ export interface SiteConfig {
   tagline: string
   description: string
   discordUrl: string
+  /** Address players connect with, shown on the public site (host or host:port). */
+  serverIp: string
   showStore: boolean
   theme: SiteTheme
   i18n: SiteI18n
@@ -195,6 +197,7 @@ export interface PublicSite {
   tagline: string
   description: string
   discordUrl: string
+  serverIp: string
   showStore: boolean
   theme: SiteTheme
   i18n: SiteI18n
