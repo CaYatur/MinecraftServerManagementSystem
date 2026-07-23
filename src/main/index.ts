@@ -9,6 +9,7 @@ import { initWebServer, stopWebServer } from './web/server'
 import { initEconomy } from './store/economy'
 import { initMetrics, flushAll as flushMetrics } from './core/metrics'
 import { initEvents } from './core/events'
+import { initAudit } from './core/audit'
 import { initAlerts } from './core/alerts'
 import { resolveBaseDir } from './paths'
 import { log } from './logger'
@@ -24,7 +25,8 @@ import {
   runWorldsSmoke,
   runJavaSmoke,
   runModUpdateSmoke,
-  runBridgeSmoke
+  runBridgeSmoke,
+  runAuditSmoke
 } from './smoke'
 import { registerImageScheme, handleImageProtocol, IMG_SCHEME } from './imgProtocol'
 import { SPLASH_HTML } from './splashHtml'
@@ -197,6 +199,14 @@ if (!gotLock) {
       })
       return
     }
+    if (process.env['MSMS_SMOKE_AUDIT']) {
+      runAuditSmoke().catch((e) => {
+        // eslint-disable-next-line no-console
+        console.log('AUDIT-SMOKE: FAIL - exception', String(e))
+        app.exit(1)
+      })
+      return
+    }
     if (process.env['MSMS_SMOKE_JAVA']) {
       runJavaSmoke().catch((e) => {
         // eslint-disable-next-line no-console
@@ -242,6 +252,7 @@ if (!gotLock) {
     initEconomy()
     initMetrics()
     initEvents()
+    initAudit()
     initScheduler()
     initAlerts()
     initWebServer()

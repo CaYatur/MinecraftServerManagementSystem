@@ -42,9 +42,11 @@ import {
   BRIDGE_DEFAULT_INTERVAL_MS,
   type BridgeSnapshot
 } from '@shared/bridge'
+import { filterAudit, type AuditEntry } from '@shared/audit'
+import * as auditMod from './core/audit'
 import type { UptimeReport } from '@shared/uptime'
 import type { JavaArgsConfig, MetricSeries, ServerConfig, ServerEvent } from '@shared/types'
-import { alertsPath, uploadsDir } from './paths'
+import { alertsPath, uploadsDir, auditDir } from './paths'
 import { analyzeCrash } from './core/crash'
 import { CREATABLE_TYPES } from '@shared/versions'
 
@@ -680,6 +682,102 @@ export async function runBridgeSmoke(): Promise<void> {
     console.log('BRIDGE-SMOKE: fresh wins, silent falls back to RCON, last value carried')
 
     console.log('BRIDGE-SMOKE: PASS')
+    app.exit(0)
+  } catch (e) {
+    fail('exception ' + String(e))
+  }
+}
+
+/**
+ * Audit trail: the pure filter (the searchable/filterable surface) and the
+ * store round-trip incl. age prune (Stage 15). The filter is what an operator
+ * leans on to answer "who did X from where", so the discriminating combinations
+ * are pinned exactly.
+ */
+export async function runAuditSmoke(): Promise<void> {
+  const fail = (m: string): void => {
+    console.log('AUDIT-SMOKE: FAIL -', m)
+    app.exit(1)
+  }
+  try {
+    const t0 = 1_700_000_000_000
+    let seq = 0
+    const E = (o: Partial<AuditEntry> & Pick<AuditEntry, 'ts' | 'source' | 'action' | 'actor'>): AuditEntry => ({
+      id: 'e' + seq++,
+      ok: true,
+      ...o
+    })
+    const rows: AuditEntry[] = [
+      E({ ts: t0 - 6000, source: 'panel', action: 'server.start', actor: 'operator', serverId: 's2' }),
+      E({ ts: t0 - 5000, source: 'console', action: 'command.run', actor: 'operator', target: 'say hi', serverId: 's1' }),
+      E({ ts: t0 - 4000, source: 'webpanel', action: 'login', actor: 'admin', ip: '192.168.1.10' }),
+      E({ ts: t0 - 3000, source: 'webpanel', action: 'login', actor: 'mallory', ip: '10.0.0.5', ok: false }),
+      E({ ts: t0 - 2000, source: 'webpanel', action: 'balance.set', actor: 'admin', ip: '192.168.1.10', serverId: 's1', target: 'Steve', detail: 'set to 500' }),
+      E({ ts: t0 - 1000, source: 'public', action: 'purchase', actor: 'Steve', ip: '8.8.8.8', serverId: 's1', target: 'VIP Crate' })
+    ]
+
+    // newest-first + per-source counts over the whole window
+    const allp = filterAudit(rows, {})
+    if (allp.total !== 6) return fail('unfiltered total ' + allp.total)
+    if (allp.entries[0].action !== 'purchase') return fail('not sorted newest-first: ' + allp.entries[0].action)
+    if (allp.bySource.webpanel !== 3 || allp.bySource.console !== 1 || allp.bySource.public !== 1 || allp.bySource.panel !== 1) {
+      return fail('bySource wrong: ' + JSON.stringify(allp.bySource))
+    }
+
+    // source filter, and source + outcome together (the denied login)
+    if (filterAudit(rows, { sources: ['webpanel'] }).total !== 3) return fail('source filter')
+    const denied = filterAudit(rows, { sources: ['webpanel'], ok: false })
+    if (denied.total !== 1 || denied.entries[0].actor !== 'mallory') return fail('failed-login filter missed')
+
+    // actor is a case-insensitive substring; action is exact
+    if (filterAudit(rows, { actor: 'ADMIN' }).total !== 2) return fail('actor substring/case')
+    if (filterAudit(rows, { actions: ['login'] }).total !== 2) return fail('action filter')
+    if (filterAudit(rows, { ip: '192.168' }).total !== 2) return fail('ip substring')
+
+    // free text spans target + actor (Steve is a target on one row, actor on another)
+    if (filterAudit(rows, { text: 'crate' }).total !== 1) return fail('text on target')
+    if (filterAudit(rows, { text: 'steve' }).total !== 2) return fail('text across actor+target: ' + filterAudit(rows, { text: 'steve' }).total)
+    if (filterAudit(rows, { serverId: 's1' }).total !== 3) return fail('serverId filter')
+
+    // time window narrows both matches AND the bySource counts
+    const win = filterAudit(rows, { from: t0 - 4500, to: t0 - 2500 })
+    if (win.total !== 2) return fail('time window total ' + win.total)
+    if (win.bySource.webpanel !== 2 || win.bySource.console) return fail('window bySource leaked outside range')
+
+    // pagination bounds: offset walks, limit clamps to >=1, over-offset empties
+    if (filterAudit(rows, { limit: 2 }).entries.length !== 2) return fail('limit')
+    if (filterAudit(rows, { limit: 2, offset: 4 }).entries.length !== 2) return fail('offset window')
+    if (filterAudit(rows, { offset: 6 }).entries.length !== 0) return fail('over-offset should be empty')
+    const clamp = filterAudit(rows, { limit: 0 })
+    if (clamp.entries.length !== 1 || clamp.total !== 6) return fail('limit 0 should clamp to 1 but keep total')
+    console.log('AUDIT-SMOKE: filter OK (source+outcome, actor/ip substring, text, window+counts, pagination)')
+
+    // ---- store round-trip incl. age prune (snapshot the real log first) ----
+    const af = join(auditDir(), 'audit.jsonl')
+    const snap = existsSync(af) ? readFileSync(af, 'utf-8') : null
+    try {
+      rmSync(af, { force: true })
+      auditMod._reset()
+      const rn = Date.now()
+      auditMod.record({ source: 'console', action: 'command.run', actor: 'operator', target: 'stop', serverId: 's1', ts: rn - 1000 })
+      auditMod.record({ source: 'webpanel', action: 'login', actor: 'admin', ip: '1.2.3.4', ok: false, ts: rn - 500 })
+      auditMod.record({ source: 'system', action: 'ancient', actor: 'sys', ts: rn - (auditMod.MAX_AGE_DAYS + 1) * 86400_000 })
+      let page = auditMod.query({})
+      if (page.total !== 3) return fail('store did not read back 3 rows: ' + page.total)
+      if (page.entries[0].action !== 'login') return fail('store not newest-first')
+      if (page.entries[0].ok !== false) return fail('outcome ok=false did not persist')
+      if (auditMod.query({ ok: false }).total !== 1) return fail('store ok filter')
+      const removed = auditMod.prune(rn)
+      if (removed !== 1) return fail('age prune should drop exactly the ancient row, dropped ' + removed)
+      page = auditMod.query({})
+      if (page.total !== 2 || page.entries.some((e) => e.action === 'ancient')) return fail('ancient row survived prune')
+      console.log('AUDIT-SMOKE: store persists outcome, reads back newest-first, prunes by age')
+    } finally {
+      if (snap == null) rmSync(af, { force: true })
+      else writeFileSync(af, snap, 'utf-8')
+    }
+
+    console.log('AUDIT-SMOKE: PASS')
     app.exit(0)
   } catch (e) {
     fail('exception ' + String(e))
