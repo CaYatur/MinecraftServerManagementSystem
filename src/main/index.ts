@@ -9,6 +9,7 @@ import { initWebServer, stopWebServer } from './web/server'
 import { initEconomy } from './store/economy'
 import { initMetrics, flushAll as flushMetrics } from './core/metrics'
 import { initEvents } from './core/events'
+import { initAlerts } from './core/alerts'
 import { resolveBaseDir } from './paths'
 import { log } from './logger'
 import {
@@ -17,7 +18,8 @@ import {
   runRealSmoke,
   runWebSmoke,
   runMetricsSmoke,
-  runEventsSmoke
+  runEventsSmoke,
+  runAlertsSmoke
 } from './smoke'
 import { registerImageScheme, handleImageProtocol, IMG_SCHEME } from './imgProtocol'
 import { SPLASH_HTML } from './splashHtml'
@@ -174,6 +176,14 @@ if (!gotLock) {
       })
       return
     }
+    if (process.env['MSMS_SMOKE_ALERTS']) {
+      runAlertsSmoke().catch((e) => {
+        // eslint-disable-next-line no-console
+        console.log('ALERTS-SMOKE: FAIL - exception', String(e))
+        app.exit(1)
+      })
+      return
+    }
     if (process.env['MSMS_SMOKE_WEB']) {
       runWebSmoke().catch((e) => {
         // eslint-disable-next-line no-console
@@ -188,6 +198,7 @@ if (!gotLock) {
     initMetrics()
     initEvents()
     initScheduler()
+    initAlerts()
     initWebServer()
     createWindow()
 

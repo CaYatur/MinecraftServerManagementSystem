@@ -16,6 +16,7 @@ import * as rcon from '../core/rcon'
 import * as mods from '../core/mods'
 import * as backups from '../core/backups'
 import * as scheduler from '../core/scheduler'
+import * as alerts from '../core/alerts'
 import { analyzeCrash } from '../core/crash'
 import * as metrics from '../core/metrics'
 import * as events from '../core/events'
@@ -137,6 +138,7 @@ export function registerIpc(): void {
     // locked-file deletes on Windows).
     if (processManager.isRunning(id)) await processManager.kill(id)
     registry.removeServer(id, deleteFiles)
+    alerts.dropServer(id)
   })
   H(IPC.serversUpdate, (_e, id: string, patch: Partial<ServerConfig>) =>
     registry.updateServer(id, patch)
@@ -249,6 +251,12 @@ export function registerIpc(): void {
   H(IPC.scheduleUpdate, (_e, id: string, patch) => scheduler.updateTask(id, patch))
   H(IPC.scheduleDelete, (_e, id: string) => scheduler.deleteTask(id))
   H(IPC.scheduleRun, (_e, id: string) => scheduler.runTaskNow(id))
+
+  // --- alert rules ---
+  H(IPC.alertsList, (_e, serverId?: string) => alerts.listRules(serverId))
+  H(IPC.alertCreate, (_e, input: alerts.NewAlertRule) => alerts.createRule(input))
+  H(IPC.alertUpdate, (_e, id: string, patch) => alerts.updateRule(id, patch))
+  H(IPC.alertDelete, (_e, id: string) => alerts.deleteRule(id))
 
   // --- crash analyzer ---
   H(IPC.crashAnalyze, (_e, id: string) => analyzeCrash(id))

@@ -198,6 +198,8 @@ export type ServerEventType =
   | 'backup.deleted'
   | 'schedule.run'
   | 'schedule.failed'
+  | 'alert.triggered'
+  | 'alert.failed'
 
 /**
  * One thing that happened to a server. The message is NOT stored: the UI

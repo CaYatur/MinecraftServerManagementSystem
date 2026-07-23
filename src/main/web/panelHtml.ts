@@ -304,7 +304,8 @@ function loadStats(){
 /* ---- timeline ---- */
 var EV_ICON={'server.starting':'▶','server.ready':'✓','server.stopped':'■','server.crashed':'✕','server.error':'!',
  'player.join':'→','player.leave':'←','backup.created':'💾','backup.failed':'!','backup.restored':'↺','backup.deleted':'🗑',
- 'schedule.run':'⏱','schedule.failed':'⏱'};
+ 'schedule.run':'⏱','schedule.failed':'⏱','alert.triggered':'🔔','alert.failed':'🔔'};
+var EV_CMP={below:'below',above:'above'};
 function evText(e){var d=e.data||{};
  switch(e.type){
   case 'server.starting':return 'Server starting'+(d.type?' ('+d.type+' '+(d.version||'')+')':'');
@@ -320,6 +321,9 @@ function evText(e){var d=e.data||{};
   case 'backup.deleted':return 'Backup deleted'+(e.text?': '+e.text:'');
   case 'schedule.run':return 'Scheduled task ran'+(e.text?': '+e.text:'');
   case 'schedule.failed':return 'Scheduled task failed'+(e.text?': '+e.text:'');
+  case 'alert.triggered':return 'Alert'+(e.text?' "'+e.text+'"':'')+': '+(d.metric||'?')+' '+(EV_CMP[d.comparison]||'past')+' '+d.threshold+
+   (d.value!=null?' (was '+d.value+')':'')+(d.heldSeconds!=null?' for '+d.heldSeconds+' s':'')+(d.action?' → '+d.action:'');
+  case 'alert.failed':return 'Alert action failed'+(e.text?': '+e.text:'');
   default:return e.type}}
 function loadEvents(){
  if(!current)return;var to=Date.now(),from=to-7*86400000;

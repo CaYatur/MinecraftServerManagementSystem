@@ -10,7 +10,7 @@ const tr: typeof en = {
     players: 'Oyuncular',
     plugins: 'Eklentiler / Modlar',
     backups: 'Yedekler',
-    scheduler: 'Zamanlayıcı',
+    scheduler: 'Otomasyon',
     history: 'Geçmiş',
     timeline: 'Zaman Tüneli',
     crash: 'Çökme Analizi',
@@ -47,6 +47,7 @@ const tr: typeof en = {
     group_players: 'Oyuncular',
     group_backups: 'Yedekler',
     group_schedule: 'Zamanlanmış',
+    group_alerts: 'Uyarılar',
     starts: 'Başlatma',
     crashes: 'Çökme',
     backupsMade: 'Yedek',
@@ -67,7 +68,9 @@ const tr: typeof en = {
     backupRestored: 'Yedek geri yüklendi: {{text}}',
     backupDeleted: 'Yedek silindi: {{text}}',
     scheduleRun: 'Zamanlanmış görev çalıştı: {{text}} ({{action}})',
-    scheduleFailed: 'Zamanlanmış görev başarısız: {{text}}'
+    scheduleFailed: 'Zamanlanmış görev başarısız: {{text}}',
+    alertTriggered: '"{{text}}" uyarısı: {{metric}} {{comparison}} {{threshold}} ({{value}} ölçüldü), {{heldSeconds}} sn boyunca',
+    alertFailed: 'Uyarı eylemi başarısız: {{text}}'
   },
   sidebar: {
     servers: 'Sunucular',
@@ -338,7 +341,9 @@ const tr: typeof en = {
     restoreWarn: 'Geri yüklemeden önce sunucuyu durdurun.'
   },
   scheduler: {
-    title: 'Zamanlayıcı',
+    title: 'Otomasyon',
+    tabSchedules: 'Zamanlanmış görevler',
+    tabRules: 'Uyarı kuralları',
     add: 'Görev ekle',
     name: 'Ad',
     cron: 'Cron ifadesi',
@@ -364,6 +369,44 @@ const tr: typeof en = {
       backup: 'Yedek (dünya)',
       command: 'Konsol komutu',
       broadcast: 'Duyuru mesajı'
+    }
+  },
+  alerts: {
+    add: 'Yeni kural',
+    name: 'Ad',
+    watch: 'İzlenen',
+    when: 'Koşul',
+    threshold: 'Eşik',
+    forSeconds: 'Süre (sn)',
+    cooldownSeconds: 'Bekleme (sn)',
+    graceSeconds: 'Açılış payı (sn)',
+    action: 'Sonra',
+    actionNone: 'Sadece kaydet',
+    create: 'Kural oluştur',
+    empty: 'Henüz uyarı kuralı yok. Bir kural tek bir değeri izler ve eşiğin ötesinde kalırsa tepki verir.',
+    hint: 'Koşulun "süre" boyunca kesintisiz sürmesi gerekir. Kural tetiklendikten sonra bekleme süresi boyunca susar. Açılış payı içindeki ölçümler yok sayılır; dünya yüklenirken CPU zaten tavan yapar ve TPS düşer.',
+    for: '{{time}} sürerse',
+    cooldown: 'bekleme {{time}}',
+    secs: '{{n}} sn',
+    mins: '{{n}} dk',
+    firedTimes: '{{n}}× tetiklendi · son {{when}}',
+    neverFired: 'Hiç tetiklenmedi',
+    metric: {
+      tps: 'TPS',
+      cpu: 'CPU',
+      ram: 'Bellek (RSS)',
+      players: 'Çevrimiçi oyuncu'
+    },
+    cmp: {
+      below: 'şunun altına düşerse',
+      above: 'şunun üstüne çıkarsa'
+    },
+    preset: {
+      lowTps: 'Düşük TPS',
+      highCpu: 'Yüksek CPU',
+      highRam: 'Yüksek bellek',
+      idleShutdown: 'Boştayken kapat',
+      serverFull: 'Sunucu doluyor'
     }
   },
   crash: {

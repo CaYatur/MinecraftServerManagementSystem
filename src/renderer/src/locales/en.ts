@@ -8,7 +8,7 @@ export default {
     players: 'Players',
     plugins: 'Plugins / Mods',
     backups: 'Backups',
-    scheduler: 'Scheduler',
+    scheduler: 'Automation',
     history: 'History',
     timeline: 'Timeline',
     crash: 'Crash Analyzer',
@@ -45,6 +45,7 @@ export default {
     group_players: 'Players',
     group_backups: 'Backups',
     group_schedule: 'Scheduled',
+    group_alerts: 'Alerts',
     starts: 'Starts',
     crashes: 'Crashes',
     backupsMade: 'Backups',
@@ -65,7 +66,9 @@ export default {
     backupRestored: 'Backup restored: {{text}}',
     backupDeleted: 'Backup deleted: {{text}}',
     scheduleRun: 'Scheduled task ran: {{text}} ({{action}})',
-    scheduleFailed: 'Scheduled task failed: {{text}}'
+    scheduleFailed: 'Scheduled task failed: {{text}}',
+    alertTriggered: 'Alert "{{text}}": {{metric}} {{comparison}} {{threshold}} (was {{value}}) for {{heldSeconds}} s',
+    alertFailed: 'Alert action failed: {{text}}'
   },
   sidebar: {
     servers: 'Servers',
@@ -335,7 +338,9 @@ export default {
     restoreWarn: 'Stop the server before restoring.'
   },
   scheduler: {
-    title: 'Scheduler',
+    title: 'Automation',
+    tabSchedules: 'Scheduled tasks',
+    tabRules: 'Alert rules',
     add: 'Add task',
     name: 'Name',
     cron: 'Cron expression',
@@ -361,6 +366,44 @@ export default {
       backup: 'Backup (world)',
       command: 'Console command',
       broadcast: 'Broadcast message'
+    }
+  },
+  alerts: {
+    add: 'New rule',
+    name: 'Name',
+    watch: 'Watch',
+    when: 'When',
+    threshold: 'Threshold',
+    forSeconds: 'Held for (s)',
+    cooldownSeconds: 'Cooldown (s)',
+    graceSeconds: 'Startup grace (s)',
+    action: 'Then',
+    actionNone: 'Only record it',
+    create: 'Create rule',
+    empty: 'No alert rules yet. A rule watches one number and reacts when it stays past your threshold.',
+    hint: 'The condition must hold without a break for the whole "held for" time. After firing the rule stays quiet for the cooldown. Readings taken during the startup grace are ignored, because world loading always spikes CPU and drops TPS.',
+    for: 'held {{time}}',
+    cooldown: 'cooldown {{time}}',
+    secs: '{{n}} s',
+    mins: '{{n}} min',
+    firedTimes: 'Fired {{n}}× · last {{when}}',
+    neverFired: 'Never fired',
+    metric: {
+      tps: 'TPS',
+      cpu: 'CPU',
+      ram: 'Memory (RSS)',
+      players: 'Players online'
+    },
+    cmp: {
+      below: 'drops below',
+      above: 'rises above'
+    },
+    preset: {
+      lowTps: 'Low TPS',
+      highCpu: 'High CPU',
+      highRam: 'High memory',
+      idleShutdown: 'Shut down when idle',
+      serverFull: 'Server filling up'
     }
   },
   crash: {

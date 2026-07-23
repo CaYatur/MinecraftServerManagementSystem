@@ -2,9 +2,7 @@ import { Cron } from 'croner'
 import { randomUUID } from 'node:crypto'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { schedulesPath } from '../paths'
-import { processManager } from './processManager'
-import { createBackup, pruneBackups } from './backups'
-import * as rcon from './rcon'
+import { runAction } from './actions'
 import * as events from './events'
 import { log } from '../logger'
 import type { ScheduleTask } from '@shared/types'
@@ -26,30 +24,7 @@ function save(): void {
 async function run(task: ScheduleTask): Promise<void> {
   log.info(`Scheduled task "${task.name}" -> ${task.action}`)
   try {
-    switch (task.action) {
-      case 'restart':
-        await processManager.restart(task.serverId)
-        break
-      case 'stop':
-        await processManager.stop(task.serverId)
-        break
-      case 'start':
-        await processManager.start(task.serverId)
-        break
-      case 'backup':
-        await createBackup(task.serverId, { kind: 'world' })
-        pruneBackups(task.serverId, 10)
-        break
-      case 'command':
-        if (rcon.isConnected(task.serverId)) await rcon.command(task.serverId, task.payload ?? '')
-        else if (processManager.isRunning(task.serverId))
-          processManager.sendCommand(task.serverId, task.payload ?? '')
-        break
-      case 'broadcast':
-        if (processManager.isRunning(task.serverId))
-          processManager.sendCommand(task.serverId, `say ${task.payload ?? ''}`)
-        break
-    }
+    await runAction(task.serverId, task.action, task.payload)
     events.record(task.serverId, 'schedule.run', {
       data: { action: task.action },
       text: task.name

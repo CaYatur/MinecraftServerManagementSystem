@@ -11,13 +11,15 @@ import {
   Archive,
   ArchiveRestore,
   Trash2,
-  CalendarClock
+  CalendarClock,
+  BellRing,
+  BellOff
 } from 'lucide-react'
 import { useStore } from '../store'
 import type { EventSeverity, ServerEvent, ServerEventType } from '@shared/types'
 
 type Range = '24h' | '7d' | '30d'
-type Group = 'all' | 'server' | 'players' | 'backups' | 'schedule'
+type Group = 'all' | 'server' | 'players' | 'backups' | 'schedule' | 'alerts'
 
 const RANGE_MS: Record<Range, number> = {
   '24h': 86400_000,
@@ -29,7 +31,8 @@ const GROUPS: Record<Exclude<Group, 'all'>, ServerEventType[]> = {
   server: ['server.starting', 'server.ready', 'server.stopped', 'server.crashed', 'server.error'],
   players: ['player.join', 'player.leave'],
   backups: ['backup.created', 'backup.failed', 'backup.restored', 'backup.deleted'],
-  schedule: ['schedule.run', 'schedule.failed']
+  schedule: ['schedule.run', 'schedule.failed'],
+  alerts: ['alert.triggered', 'alert.failed']
 }
 
 /** i18n key per event type — dots would be read as nesting by i18next. */
@@ -46,7 +49,9 @@ const LABEL: Record<ServerEventType, string> = {
   'backup.restored': 'events.backupRestored',
   'backup.deleted': 'events.backupDeleted',
   'schedule.run': 'events.scheduleRun',
-  'schedule.failed': 'events.scheduleFailed'
+  'schedule.failed': 'events.scheduleFailed',
+  'alert.triggered': 'events.alertTriggered',
+  'alert.failed': 'events.alertFailed'
 }
 
 const ICON: Record<ServerEventType, JSX.Element> = {
@@ -62,7 +67,9 @@ const ICON: Record<ServerEventType, JSX.Element> = {
   'backup.restored': <ArchiveRestore size={14} />,
   'backup.deleted': <Trash2 size={14} />,
   'schedule.run': <CalendarClock size={14} />,
-  'schedule.failed': <CalendarClock size={14} />
+  'schedule.failed': <CalendarClock size={14} />,
+  'alert.triggered': <BellRing size={14} />,
+  'alert.failed': <BellOff size={14} />
 }
 
 const SEV_CLASS: Record<EventSeverity, string> = {
@@ -162,7 +169,7 @@ export function TimelineView(): JSX.Element {
             ))}
           </div>
           <div className="row wrap" style={{ gap: 6 }}>
-            {(['all', 'server', 'players', 'backups', 'schedule'] as Group[]).map((g) => (
+            {(['all', 'server', 'players', 'backups', 'schedule', 'alerts'] as Group[]).map((g) => (
               <button
                 key={g}
                 className={`btn ghost sm ${group === g ? 'active' : ''}`}

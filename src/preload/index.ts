@@ -84,6 +84,11 @@ const api: MsmsApi = {
   deleteSchedule: (id) => ipcRenderer.invoke(IPC.scheduleDelete, id),
   runSchedule: (id) => ipcRenderer.invoke(IPC.scheduleRun, id),
 
+  listAlerts: (serverId) => ipcRenderer.invoke(IPC.alertsList, serverId),
+  createAlert: (input) => ipcRenderer.invoke(IPC.alertCreate, input),
+  updateAlert: (id, patch) => ipcRenderer.invoke(IPC.alertUpdate, id, patch),
+  deleteAlert: (id) => ipcRenderer.invoke(IPC.alertDelete, id),
+
   analyzeCrash: (id) => ipcRenderer.invoke(IPC.crashAnalyze, id),
 
   queryEvents: (id, q) => ipcRenderer.invoke(IPC.eventsQuery, id, q),

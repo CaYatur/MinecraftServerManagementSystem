@@ -52,7 +52,9 @@ const SEVERITY: Record<ServerEventType, EventSeverity> = {
   'backup.restored': 'warn',
   'backup.deleted': 'info',
   'schedule.run': 'info',
-  'schedule.failed': 'warn'
+  'schedule.failed': 'warn',
+  'alert.triggered': 'warn',
+  'alert.failed': 'error'
 }
 
 function safeId(serverId: string): string {

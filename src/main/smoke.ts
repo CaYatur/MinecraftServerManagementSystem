@@ -1,5 +1,5 @@
 import { app, BrowserWindow } from 'electron'
-import { existsSync, writeFileSync, readFileSync, mkdirSync, rmSync } from 'node:fs'
+import { existsSync, writeFileSync, readFileSync, mkdirSync, rmSync, copyFileSync } from 'node:fs'
 import { join } from 'node:path'
 import * as nbt from 'prismarine-nbt'
 import { processManager } from './core/processManager'
@@ -22,9 +22,11 @@ import * as modsMod from './core/mods'
 import * as rcon from './core/rcon'
 import * as metrics from './core/metrics'
 import * as eventsMod from './core/events'
+import * as alertsMod from './core/alerts'
 import { computeUptime, clipSessions } from '@shared/uptime'
-import type { ServerEvent } from '@shared/types'
-import { uploadsDir } from './paths'
+import { evaluateRule, normalizeRule, IDLE, type AlertRule, type AlertSample } from '@shared/alerts'
+import type { ServerConfig, ServerEvent } from '@shared/types'
+import { alertsPath, uploadsDir } from './paths'
 import { analyzeCrash } from './core/crash'
 import { CREATABLE_TYPES } from '@shared/versions'
 
@@ -392,6 +394,302 @@ export async function runMetricsSmoke(): Promise<void> {
     app.exit(0)
   } catch (e) {
     wipe()
+    fail('exception ' + String(e))
+  }
+}
+
+/**
+ * Alert rule verification (Stage 5).
+ *
+ * Two halves, because the feature has two: the pure evaluator is replayed with
+ * synthetic timestamps (a sustained breach, a recovery, a dropout, a cooldown,
+ * the startup grace), and then the engine on top of it is checked for the
+ * things a pure function cannot express - persistence, the recorded event, the
+ * window reset when a server stops, and a cooldown that survives a restart.
+ */
+export async function runAlertsSmoke(): Promise<void> {
+  const fail = (m: string): void => {
+    console.log('ALERTS-SMOKE: FAIL -', m)
+    app.exit(1)
+  }
+  const SID = 'smoke-alerts-server'
+  const bak = alertsPath() + '.smokebak'
+  const hadRules = existsSync(alertsPath())
+
+  /** Feed a rule a stream of samples and collect the moments it fires. */
+  const replay = (
+    rule: AlertRule,
+    from: number,
+    to: number,
+    step: number,
+    sample: (ts: number) => AlertSample
+  ): number[] => {
+    let st = { ...IDLE }
+    const fires: number[] = []
+    for (let ts = from; ts <= to; ts += step) {
+      const r = evaluateRule(rule, st, sample(ts), ts)
+      st = r.state
+      if (r.fired) fires.push(ts)
+    }
+    return fires
+  }
+
+  const rule = (over: Partial<AlertRule> = {}): AlertRule =>
+    normalizeRule({
+      id: 'r',
+      serverId: SID,
+      name: 'test',
+      metric: 'tps',
+      comparison: 'below',
+      threshold: 15,
+      forSeconds: 60,
+      cooldownSeconds: 300,
+      graceSeconds: 0,
+      ...over
+    })
+
+  /** A healthy server that has been up for a day. */
+  const S = (over: Partial<AlertSample> = {}): AlertSample => ({
+    tps: 20,
+    cpu: 10,
+    rssMB: 2048,
+    players: 3,
+    uptimeMs: 86_400_000,
+    ...over
+  })
+
+  const restore = (): void => {
+    try {
+      if (hadRules && existsSync(bak)) {
+        copyFileSync(bak, alertsPath())
+        rmSync(bak, { force: true })
+      } else if (!hadRules) {
+        rmSync(alertsPath(), { force: true })
+      }
+    } catch {
+      /* best effort */
+    }
+  }
+
+  try {
+    if (hadRules) copyFileSync(alertsPath(), bak)
+    const t0 = Date.now() - 86_400_000
+
+    // --- 1. a breach has to hold before it fires, then respects the cooldown --
+    const sustained = replay(rule(), t0, t0 + 900_000, 2000, () => S({ tps: 10 }))
+    // 60s to arm, then one every 300s: 60, 360, 660.
+    if (sustained.length !== 3) return fail('sustained: expected 3 fires, got ' + sustained.length)
+    if (sustained[0] !== t0 + 60_000) return fail('sustained: fired at ' + (sustained[0] - t0) + 'ms, not 60s')
+    if (sustained[1] !== t0 + 360_000 || sustained[2] !== t0 + 660_000) {
+      return fail('cooldown: repeats at ' + sustained.map((f) => (f - t0) / 1000).join('/') + 's')
+    }
+
+    // --- 2. a single good sample restarts the countdown --------------------
+    const flapping = replay(rule(), t0, t0 + 100_000, 10_000, (ts) =>
+      S({ tps: ts === t0 + 50_000 ? 20 : 10 })
+    )
+    if (flapping.length !== 0) return fail('a recovery did not reset the window')
+
+    // --- 3. nothing fires while the metric is inside the threshold ---------
+    if (replay(rule(), t0, t0 + 3600_000, 10_000, () => S({ tps: 20 })).length !== 0) {
+      return fail('fired while the server was healthy')
+    }
+    // ... and the same rule with the comparison flipped is equally quiet.
+    const cpuRule = rule({ metric: 'cpu', comparison: 'above', threshold: 85 })
+    if (replay(cpuRule, t0, t0 + 600_000, 10_000, () => S({ cpu: 80 })).length !== 0) {
+      return fail('"above" fired below its threshold')
+    }
+    if (replay(cpuRule, t0, t0 + 600_000, 10_000, () => S({ cpu: 90 })).length !== 2) {
+      return fail('"above" did not fire above its threshold')
+    }
+
+    // --- 4. a missing reading holds the window, it never creates one -------
+    const dropout = replay(rule(), t0, t0 + 100_000, 10_000, (ts) =>
+      S({ tps: ts > t0 + 30_000 && ts < t0 + 70_000 ? null : 10 })
+    )
+    if (dropout.length !== 1 || dropout[0] !== t0 + 70_000) {
+      return fail('a TPS dropout broke the sustained window')
+    }
+    if (replay(rule(), t0, t0 + 3600_000, 10_000, () => S({ tps: null })).length !== 0) {
+      return fail('fired on a server that never reported a TPS')
+    }
+
+    // --- 5. the startup grace swallows the world-load spike ----------------
+    const graced = replay(rule({ graceSeconds: 120 }), t0, t0 + 400_000, 10_000, (ts) =>
+      S({ tps: 10, uptimeMs: ts - t0 })
+    )
+    if (graced[0] !== t0 + 180_000) {
+      return fail('grace: first fire at ' + ((graced[0] - t0) / 1000 || -1) + 's, expected 180s')
+    }
+    console.log('ALERTS-SMOKE: evaluator OK (sustain, cooldown, recovery, dropout, grace, both directions)')
+
+    // ------------------------------------------------------------------ engine
+    // A throwaway server so the engine's own orphan sweep does not eat the
+    // fixtures, and so no real server's timeline is polluted.
+    const fixture: ServerConfig = {
+      id: SID,
+      name: 'Alerts smoke',
+      path: join(app.getPath('temp'), 'msms-alerts-smoke'),
+      type: 'paper',
+      mcVersion: '1.21',
+      createdAt: Date.now(),
+      lastUsedAt: Date.now(),
+      java: {
+        javaPath: '',
+        minMemoryMB: 1024,
+        maxMemoryMB: 2048,
+        preset: 'basic',
+        customArgs: '',
+        extraFlags: '',
+        jarFile: 'server.jar',
+        nogui: true
+      },
+      autoRestart: false,
+      autoRestartOnCrash: false
+    }
+    updateConfig((c) => {
+      c.servers = c.servers.filter((s) => s.id !== SID)
+      c.servers.push(fixture)
+    })
+
+    alertsMod._reset()
+    rmSync(alertsPath(), { force: true })
+
+    // --- 6. CRUD + the clamps that stop a rule alerting every two seconds --
+    const created = alertsMod.createRule({
+      serverId: SID,
+      name: '  Low TPS  ',
+      metric: 'tps',
+      comparison: 'below',
+      threshold: 15,
+      forSeconds: -5,
+      cooldownSeconds: 0
+    })
+    if (created.name !== 'Low TPS') return fail('rule name not trimmed')
+    if (created.forSeconds !== 0) return fail('negative forSeconds not clamped')
+    if (created.cooldownSeconds !== 5) return fail('zero cooldown not clamped, got ' + created.cooldownSeconds)
+    if (alertsMod.listRules(SID).length !== 1) return fail('created rule not listed')
+    if (alertsMod.listRules('other-server').length !== 0) return fail('rules leaked across servers')
+    alertsMod.deleteRule(created.id)
+    if (alertsMod.listRules(SID).length !== 0) return fail('deleted rule still listed')
+
+    // --- 7. a fire is recorded, counted, and carries what it saw -----------
+    const evFile = eventsMod.eventFile(SID)
+    rmSync(evFile, { force: true })
+    const live = alertsMod.createRule({
+      serverId: SID,
+      name: 'Low TPS',
+      metric: 'tps',
+      comparison: 'below',
+      threshold: 15,
+      forSeconds: 60,
+      cooldownSeconds: 300,
+      graceSeconds: 0
+    })
+    for (let ts = t0; ts <= t0 + 600_000; ts += 10_000) {
+      alertsMod.handleSample(SID, S({ tps: 10 }), ts)
+    }
+    const fired = eventsMod.query(SID, { from: t0 - 1000, to: t0 + 700_000, types: ['alert.triggered'] })
+    if (fired.events.length !== 2) return fail('engine recorded ' + fired.events.length + ' alerts, expected 2')
+    const first = fired.events[fired.events.length - 1] // query is newest-first
+    if (first.ts !== t0 + 60_000) return fail('first alert recorded at the wrong time')
+    if (first.severity !== 'warn') return fail('alert severity is ' + first.severity)
+    if (first.text !== 'Low TPS') return fail('alert lost the rule name')
+    const d = first.data ?? {}
+    if (d.metric !== 'tps' || d.threshold !== 15 || d.value !== 10 || d.heldSeconds !== 60) {
+      return fail('alert data wrong: ' + JSON.stringify(d))
+    }
+    const stored = alertsMod.listRules(SID)[0]
+    if (stored.fireCount !== 2) return fail('fireCount is ' + stored.fireCount)
+    if (stored.lastFired !== t0 + 360_000) return fail('lastFired not persisted')
+    console.log('ALERTS-SMOKE: engine OK (2 alerts recorded with metric, value and duration)')
+
+    // --- 8. stopping a server forgets the window but keeps the cooldown ----
+    alertsMod.deleteRule(live.id)
+    const reset = alertsMod.createRule({
+      serverId: SID,
+      name: 'Reset check',
+      metric: 'players',
+      comparison: 'below',
+      threshold: 1,
+      forSeconds: 60,
+      cooldownSeconds: 300,
+      graceSeconds: 0
+    })
+    rmSync(evFile, { force: true })
+    const t1 = t0 + 3600_000
+    for (let ts = t1; ts <= t1 + 50_000; ts += 10_000) alertsMod.handleSample(SID, S({ players: 0 }), ts)
+    alertsMod.resetServer(SID) // server stopped 50 s into the breach
+    for (let ts = t1 + 60_000; ts <= t1 + 110_000; ts += 10_000) {
+      alertsMod.handleSample(SID, S({ players: 0 }), ts)
+    }
+    if (eventsMod.query(SID, { from: t1, to: t1 + 200_000, types: ['alert.triggered'] }).events.length) {
+      return fail('a restart inherited the sustained window and alerted early')
+    }
+    alertsMod.handleSample(SID, S({ players: 0 }), t1 + 125_000) // 65 s after the reset
+    if (eventsMod.query(SID, { from: t1, to: t1 + 200_000, types: ['alert.triggered'] }).events.length !== 1) {
+      return fail('the window did not restart after the reset')
+    }
+    console.log('ALERTS-SMOKE: window reset on stop OK (no early alert, rearms cleanly)')
+
+    // --- 9. the cooldown outlives the app being closed ---------------------
+    alertsMod.deleteRule(reset.id)
+    const persist = alertsMod.createRule({
+      serverId: SID,
+      name: 'Cooldown check',
+      metric: 'cpu',
+      comparison: 'above',
+      threshold: 50,
+      forSeconds: 0,
+      cooldownSeconds: 300,
+      graceSeconds: 0
+    })
+    rmSync(evFile, { force: true })
+    const t2 = t1 + 7200_000
+    alertsMod.handleSample(SID, S({ cpu: 90 }), t2)
+    alertsMod._reset()
+    alertsMod.initAlerts() // as if MSMS had been restarted
+    if (alertsMod.listRules(SID).length !== 1) return fail('rules did not survive a reload')
+    alertsMod.handleSample(SID, S({ cpu: 90 }), t2 + 10_000)
+    let n = eventsMod.query(SID, { from: t2 - 1000, to: t2 + 999_000, types: ['alert.triggered'] }).events.length
+    if (n !== 1) return fail('cooldown was lost across a reload (' + n + ' alerts)')
+    alertsMod.handleSample(SID, S({ cpu: 90 }), t2 + 300_000)
+    n = eventsMod.query(SID, { from: t2 - 1000, to: t2 + 999_000, types: ['alert.triggered'] }).events.length
+    if (n !== 2) return fail('rule stayed silent after its cooldown expired')
+    console.log('ALERTS-SMOKE: cooldown survives a restart, then rearms')
+
+    // --- 10. cleanup: rules follow their server out of the app -------------
+    alertsMod.dropServer(SID)
+    if (alertsMod.listRules(SID).length !== 0) return fail('dropServer left rules behind')
+    void persist
+    alertsMod.createRule({
+      serverId: 'ghost-server',
+      name: 'Orphan',
+      metric: 'tps',
+      comparison: 'below',
+      threshold: 5
+    })
+    if (alertsMod.pruneOrphans() !== 1) return fail('pruneOrphans missed a rule with no server')
+    if (alertsMod.listRules().length !== 0) return fail('orphan rule survived the sweep')
+    console.log('ALERTS-SMOKE: cleanup OK (rules dropped with the server, orphans swept)')
+
+    eventsMod.dropServer(SID)
+    updateConfig((c) => {
+      c.servers = c.servers.filter((s) => s.id !== SID)
+    })
+    restore()
+    console.log('ALERTS-SMOKE: PASS')
+    app.exit(0)
+  } catch (e) {
+    try {
+      eventsMod.dropServer(SID)
+      updateConfig((c) => {
+        c.servers = c.servers.filter((s) => s.id !== SID)
+      })
+    } catch {
+      /* best effort */
+    }
+    restore()
     fail('exception ' + String(e))
   }
 }
@@ -778,6 +1076,83 @@ export async function runSmoke(): Promise<void> {
     if (hv.drawn < 1) return fail('no chart path was drawn')
     if (!/%/.test(hv.pct)) return fail('uptime not computed in the UI: ' + hv.pct)
     console.log(`SMOKE: history view OK (${hv.charts} charts, ${hv.drawn} paths, uptime ${hv.pct}, bar ${hv.bar})`)
+
+    // Automation tab: both halves must render, and a rule must survive the
+    // whole round trip - preset -> form -> IPC -> disk -> list -> delete.
+    const rulesBak = alertsPath() + '.smokebak'
+    const hadRules = existsSync(alertsPath())
+    if (hadRules) copyFileSync(alertsPath(), rulesBak)
+    alertsMod.initAlerts() // the boot path the smoke branch skips
+    try {
+      await win.webContents.executeJavaScript(
+        `[...document.querySelectorAll('.tab')].find(t=>/Automation|Otomasyon/i.test(t.textContent||''))?.click()`
+      )
+      await sleep(400)
+      const sections = JSON.parse(
+        await win.webContents.executeJavaScript(
+          `(()=>{const b=[...document.querySelectorAll('.btn.sm')].map(x=>(x.textContent||'').trim());
+           return JSON.stringify({buttons:b.slice(0,2),cron:!!document.querySelector('.input.mono')})})()`
+        )
+      ) as { buttons: string[]; cron: boolean }
+      if (sections.buttons.length !== 2) return fail('automation sections missing: ' + JSON.stringify(sections))
+      if (!sections.cron) return fail('scheduled tasks section did not render')
+
+      await win.webContents.executeJavaScript(
+        `[...document.querySelectorAll('.btn.sm')].find(b=>/Alert rules|Uyarı kuralları/i.test(b.textContent||''))?.click()`
+      )
+      await sleep(300)
+      const before = alertsMod.listRules(id).length
+      const form = JSON.parse(
+        await win.webContents.executeJavaScript(
+          `(()=>{const p=[...document.querySelectorAll('.btn.ghost.sm')];
+           const low=p.find(b=>/Low TPS|Düşük TPS/i.test(b.textContent||''));
+           if(low)low.click();
+           return JSON.stringify({presets:p.length,
+             name:(document.querySelector('.input')||{}).value||'',
+             selects:document.querySelectorAll('.select').length})})()`
+        )
+      ) as { presets: number; name: string; selects: number }
+      if (form.presets < 5) return fail('alert presets missing (' + form.presets + ')')
+      if (form.selects < 3) return fail('rule form did not render its selects')
+      await sleep(150)
+      const filled = await win.webContents.executeJavaScript(
+        `(document.querySelector('.input')||{}).value||''`
+      )
+      if (!filled) return fail('clicking a preset did not fill the form')
+
+      // Create it through the button the user would press.
+      await win.webContents.executeJavaScript(
+        `[...document.querySelectorAll('.btn.primary')].find(b=>/Create rule|Kural oluştur/i.test(b.textContent||''))?.click()`
+      )
+      await sleep(500)
+      const after = alertsMod.listRules(id)
+      if (after.length !== before + 1) return fail('creating a rule from the UI did not reach disk')
+      const made = after[after.length - 1]
+      if (made.metric !== 'tps' || made.comparison !== 'below') return fail('preset values lost: ' + JSON.stringify(made))
+      const listed = JSON.parse(
+        await win.webContents.executeJavaScript(
+          `(()=>{const r=[...document.querySelectorAll('.mod-row')];
+           return JSON.stringify({rows:r.length,text:(r[0]?.textContent||'').slice(0,90)})})()`
+        )
+      ) as { rows: number; text: string }
+      if (listed.rows < 1) return fail('created rule is not listed in the UI')
+      if (/alerts\.|\{\{/.test(listed.text)) return fail('rule row not translated: ' + listed.text)
+
+      await win.webContents.executeJavaScript(
+        `[...document.querySelectorAll('.mod-row .btn.danger')].pop()?.click()`
+      )
+      await sleep(400)
+      if (alertsMod.listRules(id).length !== before) return fail('deleting a rule from the UI did not stick')
+      console.log(`SMOKE: automation view OK (${form.presets} presets, "${filled}" created + deleted via UI)`)
+    } finally {
+      alertsMod._reset()
+      if (hadRules) {
+        copyFileSync(rulesBak, alertsPath())
+        rmSync(rulesBak, { force: true })
+      } else {
+        rmSync(alertsPath(), { force: true })
+      }
+    }
   }
 
   // --- 5. mods / backups / scheduler / crash (server now stopped) ---

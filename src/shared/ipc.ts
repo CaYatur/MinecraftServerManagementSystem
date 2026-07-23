@@ -31,6 +31,7 @@ import type {
   ServerEvent
 } from './types'
 import type { UptimeReport } from './uptime'
+import type { AlertRule, NewAlertRule } from './alerts'
 import type { McVersion, BuildInfo, CreateServerOptions, CreateProgress } from './versions'
 import type { ModEntry, ModrinthHit } from './mods'
 import type {
@@ -122,6 +123,11 @@ export const IPC = {
   scheduleUpdate: 'sched:update',
   scheduleDelete: 'sched:delete',
   scheduleRun: 'sched:run',
+
+  alertsList: 'alerts:list',
+  alertCreate: 'alerts:create',
+  alertUpdate: 'alerts:update',
+  alertDelete: 'alerts:delete',
 
   crashAnalyze: 'crash:analyze',
 
@@ -278,6 +284,11 @@ export interface MsmsApi {
   updateSchedule(id: string, patch: Partial<ScheduleTask>): Promise<ScheduleTask>
   deleteSchedule(id: string): Promise<void>
   runSchedule(id: string): Promise<void>
+
+  listAlerts(serverId?: string): Promise<AlertRule[]>
+  createAlert(input: NewAlertRule): Promise<AlertRule>
+  updateAlert(id: string, patch: Partial<AlertRule>): Promise<AlertRule>
+  deleteAlert(id: string): Promise<void>
 
   analyzeCrash(id: string): Promise<CrashReport>
 

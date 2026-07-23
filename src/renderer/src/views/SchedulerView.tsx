@@ -1,15 +1,22 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Plus, Play, Trash2, Clock } from 'lucide-react'
+import { Plus, Play, Trash2, Clock, Bell } from 'lucide-react'
 import { useStore } from '../store'
+import { AlertRules } from './AlertRules'
 import type { ScheduleAction, ScheduleTask } from '@shared/types'
 
 const ACTIONS: ScheduleAction[] = ['restart', 'stop', 'start', 'backup', 'command', 'broadcast']
 
+/**
+ * Automation lives on one tab: cron tasks ("at 4 AM") and alert rules ("when
+ * TPS drops"). Two sections rather than two tabs - the tab strip is already
+ * full, and the two halves are the same idea triggered differently.
+ */
 export function SchedulerView(): JSX.Element {
   const { t } = useTranslation()
   const id = useStore((s) => s.activeServerId) as string
   const toast = useStore((s) => s.toast)
+  const [section, setSection] = useState<'schedules' | 'rules'>('schedules')
   const [tasks, setTasks] = useState<ScheduleTask[]>([])
   const [name, setName] = useState('')
   const [action, setAction] = useState<ScheduleAction>('restart')
@@ -48,6 +55,25 @@ export function SchedulerView(): JSX.Element {
 
   return (
     <div style={{ maxWidth: 920 }}>
+      <div className="row" style={{ gap: 6, marginBottom: 14 }}>
+        <button
+          className={`btn sm ${section === 'schedules' ? 'primary' : 'ghost'}`}
+          onClick={() => setSection('schedules')}
+        >
+          <Clock size={13} /> {t('scheduler.tabSchedules')}
+        </button>
+        <button
+          className={`btn sm ${section === 'rules' ? 'primary' : 'ghost'}`}
+          onClick={() => setSection('rules')}
+        >
+          <Bell size={13} /> {t('scheduler.tabRules')}
+        </button>
+      </div>
+
+      {section === 'rules' ? (
+        <AlertRules />
+      ) : (
+        <>
       <div className="panel" style={{ marginBottom: 16 }}>
         <div className="section-title" style={{ marginTop: 0 }}>{t('scheduler.add')}</div>
         <div className="row wrap" style={{ gap: 10 }}>
@@ -131,6 +157,8 @@ export function SchedulerView(): JSX.Element {
             </div>
           ))}
         </div>
+      )}
+        </>
       )}
     </div>
   )
