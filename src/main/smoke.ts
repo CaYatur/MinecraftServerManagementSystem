@@ -1691,9 +1691,47 @@ export async function runSmoke(): Promise<void> {
       if (wv.rows < 1) return fail('worlds section rendered no worlds')
       if (!wv.badge) return fail('the active world is not badged in the UI')
       if (!wv.delDisabled) return fail('the UI offers to delete the active world')
-      rmSync(worldFixture, { recursive: true, force: true })
       if (/worlds\.|\{\{/.test(wv.name + wv.meta)) return fail('world row not translated: ' + wv.meta)
       console.log(`SMOKE: worlds view OK (${wv.rows} world(s), "${wv.name}", delete disabled)`)
+
+      // Close the IPC seam: the three-argument calls are the ones a swapped
+      // preload binding would break at runtime and nowhere else. Clone is the
+      // safe one to drive for real - it only ever creates, and the copy is
+      // removed again through the UI's own delete.
+      const clonePath = worldFixture + '_copy'
+      try {
+        await win.webContents.executeJavaScript(
+          `[...document.querySelectorAll('.world-row .btn.ghost')].find(b=>/Duplicate|Kopyala/i.test(b.title||''))?.click()`
+        )
+        await sleep(300)
+        await win.webContents.executeJavaScript(
+          `document.querySelector('.modal .btn.primary')?.click()`
+        )
+        await sleep(1200)
+        const cloned = JSON.parse(
+          await win.webContents.executeJavaScript(
+            `(()=>{const r=[...document.querySelectorAll('.world-row')];
+             return JSON.stringify({rows:r.length,names:r.map(x=>(x.querySelector('.mod-name')?.textContent||'').trim())})})()`
+          )
+        ) as { rows: number; names: string[] }
+        if (!existsSync(clonePath)) return fail('cloning through the UI never reached the disk')
+        if (cloned.rows !== 2) return fail('the clone did not appear in the list (' + cloned.rows + ' rows)')
+
+        // ...and delete it again, which also proves the destructive path is
+        // wired to the right world: the copy, never the active one.
+        await win.webContents.executeJavaScript(
+          `[...document.querySelectorAll('.world-row')].find(r=>!r.querySelector('.badge'))?.querySelector('.btn.danger')?.click()`
+        )
+        await sleep(300)
+        await win.webContents.executeJavaScript(`document.querySelector('.modal .btn.danger')?.click()`)
+        await sleep(900)
+        if (existsSync(clonePath)) return fail('deleting the clone through the UI did nothing')
+        if (!existsSync(worldFixture)) return fail('the UI deleted the ACTIVE world instead of the copy')
+        console.log('SMOKE: world clone + delete round-tripped through the UI')
+      } finally {
+        rmSync(clonePath, { recursive: true, force: true })
+        rmSync(worldFixture, { recursive: true, force: true })
+      }
     } finally {
       alertsMod._reset()
       if (hadRules) {
