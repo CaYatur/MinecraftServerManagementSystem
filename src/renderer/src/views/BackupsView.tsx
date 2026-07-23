@@ -1,14 +1,20 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Archive, RotateCcw, Trash2, FolderOpen, Loader2, Save } from 'lucide-react'
+import { Archive, RotateCcw, Trash2, FolderOpen, Loader2, Save, Globe2 } from 'lucide-react'
 import { useStore } from '../store'
 import { formatBytes } from '../components/ui'
+import { WorldsList } from './WorldsList'
 import type { BackupRecord } from '@shared/types'
 
+/**
+ * Worlds and backups share a tab: both are about the same folders on disk,
+ * and the tab strip is full. Same segmented pattern as Automation.
+ */
 export function BackupsView(): JSX.Element {
   const { t } = useTranslation()
   const id = useStore((s) => s.activeServerId) as string
   const toast = useStore((s) => s.toast)
+  const [section, setSection] = useState<'worlds' | 'backups'>('worlds')
   const [kind, setKind] = useState<'world' | 'full'>('world')
   const [destDir, setDestDir] = useState('')
   const [creating, setCreating] = useState(false)
@@ -42,6 +48,25 @@ export function BackupsView(): JSX.Element {
 
   return (
     <div style={{ maxWidth: 900 }}>
+      <div className="row" style={{ gap: 6, marginBottom: 14 }}>
+        <button
+          className={`btn sm ${section === 'worlds' ? 'primary' : 'ghost'}`}
+          onClick={() => setSection('worlds')}
+        >
+          <Globe2 size={13} /> {t('worlds.tab')}
+        </button>
+        <button
+          className={`btn sm ${section === 'backups' ? 'primary' : 'ghost'}`}
+          onClick={() => setSection('backups')}
+        >
+          <Archive size={13} /> {t('backups.tab')}
+        </button>
+      </div>
+
+      {section === 'worlds' ? (
+        <WorldsList />
+      ) : (
+        <>
       <div className="panel" style={{ marginBottom: 16 }}>
         <div className="section-title" style={{ marginTop: 0 }}>{t('backups.create')}</div>
         <div className="row wrap" style={{ gap: 10, alignItems: 'flex-end' }}>
@@ -102,6 +127,8 @@ export function BackupsView(): JSX.Element {
             </div>
           ))}
         </div>
+      )}
+        </>
       )}
 
       {confirmRestore && (

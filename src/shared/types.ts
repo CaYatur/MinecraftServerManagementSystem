@@ -200,6 +200,8 @@ export type ServerEventType =
   | 'schedule.failed'
   | 'alert.triggered'
   | 'alert.failed'
+  | 'world.activated'
+  | 'world.deleted'
 
 /**
  * One thing that happened to a server. The message is NOT stored: the UI
@@ -329,6 +331,28 @@ export interface BackupRecord {
   size: number
   createdAt: number
   kind: 'world' | 'full'
+}
+
+export type WorldDimension = 'overworld' | 'nether' | 'end'
+
+/**
+ * One world as MSMS presents it: the base folder plus whichever dimension
+ * folders belong to it. `seed`/`gameMode`/`version` are read from level.dat on
+ * a best-effort basis and are absent when it could not be parsed.
+ */
+export interface WorldInfo {
+  name: string
+  /** Matches `level-name` in server.properties. */
+  active: boolean
+  /** Base folder plus its sibling dimensions. */
+  sizeBytes: number
+  /** level.dat mtime — when the world was last written. */
+  lastPlayed: number
+  dimensions: WorldDimension[]
+  seed?: string
+  gameMode?: number
+  hardcore?: boolean
+  version?: string
 }
 
 export interface BackupOptions {

@@ -54,7 +54,9 @@ const SEVERITY: Record<ServerEventType, EventSeverity> = {
   'schedule.run': 'info',
   'schedule.failed': 'warn',
   'alert.triggered': 'warn',
-  'alert.failed': 'error'
+  'alert.failed': 'error',
+  'world.activated': 'info',
+  'world.deleted': 'warn'
 }
 
 function safeId(serverId: string): string {

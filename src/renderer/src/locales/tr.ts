@@ -95,7 +95,9 @@ const tr: typeof en = {
     scheduleRun: 'Zamanlanmış görev çalıştı: {{text}} ({{action}})',
     scheduleFailed: 'Zamanlanmış görev başarısız: {{text}}',
     alertTriggered: '"{{text}}" uyarısı: {{metric}} {{comparison}} {{threshold}} ({{value}} ölçüldü), {{heldSeconds}} sn boyunca',
-    alertFailed: 'Uyarı eylemi başarısız: {{text}}'
+    alertFailed: 'Uyarı eylemi başarısız: {{text}}',
+    worldActivated: '"{{text}}" dünyası etkinleştirildi',
+    worldDeleted: '"{{text}}" dünyası silindi ({{folders}} klasör)'
   },
   sidebar: {
     servers: 'Sunucular',
@@ -363,7 +365,36 @@ const tr: typeof en = {
     kind: 'Tür',
     size: 'Boyut',
     date: 'Tarih',
-    restoreWarn: 'Geri yüklemeden önce sunucuyu durdurun.'
+    restoreWarn: 'Geri yüklemeden önce sunucuyu durdurun.',
+    tab: 'Yedekler'
+  },
+  worlds: {
+    tab: 'Dünyalar',
+    title: 'Diskteki dünyalar',
+    active: 'etkin',
+    hardcore: 'hardcore',
+    activate: 'Etkin yap',
+    activated: 'Dünya etkinleştirildi — bir sonraki açılışta yüklenir',
+    deleted: 'Dünya silindi',
+    empty: 'Bu sunucu klasöründe dünya bulunamadı.',
+    hint: 'Etkin dünya, server.properties içindeki level-name değeridir. Değişiklik bir sonraki açılışta geçerli olur.',
+    runningHint: 'Sunucu çalışıyor — dünya değiştirmek veya silmek için önce durdur. Çalışırken dosyalar kilitlidir.',
+    cannotDeleteActive: 'Etkin dünya silinemez. Önce başka bir dünyayı etkin yap.',
+    lastPlayed: 'son yazma {{when}}',
+    seed: 'seed {{seed}}',
+    confirmDelete: '"{{name}}" kalıcı olarak silinsin mi?',
+    deleteBody: 'Bu işlem {{folders}} klasörü, toplam {{size}}, nether ve end dahil siler. Geri alınamaz; ileride lazım olabilecekse önce yedek al.',
+    dim: {
+      overworld: 'Ana dünya',
+      nether: 'Nether',
+      end: 'End'
+    },
+    mode: {
+      survival: 'Hayatta kalma',
+      creative: 'Yaratıcı',
+      adventure: 'Macera',
+      spectator: 'İzleyici'
+    }
   },
   scheduler: {
     title: 'Otomasyon',

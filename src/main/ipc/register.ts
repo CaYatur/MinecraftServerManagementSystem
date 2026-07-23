@@ -15,6 +15,7 @@ import * as players from '../core/players'
 import * as rcon from '../core/rcon'
 import * as mods from '../core/mods'
 import * as backups from '../core/backups'
+import * as worlds from '../core/worlds'
 import * as scheduler from '../core/scheduler'
 import * as alerts from '../core/alerts'
 import { analyzeCrash } from '../core/crash'
@@ -236,6 +237,11 @@ export function registerIpc(): void {
   })
   H(IPC.modSearch, (_e, id: string, query: string) => mods.searchModrinth(id, query))
   H(IPC.modInstall, (_e, id: string, projectId: string) => mods.installModrinth(id, projectId))
+
+  // --- worlds ---
+  H(IPC.worldsList, (_e, id: string) => worlds.listWorlds(id))
+  H(IPC.worldActivate, (_e, id: string, name: string) => worlds.activateWorld(id, name))
+  H(IPC.worldDelete, (_e, id: string, name: string) => worlds.deleteWorld(id, name))
 
   // --- backups ---
   H(IPC.backupsList, (_e, id?: string) => backups.listBackups(id))

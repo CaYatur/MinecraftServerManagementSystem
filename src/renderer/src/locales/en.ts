@@ -93,7 +93,9 @@ export default {
     scheduleRun: 'Scheduled task ran: {{text}} ({{action}})',
     scheduleFailed: 'Scheduled task failed: {{text}}',
     alertTriggered: 'Alert "{{text}}": {{metric}} {{comparison}} {{threshold}} (was {{value}}) for {{heldSeconds}} s',
-    alertFailed: 'Alert action failed: {{text}}'
+    alertFailed: 'Alert action failed: {{text}}',
+    worldActivated: 'World "{{text}}" made active',
+    worldDeleted: 'World "{{text}}" deleted ({{folders}} folders)'
   },
   sidebar: {
     servers: 'Servers',
@@ -360,7 +362,36 @@ export default {
     kind: 'Type',
     size: 'Size',
     date: 'Date',
-    restoreWarn: 'Stop the server before restoring.'
+    restoreWarn: 'Stop the server before restoring.',
+    tab: 'Backups'
+  },
+  worlds: {
+    tab: 'Worlds',
+    title: 'Worlds on disk',
+    active: 'active',
+    hardcore: 'hardcore',
+    activate: 'Make active',
+    activated: 'World activated — it loads on the next start',
+    deleted: 'World deleted',
+    empty: 'No worlds found in this server folder.',
+    hint: 'The active world is the one in server.properties (level-name). Changing it takes effect on the next start.',
+    runningHint: 'The server is running — stop it to switch or delete a world. Files are locked while it runs.',
+    cannotDeleteActive: 'The active world cannot be deleted. Make another one active first.',
+    lastPlayed: 'last written {{when}}',
+    seed: 'seed {{seed}}',
+    confirmDelete: 'Delete "{{name}}" permanently?',
+    deleteBody: 'This removes {{folders}} folder(s), {{size}} — including its nether and end. There is no undo; take a backup first if you might want it back.',
+    dim: {
+      overworld: 'Overworld',
+      nether: 'Nether',
+      end: 'End'
+    },
+    mode: {
+      survival: 'Survival',
+      creative: 'Creative',
+      adventure: 'Adventure',
+      spectator: 'Spectator'
+    }
   },
   scheduler: {
     title: 'Automation',

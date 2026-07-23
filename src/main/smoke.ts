@@ -1,6 +1,7 @@
 import { app, BrowserWindow } from 'electron'
 import { existsSync, writeFileSync, readFileSync, mkdirSync, rmSync, copyFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { gzipSync } from 'node:zlib'
 import * as nbt from 'prismarine-nbt'
 import { processManager } from './core/processManager'
 import { getConfig, updateConfig } from './config'
@@ -23,6 +24,7 @@ import * as rcon from './core/rcon'
 import * as metrics from './core/metrics'
 import * as eventsMod from './core/events'
 import * as alertsMod from './core/alerts'
+import * as worldsMod from './core/worlds'
 import { computeUptime, clipSessions } from '@shared/uptime'
 import { evaluateRule, normalizeRule, IDLE, type AlertRule, type AlertSample } from '@shared/alerts'
 import { analyze, type Finding } from '@shared/analysis'
@@ -396,6 +398,190 @@ export async function runMetricsSmoke(): Promise<void> {
     app.exit(0)
   } catch (e) {
     wipe()
+    fail('exception ' + String(e))
+  }
+}
+
+/**
+ * World manager verification (Stage 7).
+ *
+ * Runs against a throwaway folder in the OS temp directory, never a
+ * registered server, because this is the first suite that deletes things. The
+ * assertions that matter most are the refusals: a guard that only lives in a
+ * confirm dialog is not a guard.
+ */
+export async function runWorldsSmoke(): Promise<void> {
+  const fail = (m: string): void => {
+    console.log('WORLDS-SMOKE: FAIL -', m)
+    app.exit(1)
+  }
+  const SID = 'smoke-worlds-server'
+  const root = join(app.getPath('temp'), 'msms-worlds-smoke')
+  const cleanup = (): void => {
+    try {
+      rmSync(root, { recursive: true, force: true })
+      eventsMod.dropServer(SID)
+      updateConfig((c) => {
+        c.servers = c.servers.filter((s) => s.id !== SID)
+      })
+    } catch {
+      /* best effort */
+    }
+  }
+
+  /** A level.dat real enough for prismarine-nbt to read back. */
+  const levelDat = (seed: number, version: string, gameType: number, hardcore: boolean): Buffer =>
+    gzipSync(
+      nbt.writeUncompressed({
+        type: 'compound',
+        name: '',
+        value: {
+          Data: {
+            type: 'compound',
+            value: {
+              RandomSeed: { type: 'long', value: [0, seed] },
+              GameType: { type: 'int', value: gameType },
+              hardcore: { type: 'byte', value: hardcore ? 1 : 0 },
+              Version: { type: 'compound', value: { Name: { type: 'string', value: version } } }
+            }
+          }
+        }
+      } as nbt.NBT)
+    )
+
+  const makeWorld = (name: string, opts: { dat?: Buffer; bytes?: number; dims?: string[] } = {}): void => {
+    const dir = join(root, name)
+    mkdirSync(join(dir, 'region'), { recursive: true })
+    writeFileSync(join(dir, 'level.dat'), opts.dat ?? levelDat(12345, '1.21.4', 0, false))
+    writeFileSync(join(dir, 'region', 'r.0.0.mca'), Buffer.alloc(opts.bytes ?? 1024))
+    for (const d of opts.dims ?? []) mkdirSync(join(dir, d), { recursive: true })
+  }
+
+  try {
+    cleanup()
+    mkdirSync(root, { recursive: true })
+    writeFileSync(join(root, 'server.properties'), 'level-name=world\nmax-players=20\n', 'utf-8')
+
+    // Paper layout: the nether and end are SIBLING folders with their own
+    // level.dat. Treating each as a world is the bug this suite exists for.
+    makeWorld('world', { bytes: 2048 })
+    makeWorld('world_nether', { bytes: 1024 })
+    makeWorld('world_the_end', { bytes: 512 })
+    // Vanilla layout: dimensions live inside.
+    makeWorld('backup_world', { bytes: 4096, dims: ['DIM-1'] })
+    // A `_nether` whose overworld does not exist is a world in its own right;
+    // hiding it would make it unreachable. Its level.dat is deliberately junk.
+    makeWorld('orphan_nether', { dat: Buffer.from('not really nbt'), bytes: 128 })
+    mkdirSync(join(root, 'plugins'), { recursive: true }) // no level.dat -> not a world
+
+    updateConfig((c) => {
+      c.servers = c.servers.filter((s) => s.id !== SID)
+      c.servers.push({
+        id: SID,
+        name: 'Worlds smoke',
+        path: root,
+        type: 'paper',
+        mcVersion: '1.21.4',
+        createdAt: Date.now(),
+        lastUsedAt: Date.now(),
+        java: {
+          javaPath: '',
+          minMemoryMB: 1024,
+          maxMemoryMB: 2048,
+          preset: 'basic',
+          customArgs: '',
+          extraFlags: '',
+          jarFile: 'server.jar',
+          nogui: true
+        },
+        autoRestart: false,
+        autoRestartOnCrash: false
+      })
+    })
+
+    // --- 1. grouping -------------------------------------------------------
+    const list = await worldsMod.listWorlds(SID)
+    const names = list.map((w) => w.name).join(',')
+    if (names !== 'world,backup_world,orphan_nether' && names !== 'world,orphan_nether,backup_world') {
+      return fail('worlds listed as: ' + names + ' (expected 3, dimensions folded in)')
+    }
+    const main = list.find((w) => w.name === 'world')!
+    if (!main.active) return fail('level-name=world did not mark it active')
+    if (main.dimensions.join('+') !== 'overworld+nether+end') {
+      return fail('sibling dimensions not detected: ' + main.dimensions.join('+'))
+    }
+    const vanilla = list.find((w) => w.name === 'backup_world')!
+    if (vanilla.dimensions.join('+') !== 'overworld+nether') {
+      return fail('DIM-1 not detected as the nether: ' + vanilla.dimensions.join('+'))
+    }
+    if (vanilla.active) return fail('a second world claims to be active')
+    // Size must cover the companion folders, not just the base one.
+    if (main.sizeBytes < 3584) return fail('world size ' + main.sizeBytes + ' excludes its dimensions')
+    console.log(`WORLDS-SMOKE: grouping OK (3 worlds from 5 level.dat folders, ${main.dimensions.length} dims on the active one)`)
+
+    // --- 2. level.dat is best effort, never fatal ---------------------------
+    if (main.seed !== '12345') return fail('seed read as ' + main.seed)
+    if (main.version !== '1.21.4') return fail('version read as ' + main.version)
+    const junk = list.find((w) => w.name === 'orphan_nether')!
+    if (junk.seed !== undefined) return fail('made up a seed for an unreadable level.dat')
+    if (junk.sizeBytes <= 0) return fail('a world with a corrupt level.dat lost its size')
+    console.log('WORLDS-SMOKE: level.dat parsed where possible, corrupt one degrades quietly')
+
+    // --- 3. the refusals ----------------------------------------------------
+    const refuses = async (what: string, fn: () => unknown, expected: string): Promise<boolean> => {
+      try {
+        await fn()
+      } catch (e) {
+        const msg = String((e as Error)?.message ?? e)
+        if (msg === expected) return true
+        fail(`${what}: refused with "${msg}", expected "${expected}"`)
+        return false
+      }
+      fail(`${what}: was ALLOWED`)
+      return false
+    }
+    if (!(await refuses('deleting the active world', () => worldsMod.deleteWorld(SID, 'world'), 'world-is-active'))) return
+    if (!(await refuses('a traversal name', () => worldsMod.deleteWorld(SID, '../..'), 'invalid-name'))) return
+    if (!(await refuses('a separator in the name', () => worldsMod.activateWorld(SID, 'a/b'), 'invalid-name'))) return
+    if (!(await refuses('a world that is not there', () => worldsMod.activateWorld(SID, 'nope'), 'world-not-found'))) return
+    if (!(await refuses('a folder with no level.dat', () => worldsMod.activateWorld(SID, 'plugins'), 'world-not-found'))) return
+    if (existsSync(join(root, 'world', 'level.dat')) === false) return fail('a refused delete still removed files')
+    console.log('WORLDS-SMOKE: refusals OK (active, traversal, separator, missing, non-world)')
+
+    // --- 4. activate --------------------------------------------------------
+    worldsMod.activateWorld(SID, 'backup_world')
+    const props = readFileSync(join(root, 'server.properties'), 'utf-8')
+    if (!/^level-name=backup_world$/m.test(props)) return fail('level-name not written: ' + props)
+    if (!/max-players=20/.test(props)) return fail('activating a world damaged server.properties')
+    const after = await worldsMod.listWorlds(SID)
+    if (!after.find((w) => w.name === 'backup_world')?.active) return fail('activation not reflected')
+    if (after.find((w) => w.name === 'world')?.active) return fail('two worlds active at once')
+    if (after[0].name !== 'backup_world') return fail('the active world is not listed first')
+    console.log('WORLDS-SMOKE: activate rewrites level-name and nothing else')
+
+    // --- 5. delete takes the whole world, and only that world ---------------
+    makeWorld('deleteme', { bytes: 256 })
+    makeWorld('deleteme_nether', { bytes: 256 })
+    if ((await worldsMod.listWorlds(SID)).length !== 4) return fail('fixture for the delete test is wrong')
+    worldsMod.deleteWorld(SID, 'deleteme')
+    if (existsSync(join(root, 'deleteme'))) return fail('the world survived its own deletion')
+    if (existsSync(join(root, 'deleteme_nether'))) return fail('the nether was orphaned by the delete')
+    for (const keep of ['world', 'world_nether', 'world_the_end', 'backup_world', 'orphan_nether']) {
+      if (!existsSync(join(root, keep))) return fail('delete took "' + keep + '" with it')
+    }
+    const evs = eventsMod.query(SID, { types: ['world.deleted', 'world.activated'] })
+    if (evs.events.length !== 2) return fail('world changes not on the timeline (' + evs.events.length + ')')
+    if (evs.events[0].type !== 'world.deleted' || evs.events[0].text !== 'deleteme') {
+      return fail('delete event wrong: ' + JSON.stringify(evs.events[0]))
+    }
+    if (evs.events[0].data?.folders !== 2) return fail('delete event did not count both folders')
+    console.log('WORLDS-SMOKE: delete removes the world and its dimensions, leaves the rest alone')
+
+    cleanup()
+    console.log('WORLDS-SMOKE: PASS')
+    app.exit(0)
+  } catch (e) {
+    cleanup()
     fail('exception ' + String(e))
   }
 }
@@ -1148,6 +1334,27 @@ export async function runSmoke(): Promise<void> {
   if (!statsSeen) return fail('no stats event received')
   console.log('SMOKE: stats OK')
 
+  // --- 2b2. the running guard, which only a real running server can prove ---
+  // The name is deliberately one that does not exist: if the guard were ever
+  // removed this still deletes nothing, but it must be refused for the right
+  // reason, before anything else is even looked at.
+  {
+    let refused = ''
+    try {
+      worldsMod.deleteWorld(id, 'no-such-world-here')
+    } catch (e) {
+      refused = String((e as Error)?.message ?? e)
+    }
+    if (refused !== 'server-running') {
+      return fail('deleting a world while running was refused with "' + refused + '"')
+    }
+    // Listing stays available while running (read-only) - and a stub server
+    // with no world yet must come back empty rather than throw.
+    const live = await worldsMod.listWorlds(id)
+    if (!Array.isArray(live)) return fail('listWorlds did not return a list while running')
+    console.log(`SMOKE: world guard OK (delete refused while running, ${live.length} world(s) listed)`)
+  }
+
   // --- 2c. RCON auto-enable + player JSON merge ---
   const pm = Object.fromEntries(sf.readProperties(id).entries.map((e) => [e.key, e.value]))
   if (pm['enable-rcon'] !== 'true') return fail('rcon not auto-enabled in properties')
@@ -1368,6 +1575,48 @@ export async function runSmoke(): Promise<void> {
       await sleep(400)
       if (alertsMod.listRules(id).length !== before) return fail('deleting a rule from the UI did not stick')
       console.log(`SMOKE: automation view OK (${form.presets} presets, "${filled}" created + deleted via UI)`)
+
+      // Worlds share the Backups tab. The active world must render and its
+      // delete button must be disabled - the UI guard behind the core one.
+      // The stub server never generates a world, so lay a minimal one down.
+      const worldFixture = join(getConfig().servers.find((s) => s.id === id)?.path ?? '', 'world')
+      mkdirSync(worldFixture, { recursive: true })
+      writeFileSync(
+        join(worldFixture, 'level.dat'),
+        gzipSync(
+          nbt.writeUncompressed({
+            type: 'compound',
+            name: '',
+            value: {
+              Data: {
+                type: 'compound',
+                value: { Version: { type: 'compound', value: { Name: { type: 'string', value: '1.21.4' } } } }
+              }
+            }
+          } as nbt.NBT)
+        )
+      )
+      await win.webContents.executeJavaScript(
+        `[...document.querySelectorAll('.tab')].find(t=>/Backups|Yedek/i.test(t.textContent||''))?.click()`
+      )
+      await sleep(700)
+      const wv = JSON.parse(
+        await win.webContents.executeJavaScript(
+          `(()=>{const rows=[...document.querySelectorAll('.world-row')];
+           const first=rows[0];
+           return JSON.stringify({rows:rows.length,
+             name:(first?.querySelector('.mod-name')?.textContent||'').trim(),
+             badge:!!first?.querySelector('.badge'),
+             delDisabled:!!first?.querySelector('.btn.danger')?.disabled,
+             meta:(first?.querySelector('.dim')?.textContent||'').slice(0,60)})})()`
+        )
+      ) as { rows: number; name: string; badge: boolean; delDisabled: boolean; meta: string }
+      if (wv.rows < 1) return fail('worlds section rendered no worlds')
+      if (!wv.badge) return fail('the active world is not badged in the UI')
+      if (!wv.delDisabled) return fail('the UI offers to delete the active world')
+      rmSync(worldFixture, { recursive: true, force: true })
+      if (/worlds\.|\{\{/.test(wv.name + wv.meta)) return fail('world row not translated: ' + wv.meta)
+      console.log(`SMOKE: worlds view OK (${wv.rows} world(s), "${wv.name}", delete disabled)`)
     } finally {
       alertsMod._reset()
       if (hadRules) {

@@ -23,6 +23,7 @@ import type {
   CrashReport,
   UpdateInfo,
   ServerMessages,
+  WorldInfo,
   MetricSeries,
   MetricResolution,
   TelemetryConfig,
@@ -112,6 +113,10 @@ export const IPC = {
   modAdd: 'mods:add',
   modSearch: 'mods:search',
   modInstall: 'mods:install',
+
+  worldsList: 'worlds:list',
+  worldActivate: 'worlds:activate',
+  worldDelete: 'worlds:delete',
 
   backupsList: 'backups:list',
   backupCreate: 'backups:create',
@@ -266,6 +271,10 @@ export interface MsmsApi {
   addMod(id: string, folder: 'plugins' | 'mods'): Promise<string | null>
   searchMods(id: string, query: string): Promise<ModrinthHit[]>
   installMod(id: string, projectId: string): Promise<string>
+
+  listWorlds(id: string): Promise<WorldInfo[]>
+  activateWorld(id: string, name: string): Promise<void>
+  deleteWorld(id: string, name: string): Promise<void>
 
   listBackups(id?: string): Promise<BackupRecord[]>
   createBackup(id: string, opts: BackupOptions): Promise<BackupRecord>

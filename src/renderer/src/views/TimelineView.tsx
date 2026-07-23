@@ -13,7 +13,8 @@ import {
   Trash2,
   CalendarClock,
   BellRing,
-  BellOff
+  BellOff,
+  Globe2
 } from 'lucide-react'
 import { useStore } from '../store'
 import type { EventSeverity, ServerEvent, ServerEventType } from '@shared/types'
@@ -51,7 +52,9 @@ const LABEL: Record<ServerEventType, string> = {
   'schedule.run': 'events.scheduleRun',
   'schedule.failed': 'events.scheduleFailed',
   'alert.triggered': 'events.alertTriggered',
-  'alert.failed': 'events.alertFailed'
+  'alert.failed': 'events.alertFailed',
+  'world.activated': 'events.worldActivated',
+  'world.deleted': 'events.worldDeleted'
 }
 
 const ICON: Record<ServerEventType, JSX.Element> = {
@@ -69,7 +72,9 @@ const ICON: Record<ServerEventType, JSX.Element> = {
   'schedule.run': <CalendarClock size={14} />,
   'schedule.failed': <CalendarClock size={14} />,
   'alert.triggered': <BellRing size={14} />,
-  'alert.failed': <BellOff size={14} />
+  'alert.failed': <BellOff size={14} />,
+  'world.activated': <Globe2 size={14} />,
+  'world.deleted': <Globe2 size={14} />
 }
 
 const SEV_CLASS: Record<EventSeverity, string> = {
