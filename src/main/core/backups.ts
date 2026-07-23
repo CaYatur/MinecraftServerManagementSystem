@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, statSync, rmSync, readFileSync, writeFileSync } 
 import { join } from 'node:path'
 import { getServer } from './serverRegistry'
 import { readProperties } from './serverFiles'
+import * as events from './events'
 import { backupsDir, backupsMetaPath } from '../paths'
 import { log } from '../logger'
 import type { BackupOptions, BackupRecord } from '@shared/types'
@@ -34,6 +35,18 @@ export function listBackups(serverId?: string): BackupRecord[] {
 }
 
 export async function createBackup(serverId: string, opts: BackupOptions): Promise<BackupRecord> {
+  try {
+    return await runBackup(serverId, opts)
+  } catch (err) {
+    events.record(serverId, 'backup.failed', {
+      data: { kind: opts.kind },
+      text: String((err as Error)?.message ?? err)
+    })
+    throw err
+  }
+}
+
+async function runBackup(serverId: string, opts: BackupOptions): Promise<BackupRecord> {
   const server = getServer(serverId)
   if (!server) throw new Error('server-not-found')
   const ts = new Date().toISOString().replace(/[:.]/g, '-')
@@ -74,6 +87,10 @@ export async function createBackup(serverId: string, opts: BackupOptions): Promi
   meta.push(rec)
   saveMeta(meta)
   log.info(`Backup created: ${dest} (${rec.size} bytes)`)
+  events.record(serverId, 'backup.created', {
+    data: { kind: rec.kind, sizeMB: Math.round(rec.size / (1024 * 1024)), backupId: rec.id },
+    text: rec.fileName
+  })
   return rec
 }
 
@@ -88,6 +105,7 @@ export function deleteBackup(id: string): void {
     }
   }
   saveMeta(meta.filter((r) => r.id !== id))
+  if (rec) events.record(rec.serverId, 'backup.deleted', { text: rec.fileName })
 }
 
 /** Extract a backup back into its server folder (server should be stopped). */
@@ -100,6 +118,10 @@ export function restoreBackup(id: string): void {
   const zip = new AdmZip(rec.path)
   zip.extractAllTo(server.path, true)
   log.info(`Backup restored: ${rec.fileName} -> ${server.path}`)
+  events.record(rec.serverId, 'backup.restored', {
+    data: { kind: rec.kind, backupId: rec.id },
+    text: rec.fileName
+  })
 }
 
 /** Keep only the newest `keep` backups for a server (used by the scheduler). */

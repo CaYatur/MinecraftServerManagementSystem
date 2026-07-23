@@ -9,6 +9,7 @@ import { listServers, getServer } from '../core/serverRegistry'
 import { processManager } from '../core/processManager'
 import { getPlayers } from '../core/players'
 import * as metrics from '../core/metrics'
+import * as events from '../core/events'
 import * as economy from '../store/economy'
 import * as site from './site'
 import * as playerAuth from './playerAuth'
@@ -353,6 +354,20 @@ async function handlePanel(req: IncomingMessage, res: ServerResponse): Promise<v
       }
       const players = await getPlayers(id)
       return sendJson(res, 200, { players })
+    }
+    // Timeline: ?from&to (ms epoch) &types=a,b &limit=
+    if (sub === 'events' && method === 'GET') {
+      if (!gate('view')) return
+      const now = Date.now()
+      const typesParam = url.searchParams.get('types')
+      return sendJson(res, 200, {
+        ...events.query(id, {
+          from: Number(url.searchParams.get('from')) || now - 7 * 86400_000,
+          to: Number(url.searchParams.get('to')) || now,
+          types: typesParam ? (typesParam.split(',') as events.ServerEventType[]) : undefined,
+          limit: Math.min(500, Number(url.searchParams.get('limit')) || 100)
+        })
+      })
     }
     // Performance history: ?from&to (ms epoch) &res=10s|1m|1h &limit=
     if (sub === 'metrics' && method === 'GET') {

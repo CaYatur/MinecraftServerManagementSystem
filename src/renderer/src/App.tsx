@@ -8,6 +8,7 @@ import {
   Puzzle,
   Archive,
   CalendarClock,
+  History,
   Bug,
   ShoppingCart,
   Settings as SettingsIcon,
@@ -32,6 +33,7 @@ import { ModsView } from './views/ModsView'
 import { BackupsView } from './views/BackupsView'
 import { SchedulerView } from './views/SchedulerView'
 import { CrashView } from './views/CrashView'
+import { TimelineView } from './views/TimelineView'
 import { StoreView } from './views/StoreView'
 import { WebPanelView } from './views/WebPanelView'
 import { SiteView } from './views/SiteView'
@@ -44,6 +46,7 @@ const TABS: { id: ViewId; icon: JSX.Element; labelKey: string }[] = [
   { id: 'files', icon: <FolderTree size={15} />, labelKey: 'nav.files' },
   { id: 'players', icon: <Users size={15} />, labelKey: 'nav.players' },
   { id: 'plugins', icon: <Puzzle size={15} />, labelKey: 'nav.plugins' },
+  { id: 'timeline', icon: <History size={15} />, labelKey: 'nav.timeline' },
   { id: 'backups', icon: <Archive size={15} />, labelKey: 'nav.backups' },
   { id: 'scheduler', icon: <CalendarClock size={15} />, labelKey: 'nav.scheduler' },
   { id: 'crash', icon: <Bug size={15} />, labelKey: 'nav.crash' },
@@ -155,6 +158,8 @@ function MainArea(): JSX.Element {
         return <BackupsView />
       case 'scheduler':
         return <SchedulerView />
+      case 'timeline':
+        return <TimelineView />
       case 'crash':
         return <CrashView />
       case 'store':

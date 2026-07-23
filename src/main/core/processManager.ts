@@ -11,6 +11,7 @@ import { detectJava, javaExecutable } from './java'
 import { buildLaunchArgs } from './javaArgs'
 import * as rcon from './rcon'
 import * as metrics from './metrics'
+import * as events from './events'
 import { mt } from '../i18n'
 import { log } from '../logger'
 import { TPS_TYPES } from '@shared/types'
@@ -44,6 +45,8 @@ interface ManagedProcess {
   players: { online: number; max: number; names: string[] }
   tps: number | null
   ips: Record<string, string>
+  /** 'error' and 'exit' can both fire; the timeline must get one entry. */
+  terminalEmitted: boolean
 }
 
 let lineCounter = 0
@@ -171,6 +174,7 @@ export class ProcessManager extends EventEmitter {
   private inspectLine(mp: ManagedProcess, raw: string): void {
     if (mp.status === 'starting' && /Done \(|For help, type "help"|Listening on/.test(raw)) {
       mp.status = 'running'
+      events.record(mp.id, 'server.ready', { data: { startupMs: Date.now() - mp.startedAt } })
       this.emitStatus(mp)
       void rcon.connect(mp.id)
     }
@@ -182,11 +186,17 @@ export class ProcessManager extends EventEmitter {
       if (!mp.players.names.includes(join[1])) mp.players.names.push(join[1])
       mp.players.online = mp.players.names.length
       this.emit('join', { id: mp.id, name: join[1] })
+      events.record(mp.id, 'player.join', {
+        data: { player: join[1], online: mp.players.online, ...(mp.ips[join[1]] ? { ip: mp.ips[join[1]] } : {}) }
+      })
     }
     const left = raw.match(/\]: (\w{2,16}) left the game/)
     if (left) {
       mp.players.names = mp.players.names.filter((n) => n !== left[1])
       mp.players.online = mp.players.names.length
+      events.record(mp.id, 'player.leave', {
+        data: { player: left[1], online: mp.players.online }
+      })
     }
     const maxMatch = raw.match(/max(?:imum)? players.*?(\d+)/i)
     if (maxMatch) mp.players.max = parseInt(maxMatch[1], 10)
@@ -242,10 +252,15 @@ export class ProcessManager extends EventEmitter {
       exitResolvers: [],
       players: { online: 0, max: 0, names: [] },
       tps: null,
-      ips: {}
+      ips: {},
+      terminalEmitted: false
     }
     this.procs.set(id, mp)
     touchServer(id)
+    events.record(id, 'server.starting', {
+      data: { type: server.type, version: server.mcVersion },
+      text: server.name
+    })
 
     // Seed the max-player count from server.properties so the UI shows "0 / 20"
     // before RCON connects.
@@ -270,6 +285,12 @@ export class ProcessManager extends EventEmitter {
       this.systemLine(mp, `[MSMS] Process error: ${err.message}`)
       mp.status = 'crashed'
       mp.exitCode = -1
+      // Terminal events come from here and 'exit' only — never from
+      // stop/kill/restart, which all funnel through exit anyway.
+      if (!mp.terminalEmitted) {
+        mp.terminalEmitted = true
+        events.record(id, 'server.error', { text: err.message })
+      }
       this.emitStatus(mp)
       this.resolveExit(mp)
     })
@@ -281,6 +302,16 @@ export class ProcessManager extends EventEmitter {
       metrics.flushServer(id)
       const crashed = !mp.stopRequested && code !== 0 && code !== null
       mp.status = crashed ? 'crashed' : 'stopped'
+      if (!mp.terminalEmitted) {
+        mp.terminalEmitted = true
+        events.record(id, crashed ? 'server.crashed' : 'server.stopped', {
+          data: {
+            code: code ?? -1,
+            uptimeMs: Date.now() - mp.startedAt,
+            ...(signal ? { signal } : {})
+          }
+        })
+      }
       this.systemLine(
         mp,
         `[MSMS] Process exited (code=${code ?? 'null'}${signal ? `, signal=${signal}` : ''})`
@@ -308,7 +339,8 @@ export class ProcessManager extends EventEmitter {
         exitResolvers: [],
         players: { online: 0, max: 0, names: [] },
         tps: null,
-        ips: {}
+        ips: {},
+        terminalEmitted: false
       }
       this.procs.set(id, mp)
     }

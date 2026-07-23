@@ -180,6 +180,58 @@ export interface MetricSummary {
   samples: number
 }
 
+// ---- event log / timeline ----
+export type EventSeverity = 'info' | 'success' | 'warn' | 'error'
+
+/** Only types something actually emits - no speculative entries. */
+export type ServerEventType =
+  | 'server.starting'
+  | 'server.ready'
+  | 'server.stopped'
+  | 'server.crashed'
+  | 'server.error'
+  | 'player.join'
+  | 'player.leave'
+  | 'backup.created'
+  | 'backup.failed'
+  | 'backup.restored'
+  | 'backup.deleted'
+  | 'schedule.run'
+  | 'schedule.failed'
+
+/**
+ * One thing that happened to a server. The message is NOT stored: the UI
+ * renders `events.<type>` in the user's language with `data` interpolated,
+ * and `text` carries only genuinely dynamic strings (a crash reason, a task
+ * name).
+ */
+export interface ServerEvent {
+  id: string
+  serverId: string
+  ts: number
+  type: ServerEventType
+  severity: EventSeverity
+  data?: Record<string, string | number | boolean>
+  text?: string
+}
+
+export interface EventQuery {
+  from?: number
+  to?: number
+  types?: ServerEventType[]
+  severities?: EventSeverity[]
+  /** Newest first, capped. */
+  limit?: number
+}
+
+export interface EventPage {
+  serverId: string
+  events: ServerEvent[]
+  /** How many matched before the limit was applied. */
+  total: number
+  counts: Record<string, number>
+}
+
 export interface MetricSeries {
   serverId: string
   resolution: MetricResolution

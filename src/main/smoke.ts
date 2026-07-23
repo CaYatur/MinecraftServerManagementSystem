@@ -21,6 +21,7 @@ import * as schedulerMod from './core/scheduler'
 import * as modsMod from './core/mods'
 import * as rcon from './core/rcon'
 import * as metrics from './core/metrics'
+import * as eventsMod from './core/events'
 import { uploadsDir } from './paths'
 import { analyzeCrash } from './core/crash'
 import { CREATABLE_TYPES } from '@shared/versions'
@@ -42,6 +43,111 @@ function waitFor(pred: () => boolean, ms: number): Promise<boolean> {
       }
     }, 100)
   })
+}
+
+/**
+ * Event store verification (Stage 2). Lays down a month of history with
+ * synthetic timestamps, then checks filtering, ordering, counts, retention,
+ * per-server isolation and cleanup.
+ */
+export async function runEventsSmoke(): Promise<void> {
+  const fail = (m: string): void => {
+    console.log('EVENTS-SMOKE: FAIL -', m)
+    app.exit(1)
+  }
+  const SID = 'smoke-events-server'
+  const OTHER = 'smoke-events-other'
+  const wipe = (): void => {
+    eventsMod.dropServer(SID)
+    eventsMod.dropServer(OTHER)
+  }
+
+  try {
+    wipe()
+    const DAY = 86400_000
+    const now = Date.now()
+
+    // 30 days of history: one start/ready/stop cycle plus a join per day,
+    // and a crash + failed backup on two known days.
+    for (let d = 30; d >= 1; d--) {
+      const base = now - d * DAY
+      eventsMod.record(SID, 'server.starting', { ts: base, data: { type: 'paper' } })
+      eventsMod.record(SID, 'server.ready', { ts: base + 20_000, data: { startupMs: 20_000 } })
+      eventsMod.record(SID, 'player.join', { ts: base + 60_000, data: { player: 'Ada', online: 1 } })
+      if (d === 3) eventsMod.record(SID, 'server.crashed', { ts: base + 120_000, data: { code: 1 } })
+      else eventsMod.record(SID, 'server.stopped', { ts: base + 120_000, data: { code: 0 } })
+      if (d === 5) eventsMod.record(SID, 'backup.failed', { ts: base + 90_000, text: 'disk full' })
+    }
+    eventsMod.record(OTHER, 'server.ready', { ts: now - DAY, data: { startupMs: 1 } })
+
+    // --- range + ordering ---
+    const all = eventsMod.query(SID, { from: now - 31 * DAY, to: now, limit: 2000 })
+    if (all.total !== 121) return fail('expected 121 events in 30d, got ' + all.total)
+    for (let i = 1; i < all.events.length; i++) {
+      if (all.events[i - 1].ts < all.events[i].ts) return fail('events are not newest-first')
+    }
+    const week = eventsMod.query(SID, { from: now - 7 * DAY, to: now, limit: 2000 })
+    if (week.total !== 29) return fail('expected 29 events in 7d, got ' + week.total)
+
+    // --- filters ---
+    const joins = eventsMod.query(SID, { from: 0, to: now, types: ['player.join'], limit: 2000 })
+    if (joins.total !== 30) return fail('type filter returned ' + joins.total)
+    if (joins.events.some((e) => e.type !== 'player.join')) return fail('type filter leaked')
+    const bad = eventsMod.query(SID, { from: 0, to: now, severities: ['error'], limit: 2000 })
+    if (bad.total !== 2) return fail('severity filter returned ' + bad.total)
+    if (!bad.events.every((e) => e.severity === 'error')) return fail('severity filter leaked')
+    // counts are computed before filtering, so the UI can show totals per type
+    if (bad.counts['player.join'] !== 30) return fail('counts should ignore the filter')
+    const capped = eventsMod.query(SID, { from: 0, to: now, limit: 5 })
+    if (capped.events.length !== 5 || capped.total !== 121) return fail('limit is wrong')
+    if (capped.events[0].ts !== all.events[0].ts) return fail('limit dropped the newest events')
+    console.log('EVENTS-SMOKE: 30d history OK (range, ordering, type/severity filters, counts)')
+
+    // --- per-server isolation ---
+    if (eventsMod.query(OTHER, { from: 0, to: now }).total !== 1) return fail('server isolation')
+    if (all.events.some((e) => e.serverId !== SID)) return fail('foreign events leaked in')
+
+    // --- retention by age ---
+    eventsMod.record(SID, 'server.stopped', { ts: now - 200 * DAY, data: { code: 0 } })
+    const removed = eventsMod.prune(SID, now)
+    if (removed !== 1) return fail('expected the 200-day-old event to expire, pruned ' + removed)
+    if (eventsMod.query(SID, { from: 0, to: now, limit: 2000 }).total !== 121) {
+      return fail('retention removed live events')
+    }
+
+    // --- retention by count ---
+    for (let i = 0; i < eventsMod.MAX_EVENTS; i++) {
+      eventsMod.record(SID, 'player.leave', { ts: now - 1000 + i, data: { player: 'B', online: 0 } })
+    }
+    eventsMod.prune(SID, now + 5000)
+    const after = eventsMod.query(SID, { from: 0, to: now + 10_000, limit: 2000 })
+    if (after.total > eventsMod.MAX_EVENTS) return fail('cap exceeded: ' + after.total)
+    if (after.events[0].type !== 'player.leave') return fail('cap dropped the newest events')
+    console.log(`EVENTS-SMOKE: retention OK (age + ${eventsMod.MAX_EVENTS} cap, newest kept)`)
+
+    // --- cleanup ---
+    eventsMod.dropServer(SID)
+    if (eventsMod.query(SID, { from: 0, to: now + 10_000 }).total !== 0) {
+      return fail('dropServer left events behind')
+    }
+    if (eventsMod.pruneOrphans() < 1) return fail('pruneOrphans found no orphan')
+    if (eventsMod.query(OTHER, { from: 0, to: now }).total !== 0) return fail('orphan survived')
+    for (const s of getConfig().servers) {
+      // a registered server's log must never be swept
+      eventsMod.record(s.id, 'schedule.run', { ts: now, text: 'orphan-guard' })
+      eventsMod.pruneOrphans()
+      const kept = eventsMod.query(s.id, { from: now - 1000, to: now + 1000 }).total
+      if (kept < 1) return fail('orphan sweep deleted a live server log')
+    }
+    console.log('EVENTS-SMOKE: cleanup OK (dropped with the server, orphans swept, live logs kept)')
+
+    wipe()
+    console.log('EVENTS-SMOKE: PASS')
+    app.exit(0)
+  } catch (e) {
+    wipe()
+    fail('exception ' + String(e))
+  }
 }
 
 /**
@@ -386,6 +492,7 @@ export async function runSmoke(): Promise<void> {
 
   // --- 2. start ---
   let statsSeen = false
+  const t0Events = Date.now() // everything after this is from this run
   processManager.on('stats', () => (statsSeen = true))
   console.log('SMOKE: starting server', id)
   await processManager.start(id).catch((e) => console.log('SMOKE: start threw', String(e)))
@@ -492,6 +599,41 @@ export async function runSmoke(): Promise<void> {
   )
   if (!sawDone) return fail('never observed "Done (" readiness line')
   if (!sawStop) return fail('never observed "Stopping the server" line')
+
+  // The lifecycle we just drove must be on the timeline, exactly once.
+  {
+    const page = eventsMod.query(id, { from: t0Events, to: Date.now(), limit: 500 })
+    const types = page.events.map((e) => e.type)
+    for (const want of ['server.starting', 'server.ready', 'server.stopped'] as const) {
+      if (!types.includes(want)) return fail(`timeline is missing ${want}; got ${types.join(',')}`)
+    }
+    const terminal = types.filter((x) =>
+      ['server.stopped', 'server.crashed', 'server.error'].includes(x)
+    )
+    if (terminal.length !== 1) return fail('expected one terminal event, got ' + terminal.join(','))
+    const stopped = page.events.find((e) => e.type === 'server.stopped')
+    if (typeof stopped?.data?.uptimeMs !== 'number') return fail('stop event has no uptime')
+    console.log('SMOKE: timeline recorded the run ->', types.reverse().join(' -> '))
+
+    // ...and the Timeline view must actually render them, translated.
+    await win.webContents.executeJavaScript(
+      `[...document.querySelectorAll('.tab')].find(t=>/Timeline|Zaman/i.test(t.textContent||''))?.click()`
+    )
+    await sleep(600)
+    const tl = JSON.parse(
+      await win.webContents.executeJavaScript(
+        `(()=>{const rows=[...document.querySelectorAll('.tl-row')];
+         return JSON.stringify({rows:rows.length,
+           first:(rows[0]?.querySelector('.tl-text')?.textContent||''),
+           sev:[...new Set(rows.map(r=>r.className.replace('tl-row ','')))]})})()`
+      )
+    ) as { rows: number; first: string; sev: string[] }
+    if (tl.rows < 3) return fail('timeline view rendered ' + tl.rows + ' rows')
+    if (!tl.first || /^events\./.test(tl.first) || /\{\{/.test(tl.first)) {
+      return fail('timeline text not translated: ' + tl.first)
+    }
+    console.log(`SMOKE: timeline view OK (${tl.rows} rows, "${tl.first}", ${tl.sev.join('/')})`)
+  }
 
   // --- 5. mods / backups / scheduler / crash (server now stopped) ---
   const ml = modsMod.listMods(id)
@@ -840,6 +982,37 @@ export async function runWebSmoke(): Promise<void> {
     const siteHtml = await (await sget('/')).text()
     if (!siteHtml.includes('navigator.languages')) return fail('site html does not read navigator.languages')
     console.log('WEB-SMOKE: site language auto-detect OK (browser lang, en fallback, saved choice wins)')
+
+    // ---- timeline over HTTP (Stage 2): scope-gated ----
+    {
+      // Keep the server's real timeline out of it.
+      const efile = eventsMod.eventFile(id)
+      const esnap = existsSync(efile) ? readFileSync(efile, 'utf-8') : null
+      rmSync(efile, { force: true })
+      try {
+        const enow = Date.now()
+        eventsMod.record(id, 'server.ready', { ts: enow - 2000, data: { startupMs: 1234 } })
+        eventsMod.record(id, 'player.join', { ts: enow - 1000, data: { player: 'Ada', online: 1 } })
+        r = await get(`/api/servers/${id}/events?from=${enow - 3600_000}&to=${enow}`, ft)
+        if (r.status !== 200) return fail('events with view expected 200, got ' + r.status)
+        const page = (await r.json()) as { events: { type: string }[]; total: number }
+        if (page.total !== 2) return fail('events endpoint returned total ' + page.total)
+        if (page.events[0].type !== 'player.join') return fail('events not newest-first over HTTP')
+        r = await get(`/api/servers/${id}/events?from=${enow - 3600_000}&to=${enow}&types=player.join`, ft)
+        const filtered = (await r.json()) as { events: { type: string }[] }
+        if (filtered.events.length !== 1 || filtered.events[0].type !== 'player.join') {
+          return fail('events type filter ignored over HTTP')
+        }
+        r = await get(`/api/servers/${id}/events`)
+        if (r.status !== 401) return fail('events without token expected 401, got ' + r.status)
+        r = await sget(`/api/servers/${id}/events`, ot)
+        if (r.status !== 404) return fail('events leaked onto the site listener: ' + r.status)
+        console.log('WEB-SMOKE: timeline endpoint OK (view-gated, ordering, filters, 401/404)')
+      } finally {
+        if (esnap == null) rmSync(efile, { force: true })
+        else writeFileSync(efile, esnap, 'utf-8')
+      }
+    }
 
     // ---- site logo: setting AND clearing it must both stick ----
     {

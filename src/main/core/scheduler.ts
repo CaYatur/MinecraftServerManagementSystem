@@ -5,6 +5,7 @@ import { schedulesPath } from '../paths'
 import { processManager } from './processManager'
 import { createBackup, pruneBackups } from './backups'
 import * as rcon from './rcon'
+import * as events from './events'
 import { log } from '../logger'
 import type { ScheduleTask } from '@shared/types'
 
@@ -49,8 +50,16 @@ async function run(task: ScheduleTask): Promise<void> {
           processManager.sendCommand(task.serverId, `say ${task.payload ?? ''}`)
         break
     }
+    events.record(task.serverId, 'schedule.run', {
+      data: { action: task.action },
+      text: task.name
+    })
   } catch (err) {
     log.warn(`Scheduled task "${task.name}" failed:`, err)
+    events.record(task.serverId, 'schedule.failed', {
+      data: { action: task.action },
+      text: `${task.name}: ${String((err as Error)?.message ?? err)}`
+    })
   }
   task.lastRun = Date.now()
   task.nextRun = jobs.get(task.id)?.nextRun()?.getTime()

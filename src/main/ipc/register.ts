@@ -18,6 +18,7 @@ import * as backups from '../core/backups'
 import * as scheduler from '../core/scheduler'
 import { analyzeCrash } from '../core/crash'
 import * as metrics from '../core/metrics'
+import * as events from '../core/events'
 import { checkForUpdates } from '../core/updates'
 import { startWebServer, stopWebServer, getWebStatus } from '../web/server'
 import * as auth from '../web/auth'
@@ -62,6 +63,7 @@ export function registerIpc(): void {
   processManager.on('log', (e) => broadcast(EVT.serverLog, e))
   processManager.on('status', (s) => broadcast(EVT.serverStatus, s))
   processManager.on('stats', (s) => broadcast(EVT.serverStats, s))
+  events.eventBus.on('event', (e) => broadcast(EVT.serverEvent, e))
 
   const H = ipcMain.handle.bind(ipcMain)
 
@@ -250,6 +252,9 @@ export function registerIpc(): void {
 
   // --- crash analyzer ---
   H(IPC.crashAnalyze, (_e, id: string) => analyzeCrash(id))
+
+  // --- timeline events ---
+  H(IPC.eventsQuery, (_e, id: string, q?: events.EventQuery) => events.query(id, q))
 
   // --- telemetry history ---
   H(IPC.metricsQuery, (_e, id: string, opts: metrics.QueryOptions) => metrics.query(id, opts))

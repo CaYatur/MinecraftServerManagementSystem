@@ -86,6 +86,7 @@ const api: MsmsApi = {
 
   analyzeCrash: (id) => ipcRenderer.invoke(IPC.crashAnalyze, id),
 
+  queryEvents: (id, q) => ipcRenderer.invoke(IPC.eventsQuery, id, q),
   queryMetrics: (id, opts) => ipcRenderer.invoke(IPC.metricsQuery, id, opts),
   getTelemetryConfig: () => ipcRenderer.invoke(IPC.metricsConfigGet),
   setTelemetryConfig: (patch) => ipcRenderer.invoke(IPC.metricsConfigSet, patch),
@@ -121,6 +122,7 @@ const api: MsmsApi = {
   onServerLog: (cb) => subscribe(EVT.serverLog, cb),
   onServerStatus: (cb) => subscribe(EVT.serverStatus, cb),
   onServerStats: (cb) => subscribe(EVT.serverStats, cb),
+  onServerEvent: (cb) => subscribe(EVT.serverEvent, cb),
   onCreateProgress: (cb) => subscribe(EVT.createProgress, cb),
   onToast: (cb) => subscribe(EVT.toast, cb)
 }

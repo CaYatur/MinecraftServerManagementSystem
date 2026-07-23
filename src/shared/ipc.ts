@@ -25,7 +25,10 @@ import type {
   ServerMessages,
   MetricSeries,
   MetricResolution,
-  TelemetryConfig
+  TelemetryConfig,
+  EventPage,
+  EventQuery,
+  ServerEvent
 } from './types'
 import type { McVersion, BuildInfo, CreateServerOptions, CreateProgress } from './versions'
 import type { ModEntry, ModrinthHit } from './mods'
@@ -121,6 +124,8 @@ export const IPC = {
 
   crashAnalyze: 'crash:analyze',
 
+  eventsQuery: 'events:query',
+
   metricsQuery: 'metrics:query',
   metricsConfigGet: 'metrics:config-get',
   metricsConfigSet: 'metrics:config-set',
@@ -157,6 +162,7 @@ export const EVT = {
   serverLog: 'evt:server-log',
   serverStatus: 'evt:server-status',
   serverStats: 'evt:server-stats',
+  serverEvent: 'evt:server-event',
   configChanged: 'evt:config-changed',
   createProgress: 'evt:create-progress',
   toast: 'evt:toast'
@@ -273,6 +279,8 @@ export interface MsmsApi {
 
   analyzeCrash(id: string): Promise<CrashReport>
 
+  queryEvents(id: string, q?: EventQuery): Promise<EventPage>
+
   queryMetrics(
     id: string,
     opts: { from: number; to: number; resolution?: MetricResolution; limit?: number }
@@ -316,6 +324,7 @@ export interface MsmsApi {
   onServerLog(cb: (e: ServerLogEvent) => void): () => void
   onServerStatus(cb: (s: ServerRuntimeStatus) => void): () => void
   onServerStats(cb: (s: ServerStats) => void): () => void
+  onServerEvent(cb: (e: ServerEvent) => void): () => void
   onCreateProgress(cb: (p: CreateProgress) => void): () => void
   onToast(cb: (t: ToastEvent) => void): () => void
 }
