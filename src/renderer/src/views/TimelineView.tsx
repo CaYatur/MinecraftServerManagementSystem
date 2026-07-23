@@ -14,7 +14,8 @@ import {
   CalendarClock,
   BellRing,
   BellOff,
-  Globe2
+  Globe2,
+  Package
 } from 'lucide-react'
 import { useStore } from '../store'
 import type { EventSeverity, ServerEvent, ServerEventType } from '@shared/types'
@@ -59,7 +60,8 @@ const LABEL: Record<ServerEventType, string> = {
   'world.cloned': 'events.worldCloned',
   'world.reset': 'events.worldReset',
   'world.exported': 'events.worldExported',
-  'world.imported': 'events.worldImported'
+  'world.imported': 'events.worldImported',
+  'mod.updated': 'events.modUpdated'
 }
 
 const ICON: Record<ServerEventType, JSX.Element> = {
@@ -84,7 +86,8 @@ const ICON: Record<ServerEventType, JSX.Element> = {
   'world.cloned': <Globe2 size={14} />,
   'world.reset': <Globe2 size={14} />,
   'world.exported': <Globe2 size={14} />,
-  'world.imported': <Globe2 size={14} />
+  'world.imported': <Globe2 size={14} />,
+  'mod.updated': <Package size={14} />
 }
 
 const SEV_CLASS: Record<EventSeverity, string> = {

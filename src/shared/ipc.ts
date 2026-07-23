@@ -37,7 +37,7 @@ import type {
 import type { UptimeReport } from './uptime'
 import type { AlertRule, NewAlertRule } from './alerts'
 import type { McVersion, BuildInfo, CreateServerOptions, CreateProgress } from './versions'
-import type { ModEntry, ModrinthHit } from './mods'
+import type { ModEntry, ModrinthHit, ModUpdateReport } from './mods'
 import type {
   WebStatus,
   WebUserView,
@@ -116,6 +116,8 @@ export const IPC = {
   modAdd: 'mods:add',
   modSearch: 'mods:search',
   modInstall: 'mods:install',
+  modCheckUpdates: 'mods:check-updates',
+  modApplyUpdate: 'mods:apply-update',
 
   javaList: 'java:list',
   javaResolve: 'java:resolve',
@@ -282,6 +284,8 @@ export interface MsmsApi {
   addMod(id: string, folder: 'plugins' | 'mods'): Promise<string | null>
   searchMods(id: string, query: string): Promise<ModrinthHit[]>
   installMod(id: string, projectId: string): Promise<string>
+  checkModUpdates(id: string): Promise<ModUpdateReport>
+  applyModUpdate(id: string, path: string, versionId: string): Promise<string>
 
   listJava(refresh?: boolean): Promise<JavaInstall[]>
   /** The Java that will actually launch, given a per-server override ('' = auto). */

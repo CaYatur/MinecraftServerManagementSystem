@@ -1,5 +1,6 @@
 import {
   readdirSync,
+  readFileSync,
   statSync,
   renameSync,
   rmSync,
@@ -7,12 +8,16 @@ import {
   existsSync,
   mkdirSync
 } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { join, basename } from 'node:path'
 import { getServer } from './serverRegistry'
-import { httpJson, downloadFile } from './net'
+import { httpJson, httpJsonPost, downloadFile } from './net'
+import * as events from './events'
+import { log } from '../logger'
 import { MODDED_TYPES, PLUGIN_TYPES } from '@shared/types'
+import { diffUpdates } from '@shared/mods'
 import type { ServerType } from '@shared/types'
-import type { ModEntry, ModrinthHit } from '@shared/mods'
+import type { InstalledMod, ModEntry, ModrinthHit, ModUpdateReport, MrVersion } from '@shared/mods'
 
 type ModFolder = 'plugins' | 'mods'
 
@@ -128,6 +133,85 @@ export async function searchModrinth(id: string, query: string): Promise<Modrint
     downloads: h.downloads,
     iconUrl: h.icon_url || undefined
   }))
+}
+
+// ---- update checking ----
+
+function fileSha1(path: string): string {
+  return createHash('sha1').update(readFileSync(path)).digest('hex')
+}
+
+/**
+ * Ask Modrinth, in one request, whether any installed jar has a newer
+ * compatible file. Never throws for a network problem - the mods list must
+ * still render - it comes back `{ ok: false }` so the UI can say "couldn't
+ * check" instead of losing the plugins.
+ */
+export async function checkUpdates(id: string): Promise<ModUpdateReport> {
+  const server = getServer(id)
+  if (!server) throw new Error('server-not-found')
+  const installed: InstalledMod[] = []
+  for (const m of listMods(id)) {
+    try {
+      installed.push({ path: m.path, name: m.name, sha1: fileSha1(join(server.path, m.path)) })
+    } catch {
+      /* an unreadable jar simply has no update info */
+    }
+  }
+  if (!installed.length) return { ok: true, updates: [] }
+
+  const loader = MR_LOADER[server.type]
+  try {
+    const byHash = await httpJsonPost<Record<string, MrVersion>>(`${MR}/version_files/update`, {
+      hashes: installed.map((i) => i.sha1),
+      algorithm: 'sha1',
+      ...(loader ? { loaders: [loader] } : {}),
+      ...(server.mcVersion && server.mcVersion !== 'unknown'
+        ? { game_versions: [server.mcVersion] }
+        : {})
+    })
+    return { ok: true, updates: diffUpdates(installed, byHash) }
+  } catch (e) {
+    log.warn('mod update check failed:', e)
+    return { ok: false, updates: [] }
+  }
+}
+
+/**
+ * Replace an installed jar with a specific Modrinth version. The versionId
+ * comes from `checkUpdates`, but the download URL is fetched here, server-side
+ * - never taken from the renderer - so a compromised UI cannot point this at
+ * an arbitrary file. The disabled state is preserved.
+ */
+export async function applyUpdate(id: string, rel: string, versionId: string): Promise<string> {
+  const server = getServer(id)
+  if (!server) throw new Error('server-not-found')
+  const oldRel = safeRel(rel)
+  const oldFull = join(server.path, oldRel)
+  const wasDisabled = /\.disabled$/i.test(oldRel)
+  const folder: ModFolder = oldRel.startsWith('mods/') ? 'mods' : 'plugins'
+
+  const v = await httpJson<MrVersion>(`${MR}/version/${encodeURIComponent(versionId)}`)
+  const file = v.files.find((f) => f.primary) ?? v.files[0]
+  if (!file?.url) throw new Error('no-file-in-version')
+
+  const dir = join(server.path, folder)
+  mkdirSync(dir, { recursive: true })
+  const newName = wasDisabled ? file.filename + '.disabled' : file.filename
+  const dest = join(dir, newName)
+  await downloadFile(file.url, dest, { sha1: file.hashes?.sha1 })
+
+  // Remove the old jar when the filename changed, or the server would load
+  // both the old and the new copy. A same-name update just overwrote it.
+  if (join(dir, basename(oldFull)) !== dest && existsSync(oldFull)) {
+    rmSync(oldFull, { force: true })
+  }
+  events.record(id, 'mod.updated', {
+    text: file.filename,
+    data: { version: v.version_number, folder }
+  })
+  log.info(`Mod updated: ${oldRel} -> ${newName} (${v.version_number}) for ${id}`)
+  return newName
 }
 
 export async function installModrinth(id: string, projectId: string): Promise<string> {

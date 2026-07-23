@@ -239,6 +239,10 @@ export function registerIpc(): void {
   })
   H(IPC.modSearch, (_e, id: string, query: string) => mods.searchModrinth(id, query))
   H(IPC.modInstall, (_e, id: string, projectId: string) => mods.installModrinth(id, projectId))
+  H(IPC.modCheckUpdates, (_e, id: string) => mods.checkUpdates(id))
+  H(IPC.modApplyUpdate, (_e, id: string, path: string, versionId: string) =>
+    mods.applyUpdate(id, path, versionId)
+  )
 
   // --- java installs ---
   H(IPC.javaList, (_e, refresh?: boolean) => listJavaInstalls(!!refresh))

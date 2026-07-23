@@ -1,9 +1,21 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { RefreshCw, Plus, Trash2, Power, PowerOff, Download, Search, Package } from 'lucide-react'
+import {
+  RefreshCw,
+  Plus,
+  Trash2,
+  Power,
+  PowerOff,
+  Download,
+  Search,
+  Package,
+  ArrowUpCircle,
+  CheckCircle2,
+  Loader2
+} from 'lucide-react'
 import { useStore } from '../store'
 import { formatBytes } from '../components/ui'
-import type { ModEntry, ModrinthHit } from '@shared/mods'
+import type { ModEntry, ModrinthHit, ModUpdate } from '@shared/mods'
 
 export function ModsView(): JSX.Element {
   const { t } = useTranslation()
@@ -15,6 +27,9 @@ export function ModsView(): JSX.Element {
   const [results, setResults] = useState<ModrinthHit[] | null>(null)
   const [searching, setSearching] = useState(false)
   const [installing, setInstalling] = useState<string | null>(null)
+  const [updates, setUpdates] = useState<Record<string, ModUpdate>>({})
+  const [checkState, setCheckState] = useState<'idle' | 'checking' | 'ok' | 'failed'>('idle')
+  const [applying, setApplying] = useState<string | null>(null)
 
   const load = useCallback(async (): Promise<void> => {
     try {
@@ -26,7 +41,49 @@ export function ModsView(): JSX.Element {
 
   useEffect(() => {
     void load()
-  }, [load])
+    // A different server's update results must not linger.
+    setUpdates({})
+    setCheckState('idle')
+  }, [id, load])
+
+  const checkUpdates = async (): Promise<void> => {
+    setCheckState('checking')
+    try {
+      const report = await window.msms.checkModUpdates(id)
+      if (!report.ok) {
+        setCheckState('failed')
+        return
+      }
+      const byPath: Record<string, ModUpdate> = {}
+      for (const u of report.updates) byPath[u.path] = u
+      setUpdates(byPath)
+      setCheckState('ok')
+    } catch {
+      setCheckState('failed')
+    }
+  }
+
+  const apply = async (m: ModEntry): Promise<void> => {
+    const u = updates[m.path]
+    if (!u || u.state !== 'update' || !u.versionId) return
+    setApplying(m.path)
+    try {
+      await window.msms.applyModUpdate(id, m.path, u.versionId)
+      toast('success', 'mods.updatedOk', { name: u.latestVersion ?? '' })
+      // The old row is gone; drop its stale update and reload.
+      setUpdates((prev) => {
+        const next = { ...prev }
+        delete next[m.path]
+        return next
+      })
+      await load()
+    } catch (e) {
+      toast('error', String((e as Error)?.message ?? e))
+    }
+    setApplying(null)
+  }
+
+  const updatable = Object.values(updates).filter((u) => u.state === 'update').length
 
   const addJar = async (): Promise<void> => {
     const folder = list.find((m) => m.folder === 'mods') ? 'mods' : 'plugins'
@@ -74,13 +131,27 @@ export function ModsView(): JSX.Element {
 
       {tab === 'installed' ? (
         <>
-          <div className="row" style={{ marginBottom: 12, gap: 8 }}>
+          <div className="row wrap" style={{ marginBottom: 12, gap: 8, alignItems: 'center' }}>
             <button className="btn primary sm" onClick={addJar}>
               <Plus size={14} /> {t('mods.add')}
             </button>
             <button className="btn sm" onClick={load}>
               <RefreshCw size={13} /> {t('common.refresh')}
             </button>
+            <button className="btn sm" onClick={checkUpdates} disabled={checkState === 'checking' || !list.length}>
+              {checkState === 'checking' ? <Loader2 size={13} className="spin" /> : <ArrowUpCircle size={13} />}
+              {checkState === 'checking' ? t('mods.checking') : t('mods.checkUpdates')}
+            </button>
+            {checkState === 'ok' && (
+              <span className="dim" style={{ fontSize: 12 }}>
+                {updatable > 0 ? t('mods.updatesFound', { n: updatable }) : t('mods.allCurrent')}
+              </span>
+            )}
+            {checkState === 'failed' && (
+              <span className="dim" style={{ fontSize: 12, color: 'var(--warning)' }}>
+                {t('mods.checkFailed')}
+              </span>
+            )}
           </div>
           {list.length === 0 ? (
             <div className="panel">
@@ -88,17 +159,39 @@ export function ModsView(): JSX.Element {
             </div>
           ) : (
             <div className="panel" style={{ padding: 0 }}>
-              {list.map((m) => (
+              {list.map((m) => {
+                const u = updates[m.path]
+                return (
                 <div key={m.path} className="mod-row">
                   <Package size={16} className={m.enabled ? '' : 'dim'} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div className="mod-name">
                       {m.name} {!m.enabled && <span className="badge">{t('mods.disabled')}</span>}
+                      {u?.state === 'update' && (
+                        <span className="badge badge-accent">
+                          {u.latestVersion ? t('mods.updateTo', { version: u.latestVersion }) : t('mods.updateAvailable')}
+                        </span>
+                      )}
+                      {u?.state === 'current' && (
+                        <span className="dim" title={t('mods.upToDate')} style={{ marginLeft: 6 }}>
+                          <CheckCircle2 size={12} style={{ verticalAlign: -2, color: 'var(--online)' }} />
+                        </span>
+                      )}
                     </div>
                     <div className="dim mono" style={{ fontSize: 11 }}>
                       {m.folder}/ · {formatBytes(m.size)}
                     </div>
                   </div>
+                  {u?.state === 'update' && (
+                    <button
+                      className="btn primary sm"
+                      disabled={applying === m.path}
+                      onClick={() => void apply(m)}
+                    >
+                      {applying === m.path ? <Loader2 size={13} className="spin" /> : <ArrowUpCircle size={13} />}
+                      {applying === m.path ? t('mods.updating') : t('mods.update')}
+                    </button>
+                  )}
                   <button
                     className="btn ghost sm"
                     title={m.enabled ? t('mods.disable') : t('mods.enable')}
@@ -120,7 +213,8 @@ export function ModsView(): JSX.Element {
                     <Trash2 size={14} />
                   </button>
                 </div>
-              ))}
+                )
+              })}
             </div>
           )}
         </>

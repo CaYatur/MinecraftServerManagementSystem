@@ -23,6 +23,17 @@ export async function httpJson<T>(url: string, timeoutMs = 15000): Promise<T> {
   return JSON.parse(await httpText(url, timeoutMs)) as T
 }
 
+export async function httpJsonPost<T>(url: string, body: unknown, timeoutMs = 15000): Promise<T> {
+  const r = await fetch(url, {
+    method: 'POST',
+    headers: { 'User-Agent': UA, 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(timeoutMs)
+  })
+  if (!r.ok) throw new Error(`HTTP ${r.status} for ${url}`)
+  return JSON.parse(await r.text()) as T
+}
+
 // ---- version-list cache (offline resilience) ----
 function cacheFile(key: string): string {
   return join(cacheDir(), key.replace(/[^a-z0-9._-]/gi, '_') + '.json')

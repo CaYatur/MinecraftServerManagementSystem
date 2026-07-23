@@ -28,6 +28,8 @@ import * as alertsMod from './core/alerts'
 import * as worldsMod from './core/worlds'
 import { listJavaInstalls, _resetJavaCache } from './core/javaScan'
 import { checkJava, javaRequirement } from '@shared/javaCompat'
+import { diffUpdates } from '@shared/mods'
+import type { MrVersion } from '@shared/mods'
 import { computeUptime, clipSessions } from '@shared/uptime'
 import { evaluateRule, normalizeRule, IDLE, type AlertRule, type AlertSample } from '@shared/alerts'
 import { analyze, type Finding } from '@shared/analysis'
@@ -454,6 +456,92 @@ export async function runMetricsSmoke(): Promise<void> {
     app.exit(0)
   } catch (e) {
     wipe()
+    fail('exception ' + String(e))
+  }
+}
+
+/**
+ * Mod update-check verification (Stage 11).
+ *
+ * The judgement is pure - `diffUpdates` - so it is replayed against a captured
+ * real Modrinth `version_files/update` response (the shape confirmed against
+ * the live API: keyed by the hash we sent, latest version with primary-file
+ * sha1). Three cases: a hash present with a different latest file (update), a
+ * hash that IS the latest (current), and a hash Modrinth does not know
+ * (unknown). The live POST and download are the thin shell around this and are
+ * inspection-verified, not asserted here.
+ */
+export async function runModUpdateSmoke(): Promise<void> {
+  const fail = (m: string): void => {
+    console.log('MODUPDATE-SMOKE: FAIL -', m)
+    app.exit(1)
+  }
+  try {
+    // Real hashes/shape from LuckPerms on the live API (bukkit / 1.20.1).
+    const OLD = '7ac3319812ed36ba099dd258e512b7f07b4e4d4a' // v5.5.0
+    const NEW = 'dad091fbabe7cbb1db3dc1478eb1fe413520a014' // v5.5.53 (latest)
+    const installed = [
+      { path: 'plugins/LuckPerms-old.jar', name: 'LuckPerms-old', sha1: OLD },
+      { path: 'plugins/LuckPerms-new.jar', name: 'LuckPerms-new', sha1: NEW },
+      { path: 'plugins/HandMade.jar', name: 'HandMade', sha1: 'ffffffffffffffffffffffffffffffffffffffff' }
+    ]
+    // Modrinth returns the same latest version keyed by BOTH recognised hashes;
+    // the unrecognised one is simply absent.
+    const latest: MrVersion = {
+      id: 'MBSY8toc',
+      project_id: 'Vebnzrzj',
+      version_number: 'v5.5.53-bukkit',
+      files: [
+        { primary: true, filename: 'LuckPerms-Bukkit-5.5.53.jar', hashes: { sha1: NEW } }
+      ]
+    }
+    const byHash: Record<string, MrVersion> = { [OLD]: latest, [NEW]: latest }
+
+    const updates = diffUpdates(installed, byHash)
+    const byName = Object.fromEntries(updates.map((u) => [u.name, u]))
+
+    const old = byName['LuckPerms-old']
+    if (old.state !== 'update') return fail('an outdated jar was not flagged: ' + old.state)
+    if (old.versionId !== 'MBSY8toc') return fail('update carried the wrong versionId: ' + old.versionId)
+    if (old.projectId !== 'Vebnzrzj') return fail('update missing the projectId')
+    if (old.latestVersion !== 'v5.5.53-bukkit') return fail('update missing the version name')
+    if (old.filename !== 'LuckPerms-Bukkit-5.5.53.jar') return fail('update missing the filename')
+
+    const cur = byName['LuckPerms-new']
+    if (cur.state !== 'current') return fail('the latest jar was not seen as current: ' + cur.state)
+    if (cur.versionId) return fail('a current mod should carry no versionId to install')
+
+    const unk = byName['HandMade']
+    if (unk.state !== 'unknown') return fail('a jar Modrinth does not know was judged: ' + unk.state)
+    console.log('MODUPDATE-SMOKE: diff OK (update / current / unknown, versionId + filename carried)')
+
+    // Version STRINGS must never decide it - only the hash. A "newer-looking"
+    // number with the SAME file hash is still current.
+    const sameHashHigherNumber: MrVersion = {
+      id: 'x',
+      project_id: 'p',
+      version_number: 'v9.9.9',
+      files: [{ primary: true, filename: 'x.jar', hashes: { sha1: OLD } }]
+    }
+    const noStringTrap = diffUpdates([installed[0]], { [OLD]: sameHashHigherNumber })
+    if (noStringTrap[0].state !== 'current') {
+      return fail('a higher version number with the same hash was mis-flagged as an update')
+    }
+    // ...and a lower-looking number with a DIFFERENT hash is still an update.
+    const diffHashLowerNumber: MrVersion = {
+      id: 'y',
+      project_id: 'p',
+      version_number: 'v0.0.1',
+      files: [{ primary: true, filename: 'y.jar', hashes: { sha1: NEW } }]
+    }
+    if (diffUpdates([installed[0]], { [OLD]: diffHashLowerNumber })[0].state !== 'update') {
+      return fail('a different hash was not an update just because its version string looked older')
+    }
+    console.log('MODUPDATE-SMOKE: decided by hash, never by version string')
+
+    console.log('MODUPDATE-SMOKE: PASS')
+    app.exit(0)
+  } catch (e) {
     fail('exception ' + String(e))
   }
 }
@@ -2029,6 +2117,33 @@ export async function runSmoke(): Promise<void> {
   // --- 5. mods / backups / scheduler / crash (server now stopped) ---
   const ml = modsMod.listMods(id)
   console.log('SMOKE: mods listed =', ml.length)
+
+  // The update-check control must render on the Plugins tab. Seed a jar so the
+  // button is enabled, assert it is there, then remove it - no network here
+  // (the diff itself is covered by MODUPDATE-SMOKE).
+  {
+    const serverPath = getConfig().servers.find((s) => s.id === id)?.path ?? ''
+    const pluginsDir = join(serverPath, 'plugins')
+    mkdirSync(pluginsDir, { recursive: true })
+    const fakeJar = join(pluginsDir, 'SmokePlugin.jar')
+    writeFileSync(fakeJar, Buffer.from('PK not really a jar'))
+    await win.webContents.executeJavaScript(
+      `[...document.querySelectorAll('.tab')].find(t=>/Plugins|Mods|Eklenti/i.test(t.textContent||''))?.click()`
+    )
+    await sleep(600)
+    const mv = JSON.parse(
+      await win.webContents.executeJavaScript(
+        `(()=>{const btn=[...document.querySelectorAll('.btn')].find(b=>/Check for updates|Güncellemeleri denetle/i.test(b.textContent||''));
+         const rows=[...document.querySelectorAll('.mod-row')].map(r=>(r.querySelector('.mod-name')?.textContent||'').trim());
+         return JSON.stringify({checkBtn:!!btn,disabled:!!btn?.disabled,rows})})()`
+      )
+    ) as { checkBtn: boolean; disabled: boolean; rows: string[] }
+    if (!mv.checkBtn) return fail('the check-for-updates button did not render')
+    if (mv.disabled) return fail('check-for-updates was disabled with a plugin present')
+    if (!mv.rows.some((r) => /SmokePlugin/.test(r))) return fail('the seeded plugin did not list')
+    rmSync(fakeJar, { force: true })
+    console.log('SMOKE: mods update control OK (button enabled with a plugin present)')
+  }
 
   const bk = await backupsMod.createBackup(id, { kind: 'full' })
   if (!backupsMod.listBackups(id).find((b) => b.id === bk.id)) return fail('backup not listed')

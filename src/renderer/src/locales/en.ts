@@ -100,7 +100,8 @@ export default {
     worldCloned: 'World "{{from}}" duplicated as "{{to}}"',
     worldReset: 'The {{dimension}} of "{{text}}" was reset',
     worldExported: 'World "{{text}}" exported',
-    worldImported: 'World "{{text}}" imported ({{folders}} folders)'
+    worldImported: 'World "{{text}}" imported ({{folders}} folders)',
+    modUpdated: 'Plugin/mod updated: {{text}} ({{version}})'
   },
   sidebar: {
     servers: 'Servers',
@@ -353,7 +354,18 @@ export default {
     installing: 'Installing…',
     installedOk: 'Installed {{name}}',
     downloads: 'downloads',
-    disabled: 'disabled'
+    disabled: 'disabled',
+    checkUpdates: 'Check for updates',
+    checking: 'Checking…',
+    updatesFound: '{{n}} update(s) available',
+    allCurrent: 'Everything is up to date',
+    checkFailed: 'Could not reach Modrinth to check',
+    update: 'Update',
+    updating: 'Updating…',
+    updateTo: '→ {{version}}',
+    updateAvailable: 'update available',
+    upToDate: 'Up to date',
+    updatedOk: 'Updated to {{name}}'
   },
   backups: {
     title: 'Backups',

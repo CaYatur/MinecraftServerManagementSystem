@@ -61,7 +61,8 @@ const SEVERITY: Record<ServerEventType, EventSeverity> = {
   'world.cloned': 'info',
   'world.reset': 'warn',
   'world.exported': 'info',
-  'world.imported': 'success'
+  'world.imported': 'success',
+  'mod.updated': 'success'
 }
 
 function safeId(serverId: string): string {

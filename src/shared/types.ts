@@ -207,6 +207,7 @@ export type ServerEventType =
   | 'world.reset'
   | 'world.exported'
   | 'world.imported'
+  | 'mod.updated'
 
 /**
  * One thing that happened to a server. The message is NOT stored: the UI

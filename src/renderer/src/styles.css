@@ -435,6 +435,11 @@ textarea.input:focus {
   color: var(--text-dim);
   border: 1px solid var(--border);
 }
+.badge.badge-accent {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+}
 .dot {
   width: 8px;
   height: 8px;

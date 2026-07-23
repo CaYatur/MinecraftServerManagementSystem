@@ -102,7 +102,8 @@ const tr: typeof en = {
     worldCloned: '"{{from}}" dünyası "{{to}}" olarak kopyalandı',
     worldReset: '"{{text}}" dünyasının {{dimension}} boyutu sıfırlandı',
     worldExported: '"{{text}}" dünyası dışa aktarıldı',
-    worldImported: '"{{text}}" dünyası içe aktarıldı ({{folders}} klasör)'
+    worldImported: '"{{text}}" dünyası içe aktarıldı ({{folders}} klasör)',
+    modUpdated: 'Eklenti/mod güncellendi: {{text}} ({{version}})'
   },
   sidebar: {
     servers: 'Sunucular',
@@ -356,7 +357,18 @@ const tr: typeof en = {
     installing: 'Yükleniyor…',
     installedOk: '{{name}} yüklendi',
     downloads: 'indirme',
-    disabled: 'devre dışı'
+    disabled: 'devre dışı',
+    checkUpdates: 'Güncellemeleri denetle',
+    checking: 'Denetleniyor…',
+    updatesFound: '{{n}} güncelleme mevcut',
+    allCurrent: 'Her şey güncel',
+    checkFailed: 'Denetlemek için Modrinth\'e ulaşılamadı',
+    update: 'Güncelle',
+    updating: 'Güncelleniyor…',
+    updateTo: '→ {{version}}',
+    updateAvailable: 'güncelleme var',
+    upToDate: 'Güncel',
+    updatedOk: '{{name}} sürümüne güncellendi'
   },
   backups: {
     title: 'Yedekler',
