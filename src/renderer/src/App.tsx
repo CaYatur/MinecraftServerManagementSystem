@@ -39,7 +39,7 @@ import { HistoryView } from './views/HistoryView'
 import { StoreView } from './views/StoreView'
 import { WebPanelView } from './views/WebPanelView'
 import { SiteView } from './views/SiteView'
-import { useState } from 'react'
+import { useState, useRef, useEffect } from 'react'
 
 const TABS: { id: ViewId; icon: JSX.Element; labelKey: string }[] = [
   { id: 'dashboard', icon: <LayoutDashboard size={15} />, labelKey: 'nav.dashboard' },
@@ -121,6 +121,26 @@ function MainArea(): JSX.Element {
   const status = useStore((s) => s.activeStatus().status)
   const view = useStore((s) => s.view)
   const setView = useStore((s) => s.setView)
+  const tabsRef = useRef<HTMLDivElement>(null)
+
+  // The tab strip overflows on narrow windows. A mouse wheel only scrolls
+  // vertically by default, so translate a vertical wheel into horizontal
+  // movement — but only while there is somewhere to scroll, so it never
+  // swallows the wheel when every tab already fits. Re-runs on `view` because
+  // the strip unmounts on Settings/Web/Site and remounts as a fresh node when
+  // a server tab is reopened — a one-shot [] effect would leave that new node
+  // without a listener.
+  useEffect(() => {
+    const el = tabsRef.current
+    if (!el) return
+    const onWheel = (e: WheelEvent): void => {
+      if (e.deltaY === 0 || el.scrollWidth <= el.clientWidth) return
+      e.preventDefault()
+      el.scrollLeft += e.deltaY
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [view])
 
   if (view === 'create') return <CreateView />
   if (view === 'settings' || view === 'web' || view === 'site')
@@ -187,7 +207,7 @@ function MainArea(): JSX.Element {
         <div className="spacer" />
         <ServerControls />
       </div>
-      <div className="tabs">
+      <div className="tabs" ref={tabsRef}>
         {TABS.map((tab) => (
           <button
             key={tab.id}

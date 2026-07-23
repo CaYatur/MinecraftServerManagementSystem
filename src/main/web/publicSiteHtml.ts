@@ -18,7 +18,7 @@ export function getPublicSiteHtml(): string {
   --maxw:1180px}
 *{box-sizing:border-box}
 html{scroll-behavior:smooth}
-body{margin:0;background:var(--bg);color:var(--text);font-family:'Inter','Segoe UI',system-ui,-apple-system,sans-serif;line-height:1.6;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+body{margin:0;background:var(--bg);color:var(--text);font-family:'Inter','Segoe UI',system-ui,-apple-system,sans-serif;line-height:1.6;-webkit-font-smoothing:antialiased;overflow-x:hidden;display:flex;flex-direction:column;min-height:100vh}
 /* ambient backdrop: two slow accent glows over a faint grid */
 body::before{content:'';position:fixed;inset:-20% -10%;z-index:-2;pointer-events:none;
   background:radial-gradient(50% 40% at 15% 0%,color-mix(in srgb,var(--accent) 22%,transparent),transparent 70%),
@@ -85,7 +85,9 @@ select.lang{background:var(--elev);color:var(--text);border:1px solid var(--line
 .stat b{display:block;font-size:27px;font-weight:900;letter-spacing:-.6px;line-height:1.2}
 .stat span{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--dim);font-weight:700}
 /* sections */
-main{min-height:52vh}
+/* Grow to fill the viewport so a short page keeps the footer pinned to the
+   bottom instead of floating up under the content. */
+main{min-height:52vh;flex:1 0 auto}
 .section{padding:64px 0}
 .section-head{display:flex;align-items:end;justify-content:space-between;gap:16px;margin-bottom:28px}
 .section h2{position:relative;font-size:clamp(23px,3.1vw,32px);margin:0;font-weight:850;letter-spacing:-.6px;padding-left:15px}
