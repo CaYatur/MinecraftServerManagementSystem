@@ -6,6 +6,7 @@ import type { Finding, FindingCode, FindingSeverity } from '@shared/analysis'
 const TEXT: Record<FindingCode, string> = {
   'insufficient-data': 'analysis.insufficientData',
   'tps-unavailable': 'analysis.tpsUnavailable',
+  'tps-not-reported': 'analysis.tpsNotReported',
   'chronic-lag': 'analysis.chronicLag',
   'lag-with-players': 'analysis.lagWithPlayers',
   'cpu-saturated': 'analysis.cpuSaturated',

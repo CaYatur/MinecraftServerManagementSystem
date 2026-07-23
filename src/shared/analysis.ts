@@ -25,7 +25,10 @@ export type FindingSeverity = 'info' | 'warn' | 'error'
 
 export type FindingCode =
   | 'insufficient-data'
+  /** This server software cannot report a tick rate at all. */
   | 'tps-unavailable'
+  /** It can - nothing arrived, which is a different problem with a different fix. */
+  | 'tps-not-reported'
   | 'chronic-lag'
   | 'lag-with-players'
   | 'cpu-saturated'
@@ -135,11 +138,13 @@ export function analyze(input: AnalysisInput): Finding[] {
   // --- tick rate ------------------------------------------------------------
   const withTps = points.filter((p) => p.tps != null)
   if (!withTps.length) {
-    // Never call a server laggy because it cannot answer the question.
+    // Never call a server laggy because it cannot answer the question - and
+    // keep the two reasons apart: Paper with RCON off *can* report a TPS, so
+    // telling its owner the software does not support it would be wrong.
     out.push({
-      code: 'tps-unavailable',
+      code: reportsTps(server.type) ? 'tps-not-reported' : 'tps-unavailable',
       severity: 'info',
-      data: { type: server.type, canReport: reportsTps(server.type) ? 1 : 0 }
+      data: { type: server.type }
     })
   } else {
     const laggy = share(withTps, (p) => (p.tps as number) < LAG_TPS)

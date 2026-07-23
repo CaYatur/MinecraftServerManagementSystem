@@ -549,7 +549,18 @@ export async function runAnalysisSmoke(): Promise<void> {
       to
     })
     if (codes(quiet) !== 'tps-unavailable') return fail('vanilla server -> ' + codes(quiet))
-    console.log('ANALYSIS-SMOKE: missing TPS reported as missing, never as lag')
+    // Same empty series on Paper means something else entirely: RCON is off.
+    // Telling that owner their software cannot report TPS would be wrong.
+    const rconOff = analyze({
+      series: vanilla,
+      uptime: report(0),
+      events: [],
+      server: { type: 'paper', java: java() },
+      from: t0,
+      to
+    })
+    if (codes(rconOff) !== 'tps-not-reported') return fail('paper without RCON -> ' + codes(rconOff))
+    console.log('ANALYSIS-SMOKE: missing TPS reported as missing, and the two reasons kept apart')
 
     // --- 5. backups are only expected once the window is long enough ---------
     const longFrom = to - 10 * 86400_000
