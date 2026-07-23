@@ -183,9 +183,14 @@ export function uptime(
   // as up until the next launch. Metrics are sampled every few seconds while
   // the process lives, so the last sample is a far better estimate.
   return clipSessions(report, (s) => {
-    const series = metrics.query(serverId, { from: s.from, to: s.to, resolution: '10s', limit: 5000 })
-    const last = series.points[series.points.length - 1]
-    return last ? last.ts + metrics.BUCKET_MS['10s'] : null
+    // Let the store pick the tier: 10s rows only survive 24h, so an older run
+    // has to be bounded with the coarser 1m/1h rows instead of not at all.
+    for (const res of ['10s', '1m', '1h'] as const) {
+      const series = metrics.query(serverId, { from: s.from, to: s.to, resolution: res, limit: 5000 })
+      const last = series.points[series.points.length - 1]
+      if (last) return last.ts + metrics.BUCKET_MS[res]
+    }
+    return null
   })
 }
 

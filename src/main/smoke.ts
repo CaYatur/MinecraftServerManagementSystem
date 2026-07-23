@@ -127,6 +127,28 @@ export async function runEventsSmoke(): Promise<void> {
     if (after.events[0].type !== 'player.leave') return fail('cap dropped the newest events')
     console.log(`EVENTS-SMOKE: retention OK (age + ${eventsMod.MAX_EVENTS} cap, newest kept)`)
 
+    // --- an old abnormal run is still bounded once 10s rows have expired ---
+    {
+      const CLIP = 'smoke-events-clip'
+      const H = 3600_000
+      const oldFrom = Date.now() - 10 * 86400_000 // past the 24h raw retention
+      metrics._resetBuffers()
+      // only 1m/1h rows survive that far back, so seed at that spacing
+      for (let i = 0; i < 20; i++) {
+        metrics.record(CLIP, { tps: 20, cpu: 5, rssMB: 900, players: 0 }, oldFrom + i * 60_000)
+      }
+      metrics.flushServer(CLIP)
+      eventsMod.record(CLIP, 'server.ready', { ts: oldFrom })
+      eventsMod.record(CLIP, 'server.starting', { ts: oldFrom + 8 * H })
+      const rep = eventsMod.uptime(CLIP, oldFrom - H, oldFrom + 9 * H, oldFrom + 9 * H)
+      // ~20 minutes of samples, not the 8 hours up to the relaunch
+      if (rep.upMs > 40 * 60_000) return fail('old orphan run was not clipped: ' + rep.upMs)
+      if (rep.upMs < 15 * 60_000) return fail('old orphan run over-clipped: ' + rep.upMs)
+      metrics.dropServer(CLIP)
+      eventsMod.dropServer(CLIP)
+      console.log('EVENTS-SMOKE: old abnormal run bounded by 1m/1h metrics, not by the next launch')
+    }
+
     // --- uptime pairing: the four cases that make this hard ---
     {
       const H = 3600_000
