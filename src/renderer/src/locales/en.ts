@@ -95,7 +95,10 @@ export default {
     alertTriggered: 'Alert "{{text}}": {{metric}} {{comparison}} {{threshold}} (was {{value}}) for {{heldSeconds}} s',
     alertFailed: 'Alert action failed: {{text}}',
     worldActivated: 'World "{{text}}" made active',
-    worldDeleted: 'World "{{text}}" deleted ({{folders}} folders)'
+    worldDeleted: 'World "{{text}}" deleted ({{folders}} folders)',
+    worldRenamed: 'World "{{from}}" renamed to "{{to}}"',
+    worldCloned: 'World "{{from}}" duplicated as "{{to}}"',
+    worldReset: 'The {{dimension}} of "{{text}}" was reset'
   },
   sidebar: {
     servers: 'Servers',
@@ -381,6 +384,29 @@ export default {
     seed: 'seed {{seed}}',
     confirmDelete: 'Delete "{{name}}" permanently?',
     deleteBody: 'This removes {{folders}} folder(s), {{size}} — the world and every dimension in it. There is no undo; take a backup first if you might want it back.',
+    rename: 'Rename',
+    renameTitle: 'Rename "{{name}}"',
+    renameBody: 'The nether and end folders are renamed with it. If this world is active, server.properties is updated too.',
+    clone: 'Duplicate',
+    cloneTitle: 'Duplicate "{{name}}"',
+    cloneBody: 'Copies the whole world, dimensions included — a safe way to try something before doing it for real. Large worlds take a while.',
+    newName: 'New name',
+    renamed: 'World renamed',
+    cloned: 'World duplicated',
+    reset: 'Reset',
+    resetDim: 'Reset the {{dim}}',
+    resetTitle: 'Reset the {{dim}} of "{{name}}"?',
+    resetBody: 'The {{dim}} is deleted and generated fresh on the next start. The overworld — spawn, builds, players — is untouched. There is no undo.',
+    resetDone: 'Dimension reset — it regenerates on the next start',
+    err: {
+      'server-running': 'Stop the server first — its world files are in use.',
+      'world-is-active': 'This is the active world. Make another one active first.',
+      'world-not-found': 'That world no longer exists. Refresh the list.',
+      'invalid-name': 'That name cannot be used for a folder.',
+      'target-exists': 'A world with that name already exists (or one of its dimension folders does).',
+      'cannot-reset-overworld': 'The overworld cannot be reset — that would be deleting the world.',
+      'dimension-not-found': 'That dimension has not been generated yet.'
+    },
     dim: {
       overworld: 'Overworld',
       nether: 'Nether',

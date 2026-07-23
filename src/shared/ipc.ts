@@ -24,6 +24,7 @@ import type {
   UpdateInfo,
   ServerMessages,
   WorldInfo,
+  WorldDimension,
   MetricSeries,
   MetricResolution,
   TelemetryConfig,
@@ -117,6 +118,9 @@ export const IPC = {
   worldsList: 'worlds:list',
   worldActivate: 'worlds:activate',
   worldDelete: 'worlds:delete',
+  worldRename: 'worlds:rename',
+  worldClone: 'worlds:clone',
+  worldReset: 'worlds:reset',
 
   backupsList: 'backups:list',
   backupCreate: 'backups:create',
@@ -275,6 +279,9 @@ export interface MsmsApi {
   listWorlds(id: string): Promise<WorldInfo[]>
   activateWorld(id: string, name: string): Promise<void>
   deleteWorld(id: string, name: string): Promise<void>
+  renameWorld(id: string, name: string, newName: string): Promise<void>
+  cloneWorld(id: string, name: string, newName: string): Promise<void>
+  resetDimension(id: string, name: string, dimension: WorldDimension): Promise<void>
 
   listBackups(id?: string): Promise<BackupRecord[]>
   createBackup(id: string, opts: BackupOptions): Promise<BackupRecord>

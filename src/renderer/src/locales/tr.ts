@@ -97,7 +97,10 @@ const tr: typeof en = {
     alertTriggered: '"{{text}}" uyarısı: {{metric}} {{comparison}} {{threshold}} ({{value}} ölçüldü), {{heldSeconds}} sn boyunca',
     alertFailed: 'Uyarı eylemi başarısız: {{text}}',
     worldActivated: '"{{text}}" dünyası etkinleştirildi',
-    worldDeleted: '"{{text}}" dünyası silindi ({{folders}} klasör)'
+    worldDeleted: '"{{text}}" dünyası silindi ({{folders}} klasör)',
+    worldRenamed: '"{{from}}" dünyası "{{to}}" olarak adlandırıldı',
+    worldCloned: '"{{from}}" dünyası "{{to}}" olarak kopyalandı',
+    worldReset: '"{{text}}" dünyasının {{dimension}} boyutu sıfırlandı'
   },
   sidebar: {
     servers: 'Sunucular',
@@ -384,6 +387,29 @@ const tr: typeof en = {
     seed: 'seed {{seed}}',
     confirmDelete: '"{{name}}" kalıcı olarak silinsin mi?',
     deleteBody: 'Bu işlem {{folders}} klasörü, toplam {{size}}, dünyayı ve içindeki tüm boyutları siler. Geri alınamaz; ileride lazım olabilecekse önce yedek al.',
+    rename: 'Yeniden adlandır',
+    renameTitle: '"{{name}}" yeniden adlandırılıyor',
+    renameBody: 'Nether ve end klasörleri de birlikte adlandırılır. Bu dünya etkinse server.properties da güncellenir.',
+    clone: 'Kopyala',
+    cloneTitle: '"{{name}}" kopyalanıyor',
+    cloneBody: 'Dünyanın tamamını, boyutlar dahil kopyalar — bir şeyi gerçekten yapmadan önce denemenin güvenli yolu. Büyük dünyalarda zaman alır.',
+    newName: 'Yeni ad',
+    renamed: 'Dünya yeniden adlandırıldı',
+    cloned: 'Dünya kopyalandı',
+    reset: 'Sıfırla',
+    resetDim: '{{dim}} sıfırla',
+    resetTitle: '"{{name}}" dünyasının {{dim}} boyutu sıfırlansın mı?',
+    resetBody: '{{dim}} silinir ve bir sonraki açılışta sıfırdan üretilir. Ana dünyaya — spawn, yapılar, oyuncular — dokunulmaz. Geri alınamaz.',
+    resetDone: 'Boyut sıfırlandı — bir sonraki açılışta yeniden üretilir',
+    err: {
+      'server-running': 'Önce sunucuyu durdur — dünya dosyaları kullanımda.',
+      'world-is-active': 'Bu etkin dünya. Önce başka bir dünyayı etkin yap.',
+      'world-not-found': 'Bu dünya artık yok. Listeyi yenile.',
+      'invalid-name': 'Bu ad bir klasör adı olarak kullanılamaz.',
+      'target-exists': 'Bu adda bir dünya (ya da boyut klasörlerinden biri) zaten var.',
+      'cannot-reset-overworld': 'Ana dünya sıfırlanamaz — bu, dünyayı silmek olurdu.',
+      'dimension-not-found': 'Bu boyut henüz üretilmemiş.'
+    },
     dim: {
       overworld: 'Ana dünya',
       nether: 'Nether',

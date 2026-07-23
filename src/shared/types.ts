@@ -202,6 +202,9 @@ export type ServerEventType =
   | 'alert.failed'
   | 'world.activated'
   | 'world.deleted'
+  | 'world.renamed'
+  | 'world.cloned'
+  | 'world.reset'
 
 /**
  * One thing that happened to a server. The message is NOT stored: the UI

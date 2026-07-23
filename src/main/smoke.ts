@@ -581,6 +581,79 @@ export async function runWorldsSmoke(): Promise<void> {
     if (evs.events[0].data?.folders !== 2) return fail('delete event did not count both folders')
     console.log('WORLDS-SMOKE: delete removes the world and its dimensions, leaves the rest alone')
 
+    // --- 6. rename carries the dimensions, and level-name follows -----------
+    // `backup_world` is the active one at this point, and it is the vanilla
+    // layout (DIM-1 inside), so this covers the active + inner-dimension case.
+    worldsMod.renameWorld(SID, 'backup_world', 'renamed_world')
+    if (existsSync(join(root, 'backup_world'))) return fail('the old folder survived the rename')
+    if (!existsSync(join(root, 'renamed_world', 'DIM-1'))) return fail('rename lost the inner dimension')
+    if (!/^level-name=renamed_world$/m.test(readFileSync(join(root, 'server.properties'), 'utf-8'))) {
+      return fail('renaming the active world did not update level-name')
+    }
+    // Now the Paper layout, which is NOT active: all three folders must move.
+    worldsMod.renameWorld(SID, 'world', 'paper_world')
+    for (const suffix of ['', '_nether', '_the_end']) {
+      if (!existsSync(join(root, 'paper_world' + suffix))) return fail('rename left behind ' + suffix)
+      if (existsSync(join(root, 'world' + suffix))) return fail('rename did not move ' + suffix)
+    }
+    if (/^level-name=paper_world$/m.test(readFileSync(join(root, 'server.properties'), 'utf-8'))) {
+      return fail('renaming an inactive world stole level-name')
+    }
+    const renamed = await worldsMod.listWorlds(SID)
+    if (renamed.find((w) => w.name === 'paper_world')?.dimensions.length !== 3) {
+      return fail('renamed paper world lost its dimensions')
+    }
+    console.log('WORLDS-SMOKE: rename moves every folder, level-name follows only the active world')
+
+    // --- 7. clone leaves the original alone ---------------------------------
+    await worldsMod.cloneWorld(SID, 'paper_world', 'copy')
+    for (const suffix of ['', '_nether', '_the_end']) {
+      if (!existsSync(join(root, 'copy' + suffix))) return fail('clone missed ' + suffix)
+      if (!existsSync(join(root, 'paper_world' + suffix))) return fail('clone consumed the original')
+    }
+    if (!existsSync(join(root, 'copy', 'region', 'r.0.0.mca'))) return fail('clone did not copy contents')
+    const cloned = (await worldsMod.listWorlds(SID)).find((w) => w.name === 'copy')
+    if (cloned?.seed !== '12345') return fail('the copy did not carry its level.dat')
+    if (cloned?.active) return fail('a copy came out active')
+    console.log('WORLDS-SMOKE: clone copies the whole world and leaves the original intact')
+
+    // --- 8. rename/clone refuse to land on top of anything ------------------
+    if (!(await refuses('renaming onto an existing world', () => worldsMod.renameWorld(SID, 'copy', 'paper_world'), 'target-exists'))) return
+    // The collision is only on a COMPANION folder - the base name is free.
+    mkdirSync(join(root, 'lonely_nether'), { recursive: true })
+    if (!(await refuses('a companion-only collision', () => worldsMod.cloneWorld(SID, 'copy', 'lonely'), 'target-exists'))) return
+    rmSync(join(root, 'lonely_nether'), { recursive: true, force: true })
+    if (!(await refuses('renaming to a traversal', () => worldsMod.renameWorld(SID, 'copy', '../evil'), 'invalid-name'))) return
+    if (existsSync(join(root, 'copy'))) {
+      /* still there, as it must be */
+    } else {
+      return fail('a refused rename moved the world anyway')
+    }
+    console.log('WORLDS-SMOKE: rename/clone refuse existing targets, companions included')
+
+    // --- 9. reset one dimension, both layouts -------------------------------
+    // The active world's nether: allowed on purpose - this is the everyday job.
+    if (!existsSync(join(root, 'renamed_world', 'DIM-1'))) return fail('vanilla fixture lost its DIM-1')
+    worldsMod.resetDimension(SID, 'renamed_world', 'nether')
+    if (existsSync(join(root, 'renamed_world', 'DIM-1'))) return fail('inner nether not reset')
+    if (!existsSync(join(root, 'renamed_world', 'level.dat'))) return fail('resetting took the overworld')
+    const activeAfterReset = (await worldsMod.listWorlds(SID)).find((w) => w.name === 'renamed_world')
+    if (!activeAfterReset?.active) return fail('reset disturbed which world is active')
+    if (activeAfterReset.dimensions.join('+') !== 'overworld') return fail('nether still listed after reset')
+
+    worldsMod.resetDimension(SID, 'paper_world', 'end')
+    if (existsSync(join(root, 'paper_world_the_end'))) return fail('sibling end not reset')
+    if (!existsSync(join(root, 'paper_world_nether'))) return fail('resetting the end took the nether')
+    if (!existsSync(join(root, 'paper_world', 'level.dat'))) return fail('resetting the end took the overworld')
+
+    if (!(await refuses('resetting the overworld', () => worldsMod.resetDimension(SID, 'copy', 'overworld'), 'cannot-reset-overworld'))) return
+    if (!existsSync(join(root, 'copy', 'level.dat'))) return fail('a refused overworld reset still deleted it')
+    if (!(await refuses('resetting a dimension that is not there', () => worldsMod.resetDimension(SID, 'renamed_world', 'end'), 'dimension-not-found'))) return
+    console.log('WORLDS-SMOKE: reset clears one dimension in both layouts, allowed on the active world, never the overworld')
+
+    const changes = eventsMod.query(SID, { types: ['world.renamed', 'world.cloned', 'world.reset'] })
+    if (changes.events.length !== 5) return fail('world changes on the timeline: ' + changes.events.length)
+
     cleanup()
     console.log('WORLDS-SMOKE: PASS')
     app.exit(0)

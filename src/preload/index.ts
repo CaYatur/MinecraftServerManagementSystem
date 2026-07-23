@@ -76,6 +76,9 @@ const api: MsmsApi = {
   listWorlds: (id) => ipcRenderer.invoke(IPC.worldsList, id),
   activateWorld: (id, name) => ipcRenderer.invoke(IPC.worldActivate, id, name),
   deleteWorld: (id, name) => ipcRenderer.invoke(IPC.worldDelete, id, name),
+  renameWorld: (id, name, newName) => ipcRenderer.invoke(IPC.worldRename, id, name, newName),
+  cloneWorld: (id, name, newName) => ipcRenderer.invoke(IPC.worldClone, id, name, newName),
+  resetDimension: (id, name, dimension) => ipcRenderer.invoke(IPC.worldReset, id, name, dimension),
 
   listBackups: (id) => ipcRenderer.invoke(IPC.backupsList, id),
   createBackup: (id, opts) => ipcRenderer.invoke(IPC.backupCreate, id, opts),

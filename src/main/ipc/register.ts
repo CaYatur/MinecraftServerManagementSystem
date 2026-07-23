@@ -36,7 +36,8 @@ import type {
   ServerType,
   StopOptions,
   PlayerInfo,
-  TelemetryConfig
+  TelemetryConfig,
+  WorldDimension
 } from '@shared/types'
 import type { CreateServerOptions } from '@shared/versions'
 
@@ -242,6 +243,11 @@ export function registerIpc(): void {
   H(IPC.worldsList, (_e, id: string) => worlds.listWorlds(id))
   H(IPC.worldActivate, (_e, id: string, name: string) => worlds.activateWorld(id, name))
   H(IPC.worldDelete, (_e, id: string, name: string) => worlds.deleteWorld(id, name))
+  H(IPC.worldRename, (_e, id: string, name: string, to: string) => worlds.renameWorld(id, name, to))
+  H(IPC.worldClone, (_e, id: string, name: string, to: string) => worlds.cloneWorld(id, name, to))
+  H(IPC.worldReset, (_e, id: string, name: string, dim: WorldDimension) =>
+    worlds.resetDimension(id, name, dim)
+  )
 
   // --- backups ---
   H(IPC.backupsList, (_e, id?: string) => backups.listBackups(id))

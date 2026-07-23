@@ -1329,6 +1329,27 @@ textarea.input:focus {
   color: var(--danger);
 }
 
+/* --- worlds --- */
+.world-dims {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  font-size: 11px;
+  margin-top: 2px;
+}
+.world-dim {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.btn.xs {
+  padding: 1px 4px;
+  min-height: 0;
+  line-height: 1;
+  border-radius: 5px;
+}
+
 /* --- analysis findings (History view) --- */
 .findings {
   display: flex;

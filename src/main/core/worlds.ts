@@ -19,9 +19,9 @@
  * `level-name` in server.properties is the single source of truth for which
  * world is active; nothing else decides it.
  */
-import { existsSync, readdirSync, rmSync, statSync, type Dirent } from 'node:fs'
-import { readFile } from 'node:fs/promises'
-import { join, resolve, sep } from 'node:path'
+import { existsSync, readdirSync, renameSync, rmSync, statSync, type Dirent } from 'node:fs'
+import { cp, readFile } from 'node:fs/promises'
+import { basename, join, resolve, sep } from 'node:path'
 import * as nbt from 'prismarine-nbt'
 import { getServer } from './serverRegistry'
 import { readProperties, writeProperties } from './serverFiles'
@@ -220,6 +220,123 @@ export function activateWorld(id: string, name: string): void {
   writeProperties(id, { 'level-name': name })
   events.record(id, 'world.activated', { text: name })
   log.info(`World "${name}" activated for ${id}`)
+}
+
+/**
+ * Every folder a rename or clone would create must be free - including the
+ * companions. Checking only the base name would let `world` -> `foo` merge
+ * into an existing `foo_nether` and quietly mix two worlds together.
+ */
+function assertTargetFree(root: string, newBase: string): void {
+  safeWorldPath(root, newBase)
+  for (const suffix of ['', NETHER_SUFFIX, END_SUFFIX]) {
+    if (existsSync(join(root, newBase + suffix))) throw new Error('target-exists')
+  }
+}
+
+/** '' | '_nether' | '_the_end' for a folder belonging to `base`. */
+function suffixOf(folder: string, base: string): string {
+  return basename(folder).slice(base.length)
+}
+
+/** Rename a world; its dimension folders come along or it is torn in half. */
+export function renameWorld(id: string, name: string, newName: string): void {
+  const root = serverRoot(id)
+  assertStopped(id)
+  const dir = safeWorldPath(root, name)
+  if (!isWorldFolder(dir)) throw new Error('world-not-found')
+  if (newName === name) return
+  assertTargetFree(root, newName)
+
+  const wasActive = name === activeWorldName(id)
+  const moved: Array<[string, string]> = []
+  for (const folder of worldFolders(root, name)) {
+    const dest = join(root, newName + suffixOf(folder, name))
+    renameSync(folder, dest)
+    moved.push([folder, dest])
+  }
+  if (wasActive) {
+    try {
+      writeProperties(id, { 'level-name': newName })
+    } catch (err) {
+      // The folders have already moved. Leaving it here would point the
+      // server at a world that no longer exists, and it would silently
+      // generate a blank one on the next start - so put them back.
+      for (const [from, to] of moved) {
+        try {
+          renameSync(to, from)
+        } catch {
+          /* nothing better to try */
+        }
+      }
+      throw err
+    }
+  }
+  events.record(id, 'world.renamed', {
+    text: newName,
+    data: { from: name, to: newName, folders: moved.length }
+  })
+  log.info(`World "${name}" renamed to "${newName}" for ${id}`)
+}
+
+/** Copy a world under a new name - the safe way to try something risky. */
+export async function cloneWorld(id: string, name: string, newName: string): Promise<void> {
+  const root = serverRoot(id)
+  assertStopped(id)
+  const dir = safeWorldPath(root, name)
+  if (!isWorldFolder(dir)) throw new Error('world-not-found')
+  assertTargetFree(root, newName)
+
+  const made: string[] = []
+  try {
+    for (const folder of worldFolders(root, name)) {
+      const dest = join(root, newName + suffixOf(folder, name))
+      // Async: a multi-gigabyte world copied synchronously freezes the window.
+      await cp(folder, dest, { recursive: true })
+      made.push(dest)
+    }
+  } catch (err) {
+    for (const d of made) {
+      try {
+        rmSync(d, { recursive: true, force: true })
+      } catch {
+        /* leave the fragment rather than mask the real error */
+      }
+    }
+    throw err
+  }
+  events.record(id, 'world.cloned', {
+    text: newName,
+    data: { from: name, to: newName, folders: made.length }
+  })
+  log.info(`World "${name}" cloned to "${newName}" for ${id}`)
+}
+
+/**
+ * Delete one dimension so the server rebuilds it on the next start - the
+ * everyday "reset the nether, keep spawn" job.
+ *
+ * Deliberately NOT guarded against the active world, unlike deleteWorld:
+ * resetting the active world's nether is the entire point, and it is safe
+ * because the server is stopped and regenerates what is missing. The
+ * overworld is refused, because for the active world that is the same thing
+ * as deleting it.
+ */
+export function resetDimension(id: string, name: string, dimension: WorldDimension): void {
+  const root = serverRoot(id)
+  assertStopped(id)
+  if (dimension === 'overworld') throw new Error('cannot-reset-overworld')
+  const dir = safeWorldPath(root, name)
+  if (!isWorldFolder(dir)) throw new Error('world-not-found')
+
+  const sibling = join(root, name + (dimension === 'nether' ? NETHER_SUFFIX : END_SUFFIX))
+  const inner = join(dir, dimension === 'nether' ? 'DIM-1' : 'DIM1')
+  const targets = [sibling, inner].filter((p) => existsSync(p))
+  if (!targets.length) throw new Error('dimension-not-found')
+  for (const t of targets) rmSync(t, { recursive: true, force: true })
+
+  events.record(id, 'world.reset', { text: name, data: { dimension, folders: targets.length } })
+  log.info(`Dimension ${dimension} of "${name}" reset for ${id}`)
 }
 
 /** Delete a world and every dimension folder that belongs to it. */

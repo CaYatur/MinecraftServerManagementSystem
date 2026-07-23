@@ -54,7 +54,10 @@ const LABEL: Record<ServerEventType, string> = {
   'alert.triggered': 'events.alertTriggered',
   'alert.failed': 'events.alertFailed',
   'world.activated': 'events.worldActivated',
-  'world.deleted': 'events.worldDeleted'
+  'world.deleted': 'events.worldDeleted',
+  'world.renamed': 'events.worldRenamed',
+  'world.cloned': 'events.worldCloned',
+  'world.reset': 'events.worldReset'
 }
 
 const ICON: Record<ServerEventType, JSX.Element> = {
@@ -74,7 +77,10 @@ const ICON: Record<ServerEventType, JSX.Element> = {
   'alert.triggered': <BellRing size={14} />,
   'alert.failed': <BellOff size={14} />,
   'world.activated': <Globe2 size={14} />,
-  'world.deleted': <Globe2 size={14} />
+  'world.deleted': <Globe2 size={14} />,
+  'world.renamed': <Globe2 size={14} />,
+  'world.cloned': <Globe2 size={14} />,
+  'world.reset': <Globe2 size={14} />
 }
 
 const SEV_CLASS: Record<EventSeverity, string> = {
