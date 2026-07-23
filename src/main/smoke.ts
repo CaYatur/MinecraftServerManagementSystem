@@ -25,7 +25,9 @@ import * as eventsMod from './core/events'
 import * as alertsMod from './core/alerts'
 import { computeUptime, clipSessions } from '@shared/uptime'
 import { evaluateRule, normalizeRule, IDLE, type AlertRule, type AlertSample } from '@shared/alerts'
-import type { ServerConfig, ServerEvent } from '@shared/types'
+import { analyze, type Finding } from '@shared/analysis'
+import type { UptimeReport } from '@shared/uptime'
+import type { JavaArgsConfig, MetricSeries, ServerConfig, ServerEvent } from '@shared/types'
 import { alertsPath, uploadsDir } from './paths'
 import { analyzeCrash } from './core/crash'
 import { CREATABLE_TYPES } from '@shared/versions'
@@ -391,6 +393,201 @@ export async function runMetricsSmoke(): Promise<void> {
 
     wipe()
     console.log('METRICS-SMOKE: PASS')
+    app.exit(0)
+  } catch (e) {
+    wipe()
+    fail('exception ' + String(e))
+  }
+}
+
+/**
+ * Performance analyzer verification (Stage 6).
+ *
+ * Replays four shaped histories through the real metric store and asserts the
+ * exact finding codes. The healthy case is the important one: it carries a
+ * short lag dip on purpose, because an analyzer that cannot stay quiet about
+ * ordinary noise is worse than none.
+ */
+export async function runAnalysisSmoke(): Promise<void> {
+  const fail = (m: string): void => {
+    console.log('ANALYSIS-SMOKE: FAIL -', m)
+    app.exit(1)
+  }
+  const SID = 'smoke-analysis-server'
+  const wipe = (): void => rmSync(metrics.metricsDirFor(SID), { recursive: true, force: true })
+
+  const java = (over: Partial<JavaArgsConfig> = {}): JavaArgsConfig => ({
+    javaPath: '',
+    minMemoryMB: 1024,
+    maxMemoryMB: 8192,
+    preset: 'aikars',
+    customArgs: '',
+    extraFlags: '',
+    jarFile: 'server.jar',
+    nogui: true,
+    ...over
+  })
+
+  const report = (crashes: number): UptimeReport => ({
+    windowFrom: 0,
+    windowTo: 0,
+    windowMs: 0,
+    upMs: 0,
+    downMs: 0,
+    ratio: 1,
+    sessions: [],
+    starts: crashes,
+    crashes,
+    longestUpMs: 0,
+    currentlyUp: true
+  })
+
+  /** Lay down 6 h of 30 s readings and read them back at 1-minute resolution. */
+  const build = (t0: number, sample: (i: number) => metrics.MetricSample): MetricSeries => {
+    wipe()
+    metrics._resetBuffers()
+    for (let i = 0; i < 720; i++) metrics.record(SID, sample(i), t0 + i * 30_000)
+    metrics.flushServer(SID)
+    return metrics.query(SID, { from: t0, to: t0 + 6 * 3600_000, resolution: '1m', limit: 5000 })
+  }
+
+  const codes = (f: Finding[]): string => f.map((x) => x.code).join(',')
+
+  try {
+    const saved = getConfig().telemetry
+    updateConfig((c) => {
+      c.telemetry = { enabled: true, rawHours: 24, minuteDays: 14, hourDays: 365 }
+    })
+    const HOUR = 3600_000
+    const t0 = Math.floor(Date.now() / HOUR) * HOUR - 6 * HOUR
+    const to = t0 + 6 * HOUR
+
+    // --- 1. a server with real problems -----------------------------------
+    // 40% of the time: 10 players, 12 TPS, 95% CPU. The rest: empty and fine.
+    const busy = (i: number): boolean => i % 60 < 24
+    const sick = build(t0, (i) => ({
+      tps: busy(i) ? 12 : 20,
+      cpu: busy(i) ? 95 : 20,
+      rssMB: 1200,
+      players: busy(i) ? 10 : 0
+    }))
+    if (sick.points.length !== 360) return fail('fixture built ' + sick.points.length + ' points, expected 360')
+    const bad = analyze({
+      series: sick,
+      uptime: report(3),
+      events: [],
+      server: { type: 'paper', java: java({ preset: 'basic' }) },
+      from: t0,
+      to
+    })
+    const want = [
+      'chronic-lag',
+      'frequent-crashes',
+      'lag-with-players',
+      'cpu-saturated',
+      'memory-over-allocated',
+      'aikars-flags'
+    ].join(',')
+    if (codes(bad) !== want) return fail('sick server -> ' + codes(bad) + '\n  expected ' + want)
+    const lag = bad[0]
+    if (lag.severity !== 'error') return fail('40% laggy buckets should be an error, got ' + lag.severity)
+    if (lag.data?.share !== 40) return fail('lag share computed as ' + lag.data?.share + '%, expected 40')
+    const corr = bad.find((f) => f.code === 'lag-with-players')
+    if (corr?.data?.busyTps !== 12 || corr?.data?.quietTps !== 20) {
+      return fail('player correlation wrong: ' + JSON.stringify(corr?.data))
+    }
+    const mem = bad.find((f) => f.code === 'memory-over-allocated')
+    if (mem?.data?.rssMax !== 1200 || mem?.data?.xmx !== 8192) {
+      return fail('memory finding wrong: ' + JSON.stringify(mem?.data))
+    }
+    console.log('ANALYSIS-SMOKE: problem server OK (6 findings, error first, numbers exact)')
+
+    // --- 2. a healthy server, including a dip that must NOT be called lag ---
+    const ok = build(t0, (i) => ({
+      tps: i % 60 < 3 ? 10 : 20, // 5% of buckets dip - under the 10% floor
+      cpu: 25,
+      rssMB: 6000,
+      players: 3
+    }))
+    const good = analyze({
+      series: ok,
+      uptime: report(0),
+      events: [],
+      server: { type: 'paper', java: java() },
+      from: t0,
+      to
+    })
+    if (codes(good) !== 'healthy') return fail('healthy server -> ' + codes(good))
+    console.log('ANALYSIS-SMOKE: healthy server stays quiet (a 5% dip is not chronic lag)')
+
+    // --- 3. too little history to say anything ------------------------------
+    wipe()
+    metrics._resetBuffers()
+    for (let i = 0; i < 30; i++) {
+      metrics.record(SID, { tps: 5, cpu: 99, rssMB: 100, players: 0 }, t0 + i * 30_000)
+    }
+    metrics.flushServer(SID)
+    const thin = analyze({
+      series: metrics.query(SID, { from: t0, to, resolution: '1m', limit: 5000 }),
+      uptime: report(0),
+      events: [],
+      server: { type: 'paper', java: java({ preset: 'basic' }) },
+      from: t0,
+      to
+    })
+    if (codes(thin) !== 'insufficient-data') return fail('thin history -> ' + codes(thin))
+    console.log('ANALYSIS-SMOKE: refuses to diagnose from 30 readings')
+
+    // --- 4. software that cannot report a tick rate --------------------------
+    const vanilla = build(t0, () => ({ tps: null, cpu: 25, rssMB: 6000, players: 3 }))
+    const quiet = analyze({
+      series: vanilla,
+      uptime: report(0),
+      events: [],
+      server: { type: 'vanilla', java: java() },
+      from: t0,
+      to
+    })
+    if (codes(quiet) !== 'tps-unavailable') return fail('vanilla server -> ' + codes(quiet))
+    console.log('ANALYSIS-SMOKE: missing TPS reported as missing, never as lag')
+
+    // --- 5. backups are only expected once the window is long enough ---------
+    const longFrom = to - 10 * 86400_000
+    const backupless = analyze({
+      series: ok,
+      uptime: report(0),
+      events: [],
+      server: { type: 'paper', java: java() },
+      from: longFrom,
+      to
+    })
+    if (!backupless.some((f) => f.code === 'no-backups')) {
+      return fail('10 days without a backup was not flagged')
+    }
+    const withBackup = analyze({
+      series: ok,
+      uptime: report(0),
+      events: [
+        {
+          id: 'b',
+          serverId: SID,
+          ts: to - 86400_000,
+          type: 'backup.created',
+          severity: 'success'
+        }
+      ],
+      server: { type: 'paper', java: java() },
+      from: longFrom,
+      to
+    })
+    if (withBackup.some((f) => f.code === 'no-backups')) return fail('flagged a server that has backups')
+    console.log('ANALYSIS-SMOKE: backup reminder honours both the window and the evidence')
+
+    updateConfig((c) => {
+      c.telemetry = saved
+    })
+    wipe()
+    console.log('ANALYSIS-SMOKE: PASS')
     app.exit(0)
   } catch (e) {
     wipe()
@@ -1076,6 +1273,22 @@ export async function runSmoke(): Promise<void> {
     if (hv.drawn < 1) return fail('no chart path was drawn')
     if (!/%/.test(hv.pct)) return fail('uptime not computed in the UI: ' + hv.pct)
     console.log(`SMOKE: history view OK (${hv.charts} charts, ${hv.drawn} paths, uptime ${hv.pct}, bar ${hv.bar})`)
+
+    // The analysis panel reads the same data back as sentences. This run is
+    // seconds long, so the honest verdict is "not enough history".
+    const an = JSON.parse(
+      await win.webContents.executeJavaScript(
+        `(()=>{const f=[...document.querySelectorAll('.finding')];
+         return JSON.stringify({n:f.length,
+           text:(f[0]?.querySelector('.finding-text')?.textContent||''),
+           fix:(f[0]?.querySelector('.finding-fix')?.textContent||'')})})()`
+      )
+    ) as { n: number; text: string; fix: string }
+    if (an.n < 1) return fail('analysis panel rendered no findings')
+    for (const s of [an.text, an.fix]) {
+      if (!s || /^analysis\./.test(s) || /\{\{/.test(s)) return fail('finding not translated: ' + s)
+    }
+    console.log(`SMOKE: analysis panel OK (${an.n} finding(s), "${an.text}")`)
 
     // Automation tab: both halves must render, and a rule must survive the
     // whole round trip - preset -> form -> IPC -> disk -> list -> delete.

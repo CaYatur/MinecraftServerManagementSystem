@@ -3,6 +3,8 @@ import { useTranslation } from 'react-i18next'
 import { Activity, Cpu, MemoryStick, Users, Timer, RefreshCw } from 'lucide-react'
 import { useStore } from '../store'
 import { Chart, type ChartMarker, type ChartPoint } from '../components/Chart'
+import { Analysis } from '../components/Analysis'
+import { analyze } from '@shared/analysis'
 import type { MetricSeries, ServerEvent } from '@shared/types'
 import type { UptimeReport } from '@shared/uptime'
 
@@ -26,6 +28,7 @@ const dur = (ms: number): string => {
 export function HistoryView(): JSX.Element {
   const { t } = useTranslation()
   const id = useStore((s) => s.activeServerId) as string
+  const server = useStore((s) => s.activeServer())
   const [range, setRange] = useState<Range>('24h')
   const [series, setSeries] = useState<MetricSeries | null>(null)
   const [up, setUp] = useState<UptimeReport | null>(null)
@@ -89,6 +92,22 @@ export function HistoryView(): JSX.Element {
   const sum = series?.summary
   const ratio = up?.ratio
 
+  // Same numbers the charts draw, read back as plain advice.
+  const findings = useMemo(
+    () =>
+      series && server
+        ? analyze({
+            series,
+            uptime: up,
+            events: marks,
+            server: { type: server.type, java: server.java },
+            from: span.from,
+            to: span.to
+          })
+        : [],
+    [series, up, marks, server, span]
+  )
+
   return (
     <div style={{ maxWidth: 1000 }}>
       <div className="panel" style={{ marginBottom: 14 }}>
@@ -136,6 +155,8 @@ export function HistoryView(): JSX.Element {
           <Stat label={t('history.samples')} value={sum ? String(sum.samples) : '—'} />
         </div>
       </div>
+
+      {findings.length > 0 && <Analysis findings={findings} />}
 
       <div className="panel" style={{ marginBottom: 14 }}>
         <ChartBlock

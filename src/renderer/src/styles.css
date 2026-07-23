@@ -1329,6 +1329,55 @@ textarea.input:focus {
   color: var(--danger);
 }
 
+/* --- analysis findings (History view) --- */
+.findings {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.finding {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel) 70%, transparent);
+}
+.finding-icon {
+  display: flex;
+  padding-top: 1px;
+}
+.finding-text {
+  font-size: 13px;
+  line-height: 1.45;
+}
+.finding-fix {
+  font-size: 12px;
+  line-height: 1.45;
+  margin-top: 2px;
+}
+.finding.ev-error {
+  border-left-color: var(--danger);
+  background: rgba(248, 113, 113, 0.06);
+}
+.finding.ev-error .finding-icon {
+  color: var(--danger);
+}
+.finding.ev-warn {
+  border-left-color: var(--warning);
+}
+.finding.ev-warn .finding-icon {
+  color: var(--warning);
+}
+.finding.ev-info {
+  border-left-color: var(--info);
+}
+.finding.ev-info .finding-icon {
+  color: var(--info);
+}
+
 .mod-row {
   display: flex;
   align-items: center;
