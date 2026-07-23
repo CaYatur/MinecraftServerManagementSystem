@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next'
-import { Plus, FolderPlus, RefreshCw, Settings as SettingsIcon, Server, FolderOpen, Globe, Globe2 } from 'lucide-react'
+import { Plus, FolderPlus, RefreshCw, Settings as SettingsIcon, Server, FolderOpen, Globe, Globe2, ScrollText } from 'lucide-react'
 import { useStore } from '../store'
 import { StatusDot } from './ui'
 import { Logo } from './Logo'
@@ -57,14 +57,14 @@ export function Sidebar(): JSX.Element {
           servers.map((s) => {
             const st = statuses[s.id]?.status ?? 'stopped'
             const active =
-              s.id === activeId && !['settings', 'create', 'web', 'site'].includes(view)
+              s.id === activeId && !['settings', 'create', 'web', 'site', 'audit'].includes(view)
             return (
               <div
                 key={s.id}
                 className={`server-item ${active ? 'active' : ''}`}
                 onClick={() => {
                   selectServer(s.id)
-                  if (['settings', 'create', 'web', 'site'].includes(view)) setView('console')
+                  if (['settings', 'create', 'web', 'site', 'audit'].includes(view)) setView('console')
                 }}
               >
                 <StatusDot status={st} />
@@ -104,6 +104,13 @@ export function Sidebar(): JSX.Element {
           style={{ marginBottom: 4 }}
         >
           <Globe size={15} /> {t('web.title')}
+        </button>
+        <button
+          className={`btn ghost sm block ${view === 'audit' ? 'active' : ''}`}
+          onClick={() => setView('audit')}
+          style={{ marginBottom: 4 }}
+        >
+          <ScrollText size={15} /> {t('audit.title')}
         </button>
         <button
           className={`btn ghost sm block ${view === 'settings' ? 'active' : ''}`}

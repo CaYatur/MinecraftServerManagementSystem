@@ -39,6 +39,7 @@ import { HistoryView } from './views/HistoryView'
 import { StoreView } from './views/StoreView'
 import { WebPanelView } from './views/WebPanelView'
 import { SiteView } from './views/SiteView'
+import { AuditView } from './views/AuditView'
 import { useState, useRef, useEffect } from 'react'
 
 const TABS: { id: ViewId; icon: JSX.Element; labelKey: string }[] = [
@@ -143,11 +144,19 @@ function MainArea(): JSX.Element {
   }, [view])
 
   if (view === 'create') return <CreateView />
-  if (view === 'settings' || view === 'web' || view === 'site')
+  if (view === 'settings' || view === 'web' || view === 'site' || view === 'audit')
     return (
       <div className="content">
         <ErrorBoundary key={view}>
-          {view === 'web' ? <WebPanelView /> : view === 'site' ? <SiteView /> : <SettingsView />}
+          {view === 'web' ? (
+            <WebPanelView />
+          ) : view === 'site' ? (
+            <SiteView />
+          ) : view === 'audit' ? (
+            <AuditView />
+          ) : (
+            <SettingsView />
+          )}
         </ErrorBoundary>
       </div>
     )

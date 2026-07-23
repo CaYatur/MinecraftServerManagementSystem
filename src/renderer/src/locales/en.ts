@@ -113,6 +113,42 @@ export default {
     settings: 'Settings',
     openFolder: 'Open folder'
   },
+  audit: {
+    title: 'Audit log',
+    all: 'All',
+    okOnly: 'Success',
+    failOnly: 'Failed',
+    search: 'Search actor, IP, action, target…',
+    refresh: 'Refresh',
+    results: '{{n}} entries',
+    empty: 'No matching audit entries.',
+    when: 'When',
+    source: 'Source',
+    action: 'Action',
+    actor: 'Actor',
+    ip: 'IP',
+    target: 'Target',
+    outcome: 'Outcome',
+    src: {
+      console: 'Console',
+      panel: 'Panel',
+      webpanel: 'Web panel',
+      public: 'Public site',
+      system: 'System'
+    }
+  },
+  auditAct: {
+    login: 'Login',
+    command: 'Console command',
+    start: 'Start server',
+    stop: 'Stop server',
+    restart: 'Restart server',
+    kill: 'Force kill',
+    create: 'Create server',
+    remove: 'Remove server',
+    register: 'Account created',
+    purchase: 'Purchase'
+  },
   status: {
     stopped: 'Stopped',
     starting: 'Starting',

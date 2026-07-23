@@ -115,6 +115,42 @@ const tr: typeof en = {
     settings: 'Ayarlar',
     openFolder: 'Klasörü aç'
   },
+  audit: {
+    title: 'Denetim kaydı',
+    all: 'Tümü',
+    okOnly: 'Başarılı',
+    failOnly: 'Başarısız',
+    search: 'Aktör, IP, eylem, hedef ara…',
+    refresh: 'Yenile',
+    results: '{{n}} kayıt',
+    empty: 'Eşleşen denetim kaydı yok.',
+    when: 'Zaman',
+    source: 'Kaynak',
+    action: 'Eylem',
+    actor: 'Aktör',
+    ip: 'IP',
+    target: 'Hedef',
+    outcome: 'Sonuç',
+    src: {
+      console: 'Konsol',
+      panel: 'Panel',
+      webpanel: 'Web panel',
+      public: 'Herkese açık',
+      system: 'Sistem'
+    }
+  },
+  auditAct: {
+    login: 'Giriş',
+    command: 'Konsol komutu',
+    start: 'Sunucu başlat',
+    stop: 'Sunucu durdur',
+    restart: 'Sunucu yeniden başlat',
+    kill: 'Zorla kapat',
+    create: 'Sunucu oluştur',
+    remove: 'Sunucu kaldır',
+    register: 'Hesap oluşturuldu',
+    purchase: 'Satın alma'
+  },
   status: {
     stopped: 'Durdu',
     starting: 'Başlatılıyor',

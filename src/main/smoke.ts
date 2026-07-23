@@ -2383,6 +2383,39 @@ export async function runSmoke(): Promise<void> {
     console.log('SMOKE: mods update control OK (button enabled with a plugin present)')
   }
 
+  // ---- audit view (Stage 15 slice 4): the global audit log renders in the UI ----
+  {
+    const af = join(auditDir(), 'audit.jsonl')
+    const asnap = existsSync(af) ? readFileSync(af, 'utf-8') : null
+    try {
+      rmSync(af, { force: true })
+      auditMod._reset()
+      auditMod.record({ source: 'panel', action: 'server.start', actor: 'operator', serverId: 'smoke-srv' })
+      auditMod.record({ source: 'webpanel', action: 'login', actor: 'smokeadmin', ok: false, ip: '203.0.113.7' })
+      await win.webContents.executeJavaScript(
+        `[...document.querySelectorAll('.sidebar-foot .btn')].find(b=>/Audit|Denetim/i.test(b.textContent||''))?.click()`
+      )
+      await sleep(700)
+      const av = JSON.parse(
+        await win.webContents.executeJavaScript(
+          `(()=>{const rows=[...document.querySelectorAll('.audit-table tbody tr')];
+           const txt=document.querySelector('.audit-table')?.textContent||'';
+           return JSON.stringify({rows:rows.length,hasTable:!!document.querySelector('.audit-table'),
+             title:(document.querySelector('.section-title')?.textContent||'').trim(),
+             hasOperator:/operator/.test(txt),hasFailIp:txt.indexOf('203.0.113.7')>=0})})()`
+        )
+      ) as { rows: number; hasTable: boolean; title: string; hasOperator: boolean; hasFailIp: boolean }
+      if (!av.hasTable) return fail('audit view did not render its table')
+      if (av.rows < 2) return fail('audit view showed ' + av.rows + ' row(s), expected 2')
+      if (!av.hasOperator || !av.hasFailIp) return fail('audit rows missing actor/IP content')
+      if (/audit\.|auditAct\.|\{\{/.test(av.title)) return fail('audit view not translated: ' + av.title)
+      console.log('SMOKE: audit view OK (table renders — actor, source badge, denied login + IP)')
+    } finally {
+      if (asnap == null) rmSync(af, { force: true })
+      else writeFileSync(af, asnap, 'utf-8')
+    }
+  }
+
   const bk = await backupsMod.createBackup(id, { kind: 'full' })
   if (!backupsMod.listBackups(id).find((b) => b.id === bk.id)) return fail('backup not listed')
   backupsMod.deleteBackup(bk.id)
