@@ -128,8 +128,10 @@ export function setSiteConfig(patch: Partial<SiteConfig>): SiteConfig {
     if (hex(t.text)) s.theme.text = t.text
     if (t.layout) s.theme.layout = t.layout
     if (t.heroStyle) s.theme.heroStyle = t.heroStyle
-    if (t.heroImage !== undefined) s.theme.heroImage = t.heroImage
-    if (t.logo !== undefined) s.theme.logo = t.logo
+    // '' means "remove it" - undefined never survives the trip over IPC, so a
+    // cleared logo would otherwise come back on the next save.
+    if (t.heroImage !== undefined) s.theme.heroImage = t.heroImage || undefined
+    if (t.logo !== undefined) s.theme.logo = t.logo || undefined
     if (typeof t.radius === 'number') s.theme.radius = Math.max(0, Math.min(28, t.radius))
   }
   if (patch.i18n) {
@@ -173,7 +175,7 @@ export function upsertPost(post: Partial<SitePost>, author?: string): SitePost {
     title: (post.title || 'Untitled').slice(0, 160),
     excerpt: (post.excerpt ?? '').slice(0, 400) || undefined,
     body: (post.body || '').slice(0, 40000),
-    cover: post.cover,
+    cover: post.cover || undefined,
     images: Array.isArray(post.images) ? post.images.slice(0, 20) : (existing?.images ?? []),
     author: author ?? post.author ?? existing?.author,
     at: existing?.at ?? post.at ?? Date.now(),

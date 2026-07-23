@@ -21,6 +21,7 @@ import * as schedulerMod from './core/scheduler'
 import * as modsMod from './core/mods'
 import * as rcon from './core/rcon'
 import * as metrics from './core/metrics'
+import { uploadsDir } from './paths'
 import { analyzeCrash } from './core/crash'
 import { CREATABLE_TYPES } from '@shared/versions'
 
@@ -259,6 +260,48 @@ export async function runSmoke(): Promise<void> {
   }
   if (!rendered) return fail('renderer did not mount expected UI; last=' + renderInfo)
   console.log('SMOKE: renderer OK ->', renderInfo)
+
+  // ---- CMS image previews (msms-img://) must work without the web server ----
+  {
+    const png = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+      'base64'
+    )
+    const fixture = join(uploadsDir(), 'smoke-preview.png')
+    writeFileSync(fixture, png)
+    const loadImg = (url: string): Promise<string> =>
+      win.webContents.executeJavaScript(
+        `new Promise(r=>{const i=new Image();i.onload=()=>r('ok:'+i.naturalWidth+'x'+i.naturalHeight);i.onerror=()=>r('error');i.src=${JSON.stringify(url)}})`
+      )
+    const okRes = await loadImg('msms-img://upload/smoke-preview.png')
+    if (okRes !== 'ok:1x1') return fail('upload preview did not load, got ' + okRes)
+
+    // The real complaint: the CMS logo preview rendered blank. Drive the actual
+    // Site view and check the <img> it renders really has pixels.
+    const themeBefore = { ...siteMod.getSiteConfig().theme }
+    siteMod.setSiteConfig({ theme: { ...themeBefore, logo: 'smoke-preview.png' } })
+    await win.webContents.executeJavaScript(`document.querySelector('.sidebar-foot button')?.click()`)
+    await sleep(400)
+    await win.webContents.executeJavaScript(
+      `[...document.querySelectorAll('.tab')].find(t=>/Design|Tasarım/i.test(t.textContent||''))?.click()`
+    )
+    await sleep(400)
+    const shown: string = await win.webContents.executeJavaScript(
+      `(()=>{const i=document.querySelector('img[src^="msms-img:"]');
+       if(!i)return 'no-img';
+       return i.complete&&i.naturalWidth>0?('ok:'+i.naturalWidth):'blank'})()`
+    )
+    siteMod.setSiteConfig({ theme: { ...themeBefore, logo: themeBefore.logo ?? '' } })
+    rmSync(fixture, { force: true })
+    if (!shown.startsWith('ok:')) return fail('CMS logo preview rendered ' + shown)
+    const traversal = await loadImg('msms-img://upload/..%2F..%2Fconfig.json')
+    if (traversal !== 'error') return fail('image protocol escaped the uploads folder')
+    const missing = await loadImg('msms-img://upload/definitely-not-here.png')
+    if (missing !== 'error') return fail('missing image did not fail')
+    console.log(
+      'SMOKE: image previews OK (CMS logo ' + shown + ', traversal + missing blocked)'
+    )
+  }
 
   // Sweep every tab + settings + create to ensure no view crashes on mount.
   const viewCrashed = (): Promise<boolean> =>
@@ -774,6 +817,22 @@ export async function runWebSmoke(): Promise<void> {
     const siteHtml = await (await sget('/')).text()
     if (!siteHtml.includes('navigator.languages')) return fail('site html does not read navigator.languages')
     console.log('WEB-SMOKE: site language auto-detect OK (browser lang, en fallback, saved choice wins)')
+
+    // ---- site logo: setting AND clearing it must both stick ----
+    {
+      const original = { ...siteMod.getSiteConfig().theme }
+      siteMod.setSiteConfig({ theme: { ...original, logo: 'smoke-logo.png' } })
+      if (siteMod.getSiteConfig().theme.logo !== 'smoke-logo.png') return fail('logo not saved')
+      // '' is how the UI asks for removal (undefined does not survive IPC)
+      siteMod.setSiteConfig({ theme: { ...siteMod.getSiteConfig().theme, logo: '' } })
+      if (siteMod.getSiteConfig().theme.logo) return fail('cleared logo came back')
+      sres = await sget('/api/public/site')
+      if (((await sres.json()) as { theme: { logo?: string } }).theme.logo) {
+        return fail('cleared logo still served to the site')
+      }
+      siteMod.setSiteConfig({ theme: original })
+      console.log('WEB-SMOKE: site logo set + clear both persist')
+    }
 
     // ---- telemetry over HTTP (Stage 1): scope-gated, real rows ----
     // Snapshot the server's real history so the synthetic rows never survive.

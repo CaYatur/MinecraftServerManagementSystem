@@ -370,7 +370,6 @@ const tr: typeof en = {
     noPosts: 'Henüz haber yok.',
     saved: 'Kaydedildi',
     none: '— yok —',
-    enableForPreview: 'Görselleri önizlemek için web sitesini (veya paneli) etkinleştirin.',
   },
   store: {
     title: 'Mağaza',

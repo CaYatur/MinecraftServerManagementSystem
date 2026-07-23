@@ -44,7 +44,9 @@ export function SiteView(): JSX.Element {
 
   const siteBase = (): string =>
     web?.site.urls?.[0] ?? web?.panel.urls?.[0] ?? `http://127.0.0.1:${web?.site.port ?? 8723}`
-  const imgUrl = (name: string): string => `${siteBase()}/uploads/${encodeURIComponent(name)}`
+  // Read straight from disk through the app's own scheme: previews must work
+  // whether or not the website listener is running.
+  const imgUrl = (name: string): string => `msms-img://upload/${encodeURIComponent(name)}`
   const patch = (p: Partial<SiteConfig>): void => setCfg({ ...cfg, ...p })
   const patchTheme = (p: Partial<SiteConfig['theme']>): void =>
     setCfg({ ...cfg, theme: { ...cfg.theme, ...p } })
@@ -160,7 +162,7 @@ export function SiteView(): JSX.Element {
                 <ImageIcon size={13} /> {t('site.pickImage')}
               </button>
               {cfg.theme.logo && (
-                <button className="btn ghost sm" onClick={() => patchTheme({ logo: undefined })}><X size={13} /></button>
+                <button className="btn ghost sm" onClick={() => patchTheme({ logo: '' })}><X size={13} /></button>
               )}
             </div>
           </div>
@@ -204,7 +206,7 @@ export function SiteView(): JSX.Element {
                 <button className="btn sm" onClick={async () => { const n = await pick(); if (n) patchTheme({ heroImage: n }) }}>
                   <ImageIcon size={13} /> {t('site.pickImage')}
                 </button>
-                {cfg.theme.heroImage && <button className="btn ghost sm" onClick={() => patchTheme({ heroImage: undefined })}><X size={13} /></button>}
+                {cfg.theme.heroImage && <button className="btn ghost sm" onClick={() => patchTheme({ heroImage: '' })}><X size={13} /></button>}
               </div>
             </div>
           )}
@@ -356,7 +358,7 @@ export function SiteView(): JSX.Element {
                   <button className="btn sm" onClick={async () => { const n = await pick(); if (n) setPost({ ...post, cover: n }) }}>
                     <ImageIcon size={13} /> {t('site.pickImage')}
                   </button>
-                  {post.cover && <button className="btn ghost sm" onClick={() => setPost({ ...post, cover: undefined })}><X size={13} /></button>}
+                  {post.cover && <button className="btn ghost sm" onClick={() => setPost({ ...post, cover: '' })}><X size={13} /></button>}
                 </div>
               </div>
               <div className="field">
@@ -376,9 +378,6 @@ export function SiteView(): JSX.Element {
                   </button>
                 </div>
               </div>
-              {!(web?.site.running || web?.panel.running) && (
-                <p className="hint">{t('site.enableForPreview')}</p>
-              )}
             </div>
             <div className="modal-actions">
               <button className="btn" onClick={() => setPost(null)}>{t('common.cancel')}</button>

@@ -11,7 +11,11 @@ import { initMetrics, flushAll as flushMetrics } from './core/metrics'
 import { resolveBaseDir } from './paths'
 import { log } from './logger'
 import { runSmoke, runWizardSmoke, runRealSmoke, runWebSmoke, runMetricsSmoke } from './smoke'
+import { registerImageScheme, handleImageProtocol, IMG_SCHEME } from './imgProtocol'
 import { SPLASH_HTML } from './splashHtml'
+
+// Has to happen before the app is ready.
+registerImageScheme()
 
 let mainWindow: BrowserWindow | null = null
 let splash: BrowserWindow | null = null
@@ -103,6 +107,7 @@ if (!gotLock) {
     Menu.setApplicationMenu(null)
     loadConfig()
     log.info(`MSMS starting. Base dir: ${resolveBaseDir()}`)
+    handleImageProtocol()
     registerIpc()
 
     // Strict CSP for the packaged (file://) renderer. Skipped in dev so Vite's
@@ -114,7 +119,7 @@ if (!gotLock) {
             ...details.responseHeaders,
             'Content-Security-Policy': [
               "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
-                "img-src 'self' data: https:; connect-src 'self' https:; font-src 'self' data:"
+                `img-src 'self' data: https: ${IMG_SCHEME}:; connect-src 'self' https:; font-src 'self' data:`
             ]
           }
         })

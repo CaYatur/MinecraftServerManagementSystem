@@ -367,7 +367,6 @@ export default {
     noPosts: 'No posts yet.',
     saved: 'Saved',
     none: '— none —',
-    enableForPreview: 'Enable the website (or panel) to preview images.',
   },
   store: {
     title: 'Store',
