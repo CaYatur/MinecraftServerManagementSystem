@@ -22,6 +22,8 @@ import * as modsMod from './core/mods'
 import * as rcon from './core/rcon'
 import * as metrics from './core/metrics'
 import * as eventsMod from './core/events'
+import { computeUptime, clipSessions } from '@shared/uptime'
+import type { ServerEvent } from '@shared/types'
 import { uploadsDir } from './paths'
 import { analyzeCrash } from './core/crash'
 import { CREATABLE_TYPES } from '@shared/versions'
@@ -124,6 +126,82 @@ export async function runEventsSmoke(): Promise<void> {
     if (after.total > eventsMod.MAX_EVENTS) return fail('cap exceeded: ' + after.total)
     if (after.events[0].type !== 'player.leave') return fail('cap dropped the newest events')
     console.log(`EVENTS-SMOKE: retention OK (age + ${eventsMod.MAX_EVENTS} cap, newest kept)`)
+
+    // --- uptime pairing: the four cases that make this hard ---
+    {
+      const H = 3600_000
+      const T = 1_700_000_000_000 // fixed base, no clock dependency
+      let seq = 0
+      const ev = (type: ServerEvent['type'], ts: number): ServerEvent => ({
+        id: 'u' + seq++,
+        serverId: 'u',
+        ts,
+        type,
+        severity: 'info'
+      })
+      const near = (a: number, b: number): boolean => Math.abs(a - b) < 1000
+
+      // plain run inside the window
+      let r = computeUptime(
+        [ev('server.starting', T), ev('server.ready', T + 60_000), ev('server.stopped', T + H)],
+        T - H,
+        T + 2 * H,
+        T + 2 * H
+      )
+      if (!near(r.upMs, H - 60_000)) return fail('plain session uptime ' + r.upMs)
+      if (r.windowFrom !== T) return fail('window should start when the server was first seen')
+      if (r.crashes !== 0 || r.starts !== 1) return fail('plain session counters')
+
+      // crashed before it ever became ready -> no uptime, but a crash
+      r = computeUptime([ev('server.starting', T), ev('server.crashed', T + 5000)], T, T + H, T + H)
+      if (r.upMs !== 0) return fail('failed start counted as uptime: ' + r.upMs)
+      if (r.crashes !== 1 || r.starts !== 0) return fail('failed start counters')
+
+      // still running: counted up to "now", flagged as up
+      r = computeUptime([ev('server.ready', T)], T, T + 2 * H, T + H)
+      if (!near(r.upMs, H)) return fail('open session uptime ' + r.upMs)
+      if (!r.currentlyUp) return fail('open session not marked running')
+
+      // started before the window, stopped inside it -> clipped at the start
+      r = computeUptime([ev('server.ready', T - 5 * H), ev('server.stopped', T + H)], T, T + 2 * H, T + 2 * H)
+      if (!near(r.upMs, H)) return fail('session straddling the start: ' + r.upMs)
+
+      // started inside, ended after the window -> clipped at the end
+      r = computeUptime([ev('server.ready', T + H), ev('server.stopped', T + 9 * H)], T, T + 2 * H, T + 2 * H)
+      if (!near(r.upMs, H)) return fail('session straddling the end: ' + r.upMs)
+
+      // MSMS closed mid-run: the next launch implicitly ends the open session
+      r = computeUptime(
+        [ev('server.ready', T), ev('server.starting', T + H), ev('server.ready', T + H + 60_000)],
+        T,
+        T + 2 * H,
+        T + 2 * H
+      )
+      if (!near(r.upMs, 2 * H - 60_000)) return fail('reopened session uptime ' + r.upMs)
+      if (r.sessions.length !== 2) return fail('expected two sessions, got ' + r.sessions.length)
+
+      // ...and that upper bound gets tightened by the metrics we did record:
+      // the machine died 10 minutes in, MSMS only relaunched 5 hours later.
+      const orphan = computeUptime(
+        [ev('server.ready', T), ev('server.starting', T + 5 * H), ev('server.ready', T + 5 * H + 1000)],
+        T,
+        T + 6 * H,
+        T + 6 * H
+      )
+      if (!near(orphan.upMs, 6 * H - 1000)) return fail('unclipped orphan should span to relaunch')
+      if (orphan.sessions[0].endedBy !== 'start') return fail('orphan session not marked')
+      const clipped = clipSessions(orphan, (s) => (s.endedBy === 'start' ? s.from + 10 * 60_000 : null))
+      if (clipped.upMs !== 10 * 60_000 + H - 1000) return fail('clipped uptime ' + clipped.upMs)
+      if (clipped.ratio == null || clipped.ratio > 0.2) return fail('clipped ratio ' + clipped.ratio)
+
+      // nothing recorded at all -> no ratio rather than a fake 0%
+      if (computeUptime([], T, T + H, T + H).ratio !== null) return fail('empty history should have no ratio')
+
+      // a fully up window is 100%, not more
+      r = computeUptime([ev('server.ready', T - H), ev('server.stopped', T + 3 * H)], T, T + 2 * H, T + 2 * H)
+      if (r.ratio == null || Math.abs(r.ratio - 1) > 0.001) return fail('full window ratio ' + r.ratio)
+      console.log('EVENTS-SMOKE: uptime pairing OK (clipping, open runs, failed starts, reopen, empty)')
+    }
 
     // --- cleanup ---
     eventsMod.dropServer(SID)
@@ -633,6 +711,27 @@ export async function runSmoke(): Promise<void> {
       return fail('timeline text not translated: ' + tl.first)
     }
     console.log(`SMOKE: timeline view OK (${tl.rows} rows, "${tl.first}", ${tl.sev.join('/')})`)
+
+    // History view: charts must actually draw the run we just recorded.
+    await win.webContents.executeJavaScript(
+      `[...document.querySelectorAll('.tab')].find(t=>/History|Geçmiş/i.test(t.textContent||''))?.click()`
+    )
+    await sleep(900)
+    const hv = JSON.parse(
+      await win.webContents.executeJavaScript(
+        `(()=>{const charts=[...document.querySelectorAll('.chart')];
+         const paths=[...document.querySelectorAll('.chart svg path')].map(p=>p.getAttribute('d')||'');
+         const drawn=paths.filter(d=>/^M [\\d.]+ [\\d.]+/.test(d)).length;
+         const up=document.querySelector('.uptime-bar');
+         const pct=(up?.parentElement?.querySelector('b')?.textContent)||'';
+         return JSON.stringify({charts:charts.length,drawn,pct,
+           bar:up?.querySelector('span')?.style.width||''})})()`
+      )
+    ) as { charts: number; drawn: number; pct: string; bar: string }
+    if (hv.charts !== 4) return fail('history view rendered ' + hv.charts + ' charts')
+    if (hv.drawn < 1) return fail('no chart path was drawn')
+    if (!/%/.test(hv.pct)) return fail('uptime not computed in the UI: ' + hv.pct)
+    console.log(`SMOKE: history view OK (${hv.charts} charts, ${hv.drawn} paths, uptime ${hv.pct}, bar ${hv.bar})`)
   }
 
   // --- 5. mods / backups / scheduler / crash (server now stopped) ---
@@ -1003,6 +1102,10 @@ export async function runWebSmoke(): Promise<void> {
         if (filtered.events.length !== 1 || filtered.events[0].type !== 'player.join') {
           return fail('events type filter ignored over HTTP')
         }
+        r = await get(`/api/servers/${id}/uptime?from=${enow - 3600_000}&to=${enow}`, ft)
+        if (r.status !== 200) return fail('uptime with view expected 200, got ' + r.status)
+        const rep = (await r.json()) as { ratio: number | null; sessions: unknown[]; starts: number }
+        if (rep.ratio == null || rep.starts !== 1) return fail('uptime endpoint: ' + JSON.stringify(rep))
         r = await get(`/api/servers/${id}/events`)
         if (r.status !== 401) return fail('events without token expected 401, got ' + r.status)
         r = await sget(`/api/servers/${id}/events`, ot)

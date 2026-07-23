@@ -369,6 +369,14 @@ async function handlePanel(req: IncomingMessage, res: ServerResponse): Promise<v
         })
       })
     }
+    // Uptime over a window, derived from the timeline: ?from&to
+    if (sub === 'uptime' && method === 'GET') {
+      if (!gate('view')) return
+      const now = Date.now()
+      const from = Number(url.searchParams.get('from')) || now - 86400_000
+      const to = Number(url.searchParams.get('to')) || now
+      return sendJson(res, 200, events.uptime(id, from, to, now))
+    }
     // Performance history: ?from&to (ms epoch) &res=10s|1m|1h &limit=
     if (sub === 'metrics' && method === 'GET') {
       if (!gate('view')) return

@@ -30,6 +30,7 @@ import type {
   EventQuery,
   ServerEvent
 } from './types'
+import type { UptimeReport } from './uptime'
 import type { McVersion, BuildInfo, CreateServerOptions, CreateProgress } from './versions'
 import type { ModEntry, ModrinthHit } from './mods'
 import type {
@@ -125,6 +126,7 @@ export const IPC = {
   crashAnalyze: 'crash:analyze',
 
   eventsQuery: 'events:query',
+  eventsUptime: 'events:uptime',
 
   metricsQuery: 'metrics:query',
   metricsConfigGet: 'metrics:config-get',
@@ -280,6 +282,7 @@ export interface MsmsApi {
   analyzeCrash(id: string): Promise<CrashReport>
 
   queryEvents(id: string, q?: EventQuery): Promise<EventPage>
+  getUptime(id: string, from: number, to: number): Promise<UptimeReport>
 
   queryMetrics(
     id: string,

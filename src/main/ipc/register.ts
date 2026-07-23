@@ -255,6 +255,7 @@ export function registerIpc(): void {
 
   // --- timeline events ---
   H(IPC.eventsQuery, (_e, id: string, q?: events.EventQuery) => events.query(id, q))
+  H(IPC.eventsUptime, (_e, id: string, from: number, to: number) => events.uptime(id, from, to))
 
   // --- telemetry history ---
   H(IPC.metricsQuery, (_e, id: string, opts: metrics.QueryOptions) => metrics.query(id, opts))

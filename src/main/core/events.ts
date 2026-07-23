@@ -26,9 +26,11 @@ import { join } from 'node:path'
 import { eventsDir } from '../paths'
 import { getConfig } from '../config'
 import { log } from '../logger'
+import { computeUptime, clipSessions, type UptimeReport } from '@shared/uptime'
+import * as metrics from './metrics'
 import type { EventPage, EventQuery, EventSeverity, ServerEvent, ServerEventType } from '@shared/types'
 
-export type { EventPage, EventQuery, ServerEvent, ServerEventType }
+export type { EventPage, EventQuery, ServerEvent, ServerEventType, UptimeReport }
 
 /** Kept per server. Old rows go once either limit is passed. */
 export const MAX_EVENTS = 4000
@@ -152,6 +154,39 @@ export function query(serverId: string, q: EventQuery = {}): EventPage {
     total: matched.length,
     counts
   }
+}
+
+/** Lifecycle events reach back before the window so an open run is seen. */
+const UPTIME_LOOKBACK_MS = 30 * 86400_000
+const LIFECYCLE: ServerEventType[] = [
+  'server.starting',
+  'server.ready',
+  'server.stopped',
+  'server.crashed',
+  'server.error'
+]
+
+export function uptime(
+  serverId: string,
+  from: number,
+  to: number,
+  now: number = Date.now()
+): UptimeReport {
+  const page = query(serverId, {
+    from: from - UPTIME_LOOKBACK_MS,
+    to,
+    types: LIFECYCLE,
+    limit: 2000
+  })
+  const report = computeUptime(page.events, from, to, now)
+  // A run with no recorded stop (power cut, MSMS killed) would otherwise count
+  // as up until the next launch. Metrics are sampled every few seconds while
+  // the process lives, so the last sample is a far better estimate.
+  return clipSessions(report, (s) => {
+    const series = metrics.query(serverId, { from: s.from, to: s.to, resolution: '10s', limit: 5000 })
+    const last = series.points[series.points.length - 1]
+    return last ? last.ts + metrics.BUCKET_MS['10s'] : null
+  })
 }
 
 /** Drop events past the age/count limits. Returns how many were removed. */

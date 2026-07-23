@@ -23,6 +23,7 @@ export type ViewId =
   | 'plugins'
   | 'backups'
   | 'scheduler'
+  | 'history'
   | 'timeline'
   | 'crash'
   | 'store'

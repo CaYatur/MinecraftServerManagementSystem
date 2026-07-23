@@ -1124,6 +1124,74 @@ textarea.input:focus {
 }
 
 /* ---------- Mods / backups / scheduler rows ---------- */
+/* ---- charts ---- */
+.chart {
+  width: 100%;
+  cursor: crosshair;
+}
+.chart-grid {
+  stroke: var(--border);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+.chart-axis {
+  fill: var(--text-dim);
+  font-size: 10px;
+  font-family: var(--mono);
+}
+.chart-cursor {
+  stroke: var(--text-dim);
+  stroke-width: 1;
+  stroke-dasharray: 2 3;
+  vector-effect: non-scaling-stroke;
+}
+.chart-tip {
+  position: absolute;
+  top: 4px;
+  transform: translateX(-50%);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 3px 8px;
+  font-size: 11.5px;
+  display: flex;
+  gap: 7px;
+  align-items: baseline;
+  pointer-events: none;
+  white-space: nowrap;
+}
+.chart-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 2px;
+}
+.chart-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.chart-sub {
+  font-size: 11.5px;
+  font-family: var(--mono);
+  color: var(--text-dim);
+}
+.uptime-bar {
+  position: relative;
+  height: 8px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--danger) 35%, transparent);
+  overflow: hidden;
+}
+.uptime-bar span {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--online);
+}
+
 /* ---- timeline ---- */
 .tl-day {
   padding: 9px 14px 5px;
