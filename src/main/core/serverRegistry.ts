@@ -4,6 +4,7 @@ import { basename, join, resolve } from 'node:path'
 import { getConfig, updateConfig } from '../config'
 import { resolveBaseDir, dataDir } from '../paths'
 import { detectServer } from './serverDetect'
+import * as metrics from './metrics'
 import { log } from '../logger'
 import { PROXY_TYPES } from '@shared/types'
 import type { ServerConfig, ServerType, JavaArgsConfig } from '@shared/types'
@@ -115,6 +116,7 @@ export function removeServer(id: string, deleteFiles: boolean): void {
     cfg.servers = cfg.servers.filter((s) => s.id !== id)
     if (cfg.activeServerId === id) cfg.activeServerId = cfg.servers[0]?.id
   })
+  metrics.dropServer(id)
   if (deleteFiles && target && existsSync(target.path)) {
     try {
       rmSync(target.path, { recursive: true, force: true })

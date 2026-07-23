@@ -86,6 +86,10 @@ const api: MsmsApi = {
 
   analyzeCrash: (id) => ipcRenderer.invoke(IPC.crashAnalyze, id),
 
+  queryMetrics: (id, opts) => ipcRenderer.invoke(IPC.metricsQuery, id, opts),
+  getTelemetryConfig: () => ipcRenderer.invoke(IPC.metricsConfigGet),
+  setTelemetryConfig: (patch) => ipcRenderer.invoke(IPC.metricsConfigSet, patch),
+
   getWebStatus: () => ipcRenderer.invoke(IPC.webStatus),
   setWebConfig: (cfg) => ipcRenderer.invoke(IPC.webSetConfig, cfg),
   listWebUsers: () => ipcRenderer.invoke(IPC.webUsers),

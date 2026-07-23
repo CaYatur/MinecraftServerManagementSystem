@@ -7,9 +7,10 @@ import { processManager } from './core/processManager'
 import { initScheduler, stopAllJobs } from './core/scheduler'
 import { initWebServer, stopWebServer } from './web/server'
 import { initEconomy } from './store/economy'
+import { initMetrics, flushAll as flushMetrics } from './core/metrics'
 import { resolveBaseDir } from './paths'
 import { log } from './logger'
-import { runSmoke, runWizardSmoke, runRealSmoke, runWebSmoke } from './smoke'
+import { runSmoke, runWizardSmoke, runRealSmoke, runWebSmoke, runMetricsSmoke } from './smoke'
 import { SPLASH_HTML } from './splashHtml'
 
 let mainWindow: BrowserWindow | null = null
@@ -144,6 +145,14 @@ if (!gotLock) {
       })
       return
     }
+    if (process.env['MSMS_SMOKE_METRICS']) {
+      runMetricsSmoke().catch((e) => {
+        // eslint-disable-next-line no-console
+        console.log('METRICS-SMOKE: FAIL - exception', String(e))
+        app.exit(1)
+      })
+      return
+    }
     if (process.env['MSMS_SMOKE_WEB']) {
       runWebSmoke().catch((e) => {
         // eslint-disable-next-line no-console
@@ -155,6 +164,7 @@ if (!gotLock) {
 
     createSplash()
     initEconomy()
+    initMetrics()
     initScheduler()
     initWebServer()
     createWindow()
@@ -177,6 +187,7 @@ if (!gotLock) {
       stopAllJobs()
       stopWebServer()
       await processManager.stopAll()
+      flushMetrics()
     } catch (err) {
       log.error('Error during shutdown:', err)
     } finally {

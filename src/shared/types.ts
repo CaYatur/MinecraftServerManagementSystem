@@ -128,6 +128,65 @@ export interface AppConfig {
   baseDir?: string
   /** User overrides for server-facing broadcast/kick messages (key -> text). */
   serverMessages?: Record<string, string>
+  /** Metric history collection + retention. */
+  telemetry?: TelemetryConfig
+}
+
+/** How much performance history is kept, per resolution tier. */
+export interface TelemetryConfig {
+  enabled: boolean
+  /** Raw 10-second rows, in hours. */
+  rawHours: number
+  /** One-minute rows, in days. */
+  minuteDays: number
+  /** One-hour rows, in days. */
+  hourDays: number
+}
+
+// ---- telemetry / metric history ----
+export type MetricResolution = '10s' | '1m' | '1h'
+
+/**
+ * One stored row: every raw reading inside a bucket, aggregated.
+ * `rss` is the server process' resident memory (MB) - not the JVM heap.
+ */
+export interface MetricPoint {
+  ts: number
+  /** How many raw readings this row aggregates. */
+  n: number
+  tps: number | null
+  tpsMin: number | null
+  cpu: number
+  cpuMax: number
+  rss: number
+  rssMax: number
+  players: number
+  playersMax: number
+}
+
+export interface MetricSummary {
+  points: number
+  from: number
+  to: number
+  tpsAvg: number | null
+  tpsMin: number | null
+  cpuAvg: number
+  cpuMax: number
+  rssAvg: number
+  rssMax: number
+  playersAvg: number
+  playersMax: number
+  /** Total raw readings behind the returned rows. */
+  samples: number
+}
+
+export interface MetricSeries {
+  serverId: string
+  resolution: MetricResolution
+  from: number
+  to: number
+  points: MetricPoint[]
+  summary: MetricSummary
 }
 
 export interface ServerMessages {

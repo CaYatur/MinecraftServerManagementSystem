@@ -20,6 +20,7 @@ function defaultConfig(): AppConfig {
       autoEnableRcon: true
     },
     web: { enabled: false, port: 8722, bindLan: false, siteEnabled: false, sitePort: 8723 },
+    telemetry: { enabled: true, rawHours: 24, minuteDays: 14, hourDays: 365 },
     baseDir: resolveBaseDir()
   }
 }
@@ -35,6 +36,7 @@ function migrate(raw: Partial<AppConfig>): AppConfig {
     version: CONFIG_VERSION,
     defaults: { ...base.defaults, ...(raw.defaults ?? {}) },
     web: { ...base.web!, ...(raw.web ?? {}) },
+    telemetry: { ...base.telemetry!, ...(raw.telemetry ?? {}) },
     servers: Array.isArray(raw.servers) ? raw.servers : [],
     baseDir: resolveBaseDir()
   }

@@ -50,3 +50,4 @@ export const uploadsDir = (): string => ensure(join(dataDir(), 'site', 'uploads'
 export const logsDir = (): string => ensure(join(dataDir(), 'logs'))
 export const cacheDir = (): string => ensure(join(dataDir(), 'cache'))
 export const backupsDir = (): string => ensure(join(dataDir(), 'backups'))
+export const metricsDir = (): string => ensure(join(dataDir(), 'metrics'))

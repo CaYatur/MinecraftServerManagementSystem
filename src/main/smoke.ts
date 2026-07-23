@@ -1,5 +1,5 @@
 import { app, BrowserWindow } from 'electron'
-import { existsSync, writeFileSync, mkdirSync, rmSync } from 'node:fs'
+import { existsSync, writeFileSync, readFileSync, mkdirSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import * as nbt from 'prismarine-nbt'
 import { processManager } from './core/processManager'
@@ -20,6 +20,7 @@ import * as backupsMod from './core/backups'
 import * as schedulerMod from './core/scheduler'
 import * as modsMod from './core/mods'
 import * as rcon from './core/rcon'
+import * as metrics from './core/metrics'
 import { analyzeCrash } from './core/crash'
 import { CREATABLE_TYPES } from '@shared/versions'
 
@@ -40,6 +41,152 @@ function waitFor(pred: () => boolean, ms: number): Promise<boolean> {
       }
     }, 100)
   })
+}
+
+/**
+ * Telemetry store verification (Stage 1). Replays three hours of readings with
+ * synthetic timestamps, then checks the rows, the aggregates, range queries,
+ * resolution picking, persistence across a buffer reset, and retention.
+ */
+export async function runMetricsSmoke(): Promise<void> {
+  const fail = (m: string): void => {
+    console.log('METRICS-SMOKE: FAIL -', m)
+    app.exit(1)
+  }
+  const SID = 'smoke-metrics-server'
+  const dir = join(metrics.metricsDirFor(SID))
+  const wipe = (): void => rmSync(dir, { recursive: true, force: true })
+  const near = (a: number, b: number, tol: number): boolean => Math.abs(a - b) <= tol
+
+  try {
+    wipe()
+    metrics._resetBuffers()
+    const saved = getConfig().telemetry
+    updateConfig((c) => {
+      c.telemetry = { enabled: true, rawHours: 24, minuteDays: 14, hourDays: 365 }
+    })
+
+    // 3 hours of readings every 2s, hour-aligned so bucket counts are exact.
+    const HOUR = 3600_000
+    const t0 = Math.floor(Date.now() / HOUR) * HOUR - 3 * HOUR
+    const SAMPLES = (3 * HOUR) / 2000 // 5400
+    const spikeAt = t0 + HOUR + 30_000 // one CPU spike + TPS dip
+    for (let i = 0; i < SAMPLES; i++) {
+      const ts = t0 + i * 2000
+      const spike = ts === spikeAt
+      metrics.record(
+        SID,
+        { tps: spike ? 5 : 20, cpu: spike ? 90 : 10, rssMB: 2048, players: spike ? 7 : 3 },
+        ts
+      )
+    }
+    metrics.flushServer(SID) // closes the still-open buckets, incl. the last hour
+
+    // --- row counts per tier (independent aggregation, not cascaded) ---
+    const all = { from: t0 - HOUR, to: t0 + 4 * HOUR }
+    const raw = metrics.query(SID, { ...all, resolution: '10s', limit: 99999 })
+    const min = metrics.query(SID, { ...all, resolution: '1m', limit: 99999 })
+    const hour = metrics.query(SID, { ...all, resolution: '1h', limit: 99999 })
+    if (raw.points.length !== 1080) return fail('10s rows expected 1080, got ' + raw.points.length)
+    if (min.points.length !== 180) return fail('1m rows expected 180, got ' + min.points.length)
+    if (hour.points.length !== 3) return fail('1h rows expected 3, got ' + hour.points.length)
+    if (raw.points.some((p) => p.n !== 5)) return fail('a 10s row does not hold 5 samples')
+    if (min.points.some((p) => p.n !== 30)) return fail('a 1m row does not hold 30 samples')
+    if (hour.points.some((p) => p.n !== 1800)) return fail('a 1h row does not hold 1800 samples')
+
+    // --- aggregates: the spike must survive downsampling at every tier ---
+    for (const s of [raw, min, hour]) {
+      if (s.summary.cpuMax !== 90) return fail(`${s.resolution}: cpuMax lost (${s.summary.cpuMax})`)
+      if (s.summary.tpsMin !== 5) return fail(`${s.resolution}: tpsMin lost (${s.summary.tpsMin})`)
+      if (s.summary.playersMax !== 7) return fail(`${s.resolution}: playersMax lost`)
+      if (!near(s.summary.cpuAvg, 10, 0.1)) return fail(`${s.resolution}: cpuAvg ${s.summary.cpuAvg}`)
+      if (!near(s.summary.tpsAvg ?? 0, 20, 0.1)) return fail(`${s.resolution}: tpsAvg`)
+      if (s.summary.rssAvg !== 2048) return fail(`${s.resolution}: rssAvg ${s.summary.rssAvg}`)
+      if (s.summary.samples !== SAMPLES) return fail(`${s.resolution}: samples ${s.summary.samples}`)
+    }
+    console.log('METRICS-SMOKE: 3h replay OK (1080/180/3 rows, spike + dip preserved at every tier)')
+
+    // --- range queries + automatic resolution ---
+    const win = metrics.query(SID, { from: t0 + HOUR, to: t0 + 2 * HOUR - 1, resolution: '10s', limit: 99999 })
+    if (win.points.length !== 360) return fail('1h window expected 360 rows, got ' + win.points.length)
+    if (win.points.some((p) => p.ts < t0 + HOUR || p.ts >= t0 + 2 * HOUR)) {
+      return fail('range query leaked rows outside the window')
+    }
+    if (win.summary.cpuMax !== 90) return fail('window missed the spike it contains')
+    const before = metrics.query(SID, { from: t0 - HOUR, to: t0 - 1, resolution: '10s' })
+    if (before.points.length !== 0) return fail('empty range returned rows')
+    if (metrics.autoResolution(t0, t0 + 3 * HOUR) !== '10s') return fail('auto res for 3h')
+    if (metrics.autoResolution(t0, t0 + 10 * 86400_000) !== '1m') return fail('auto res for 10d')
+    if (metrics.autoResolution(t0, t0 + 400 * 86400_000) !== '1h') return fail('auto res for 400d')
+    const auto = metrics.query(SID, { from: t0, to: t0 + 3 * HOUR, limit: 99999 })
+    if (auto.resolution !== '10s') return fail('query did not pick a resolution automatically')
+    const capped = metrics.query(SID, { ...all, resolution: '10s', limit: 50 })
+    if (capped.points.length !== 50) return fail('limit ignored, got ' + capped.points.length)
+    if (capped.points[capped.points.length - 1].ts !== raw.points[raw.points.length - 1].ts) {
+      return fail('limit did not keep the newest rows')
+    }
+    console.log('METRICS-SMOKE: range + auto-resolution + limit OK')
+
+    // --- persistence: everything above must survive losing the in-memory buffers ---
+    metrics._resetBuffers()
+    const reread = metrics.query(SID, { ...all, resolution: '10s', limit: 99999 })
+    if (reread.points.length !== 1080) return fail('rows lost after buffer reset')
+
+    // --- retention: pruning one tier must not touch the others ---
+    updateConfig((c) => {
+      c.telemetry = { enabled: true, rawHours: 1, minuteDays: 14, hourDays: 365 }
+    })
+    const removed = metrics.prune(SID, t0 + 3 * HOUR)
+    if (removed !== 720) return fail('expected 720 expired 10s rows, pruned ' + removed)
+    const afterRaw = metrics.query(SID, { ...all, resolution: '10s', limit: 99999 })
+    const afterMin = metrics.query(SID, { ...all, resolution: '1m', limit: 99999 })
+    const afterHour = metrics.query(SID, { ...all, resolution: '1h', limit: 99999 })
+    if (afterRaw.points.length !== 360) return fail('after prune 10s rows ' + afterRaw.points.length)
+    if (afterRaw.points[0].ts !== t0 + 2 * HOUR) return fail('prune kept the wrong rows')
+    if (afterMin.points.length !== 180) return fail('pruning 10s damaged the 1m tier')
+    if (afterHour.points.length !== 3) return fail('pruning 10s damaged the 1h tier')
+    console.log('METRICS-SMOKE: retention OK (720 raw rows expired, 1m/1h untouched)')
+
+    // --- disabled telemetry records nothing ---
+    updateConfig((c) => {
+      c.telemetry = { enabled: false, rawHours: 24, minuteDays: 14, hourDays: 365 }
+    })
+    metrics.record(SID, { tps: 20, cpu: 1, rssMB: 1, players: 0 }, t0 + 3 * HOUR)
+    metrics.flushServer(SID)
+    if (metrics.query(SID, { ...all, resolution: '10s', limit: 99999 }).points.length !== 360) {
+      return fail('telemetry wrote a row while disabled')
+    }
+    console.log('METRICS-SMOKE: disabled switch honoured')
+
+    updateConfig((c) => {
+      c.telemetry = saved
+    })
+
+    // --- cleanup: removing a server takes its history with it ---
+    if (!existsSync(join(dir, '10s.csv'))) return fail('series file vanished early')
+    metrics.dropServer(SID)
+    if (existsSync(join(dir, '10s.csv'))) return fail('dropServer left the series behind')
+
+    // --- orphaned folders (server deleted while MSMS was closed) ---
+    const ORPHAN = 'smoke-orphan-server'
+    metrics.record(ORPHAN, { tps: 20, cpu: 1, rssMB: 10, players: 0 }, t0)
+    metrics.flushServer(ORPHAN)
+    const orphanFile = join(metrics.metricsDirFor(ORPHAN), '10s.csv')
+    if (!existsSync(orphanFile)) return fail('orphan fixture not written')
+    if (metrics.pruneOrphans() < 1) return fail('pruneOrphans found nothing')
+    if (existsSync(orphanFile)) return fail('orphan folder survived cleanup')
+    for (const s of getConfig().servers) {
+      if (!existsSync(metrics.metricsDirFor(s.id))) return fail('cleanup removed a live server')
+    }
+    console.log('METRICS-SMOKE: cleanup OK (history dropped with the server, orphans swept)')
+
+    wipe()
+    console.log('METRICS-SMOKE: PASS')
+    app.exit(0)
+  } catch (e) {
+    wipe()
+    fail('exception ' + String(e))
+  }
 }
 
 /**
@@ -627,6 +774,59 @@ export async function runWebSmoke(): Promise<void> {
     const siteHtml = await (await sget('/')).text()
     if (!siteHtml.includes('navigator.languages')) return fail('site html does not read navigator.languages')
     console.log('WEB-SMOKE: site language auto-detect OK (browser lang, en fallback, saved choice wins)')
+
+    // ---- telemetry over HTTP (Stage 1): scope-gated, real rows ----
+    // Snapshot the server's real history so the synthetic rows never survive.
+    const mdir = metrics.metricsDirFor(id)
+    const snapshot = new Map<string, string | null>()
+    for (const mres of metrics.RESOLUTIONS) {
+      const f = join(mdir, `${mres}.csv`)
+      snapshot.set(f, existsSync(f) ? readFileSync(f, 'utf-8') : null)
+      rmSync(f, { force: true }) // start clean so the assertions below are exact
+    }
+    try {
+      const mnow = Date.now()
+      metrics._resetBuffers()
+      for (let i = 0; i < 60; i++) {
+        metrics.record(id, { tps: 19.5, cpu: 12, rssMB: 1500, players: 2 }, mnow - (60 - i) * 2000)
+      }
+      metrics.flushServer(id)
+
+      const range = `from=${mnow - 3600_000}&to=${mnow}`
+      r = await get(`/api/servers/${id}/metrics?${range}`, ft) // friend has 'view'
+      if (r.status !== 200) return fail('metrics with view expected 200, got ' + r.status)
+      const series = (await r.json()) as {
+        resolution: string
+        points: { ts: number; cpu: number }[]
+        summary: { cpuAvg: number; samples: number }
+      }
+      if (series.resolution !== '10s') return fail('metrics resolution ' + series.resolution)
+      if (series.points.length < 10) return fail('metrics returned ' + series.points.length + ' rows')
+      if (series.summary.cpuAvg !== 12) return fail('metrics cpuAvg ' + series.summary.cpuAvg)
+      r = await get(`/api/servers/${id}/metrics?${range}&res=1h`, ft)
+      if (((await r.json()) as { resolution: string }).resolution !== '1h') {
+        return fail('explicit resolution ignored')
+      }
+      // a user with no scopes on this server must be refused
+      const nosee = webAuth.createUser('nosee_t', 'noseepass', 'user', {})
+      r = await post('/api/login', { username: 'nosee_t', password: 'noseepass' })
+      const nt = ((await r.json()) as { token: string }).token
+      r = await get(`/api/servers/${id}/metrics?${range}`, nt)
+      if (r.status !== 403) return fail('metrics without view expected 403, got ' + r.status)
+      r = await get(`/api/servers/${id}/metrics?${range}`)
+      if (r.status !== 401) return fail('metrics without token expected 401, got ' + r.status)
+      // and it must not exist on the public website listener
+      r = await sget(`/api/servers/${id}/metrics?${range}`, ot)
+      if (r.status !== 404) return fail('metrics leaked onto the site listener: ' + r.status)
+      webAuth.deleteUser(nosee.id)
+      console.log('WEB-SMOKE: metrics endpoint OK (view-gated, 401/403/404, resolutions honoured)')
+    } finally {
+      metrics._resetBuffers()
+      for (const [f, content] of snapshot) {
+        if (content == null) rmSync(f, { force: true })
+        else writeFileSync(f, content, 'utf-8')
+      }
+    }
 
     // ---- site: publishing news FROM THE PANEL with author attribution (A6) ----
     // a user without 'settings' on the store server must be refused

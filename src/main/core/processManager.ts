@@ -10,6 +10,7 @@ import { readProperties } from './serverFiles'
 import { detectJava, javaExecutable } from './java'
 import { buildLaunchArgs } from './javaArgs'
 import * as rcon from './rcon'
+import * as metrics from './metrics'
 import { mt } from '../i18n'
 import { log } from '../logger'
 import { TPS_TYPES } from '@shared/types'
@@ -77,14 +78,24 @@ export class ProcessManager extends EventEmitter {
       mp.tps = rcon.getTps(mp.id) ?? mp.tps
       try {
         const u = await pidusage(pid)
+        // pidusage reports % of a single core; normalize to % of the whole CPU.
+        const cpu = Math.min(100, Math.round(u.cpu / CORES))
+        const memoryMB = Math.round(u.memory / (1024 * 1024))
         this.emit('stats', {
           id: mp.id,
-          // pidusage reports % of a single core; normalize to % of the whole CPU.
-          cpu: Math.min(100, Math.round(u.cpu / CORES)),
-          memoryMB: Math.round(u.memory / (1024 * 1024)),
+          cpu,
+          memoryMB,
           players: mp.players,
           tps: mp.tps,
           uptimeMs: Date.now() - mp.startedAt
+        })
+        // Same reading feeds the history tiers (recorded here so it happens
+        // whether the desktop UI, the web panel, or neither is open).
+        metrics.record(mp.id, {
+          tps: mp.tps,
+          cpu,
+          rssMB: memoryMB,
+          players: mp.players.online
         })
       } catch (err) {
         if (!this.statsErrLogged) {
@@ -266,6 +277,8 @@ export class ProcessManager extends EventEmitter {
     child.on('exit', (code, signal) => {
       mp.exitCode = code
       rcon.disconnect(id)
+      // Persist the buckets still open, or a short run leaves no 1h row at all.
+      metrics.flushServer(id)
       const crashed = !mp.stopRequested && code !== 0 && code !== null
       mp.status = crashed ? 'crashed' : 'stopped'
       this.systemLine(

@@ -22,7 +22,10 @@ import type {
   ScheduleAction,
   CrashReport,
   UpdateInfo,
-  ServerMessages
+  ServerMessages,
+  MetricSeries,
+  MetricResolution,
+  TelemetryConfig
 } from './types'
 import type { McVersion, BuildInfo, CreateServerOptions, CreateProgress } from './versions'
 import type { ModEntry, ModrinthHit } from './mods'
@@ -117,6 +120,10 @@ export const IPC = {
   scheduleRun: 'sched:run',
 
   crashAnalyze: 'crash:analyze',
+
+  metricsQuery: 'metrics:query',
+  metricsConfigGet: 'metrics:config-get',
+  metricsConfigSet: 'metrics:config-set',
 
   webStatus: 'web:status',
   webSetConfig: 'web:set-config',
@@ -265,6 +272,13 @@ export interface MsmsApi {
   runSchedule(id: string): Promise<void>
 
   analyzeCrash(id: string): Promise<CrashReport>
+
+  queryMetrics(
+    id: string,
+    opts: { from: number; to: number; resolution?: MetricResolution; limit?: number }
+  ): Promise<MetricSeries>
+  getTelemetryConfig(): Promise<TelemetryConfig>
+  setTelemetryConfig(patch: Partial<TelemetryConfig>): Promise<TelemetryConfig>
 
   getWebStatus(): Promise<WebStatus>
   setWebConfig(cfg: WebConfig): Promise<WebStatus>

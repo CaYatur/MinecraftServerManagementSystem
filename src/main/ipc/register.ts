@@ -17,6 +17,7 @@ import * as mods from '../core/mods'
 import * as backups from '../core/backups'
 import * as scheduler from '../core/scheduler'
 import { analyzeCrash } from '../core/crash'
+import * as metrics from '../core/metrics'
 import { checkForUpdates } from '../core/updates'
 import { startWebServer, stopWebServer, getWebStatus } from '../web/server'
 import * as auth from '../web/auth'
@@ -31,7 +32,8 @@ import type {
   ServerConfig,
   ServerType,
   StopOptions,
-  PlayerInfo
+  PlayerInfo,
+  TelemetryConfig
 } from '@shared/types'
 import type { CreateServerOptions } from '@shared/versions'
 
@@ -248,6 +250,16 @@ export function registerIpc(): void {
 
   // --- crash analyzer ---
   H(IPC.crashAnalyze, (_e, id: string) => analyzeCrash(id))
+
+  // --- telemetry history ---
+  H(IPC.metricsQuery, (_e, id: string, opts: metrics.QueryOptions) => metrics.query(id, opts))
+  H(IPC.metricsConfigGet, () => metrics.telemetryConfig())
+  H(IPC.metricsConfigSet, (_e, patch: Partial<TelemetryConfig>) => {
+    updateConfig((c) => {
+      c.telemetry = { ...metrics.telemetryConfig(), ...patch }
+    })
+    return metrics.telemetryConfig()
+  })
 
   // --- web panel + users (trusted desktop side) ---
   H(IPC.webStatus, () => getWebStatus())

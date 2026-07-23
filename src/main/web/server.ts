@@ -8,6 +8,7 @@ import { log } from '../logger'
 import { listServers, getServer } from '../core/serverRegistry'
 import { processManager } from '../core/processManager'
 import { getPlayers } from '../core/players'
+import * as metrics from '../core/metrics'
 import * as economy from '../store/economy'
 import * as site from './site'
 import * as playerAuth from './playerAuth'
@@ -352,6 +353,17 @@ async function handlePanel(req: IncomingMessage, res: ServerResponse): Promise<v
       }
       const players = await getPlayers(id)
       return sendJson(res, 200, { players })
+    }
+    // Performance history: ?from&to (ms epoch) &res=10s|1m|1h &limit=
+    if (sub === 'metrics' && method === 'GET') {
+      if (!gate('view')) return
+      const now = Date.now()
+      const from = Number(url.searchParams.get('from')) || now - 3600_000
+      const to = Number(url.searchParams.get('to')) || now
+      const asked = url.searchParams.get('res') as metrics.Resolution | null
+      const resolution = asked && metrics.RESOLUTIONS.includes(asked) ? asked : undefined
+      const limit = Math.min(5000, Number(url.searchParams.get('limit')) || 1000)
+      return sendJson(res, 200, metrics.query(id, { from, to, resolution, limit }))
     }
   }
 
