@@ -467,6 +467,30 @@ export async function runSmoke(): Promise<void> {
   if (!rendered) return fail('renderer did not mount expected UI; last=' + renderInfo)
   console.log('SMOKE: renderer OK ->', renderInfo)
 
+  // ---- app shell layout (nobody can eyeball this window, so measure it) ----
+  {
+    const layout = JSON.parse(
+      await win.webContents.executeJavaScript(
+        `(()=>{const app=document.querySelector('.app'),sb=document.querySelector('.sidebar');
+         const r=sb?sb.getBoundingClientRect():null;
+         /* content inside a deliberately scrollable strip is not "broken" */
+         const scrollable=e=>{for(let p=e.parentElement;p;p=p.parentElement){
+           const o=getComputedStyle(p).overflowX;if(o==='auto'||o==='scroll')return true}return false};
+         const over=[...document.querySelectorAll('.app *')]
+           .filter(e=>e.getBoundingClientRect().right>window.innerWidth+2&&!scrollable(e))
+           .map(e=>e.className&&e.className.baseVal===undefined?String(e.className):e.tagName).slice(0,4);
+         return JSON.stringify({cols:app?getComputedStyle(app).gridTemplateColumns:'',
+           sidebarW:r?Math.round(r.width):0,sidebarLeft:r?Math.round(r.left):-1,
+           innerW:window.innerWidth,overflow:over})})()`
+      )
+    ) as { cols: string; sidebarW: number; sidebarLeft: number; innerW: number; overflow: string[] }
+    if (layout.sidebarLeft !== 0) return fail('sidebar is not flush left: ' + JSON.stringify(layout))
+    if (layout.sidebarW < 200 || layout.sidebarW > 300) return fail('sidebar width ' + layout.sidebarW)
+    if (layout.cols.split(' ').length !== 2) return fail('app grid has ' + layout.cols)
+    if (layout.overflow.length) return fail('elements overflow the window: ' + layout.overflow.join(','))
+    console.log(`SMOKE: app layout OK (grid ${layout.cols}, sidebar ${layout.sidebarW}px, no overflow)`)
+  }
+
   // ---- CMS image previews (msms-img://) must work without the web server ----
   {
     const png = Buffer.from(
