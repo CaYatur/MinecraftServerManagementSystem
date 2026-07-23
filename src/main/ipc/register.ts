@@ -242,6 +242,12 @@ export function registerIpc(): void {
 
   // --- java installs ---
   H(IPC.javaList, (_e, refresh?: boolean) => listJavaInstalls(!!refresh))
+  // The renderer cannot resolve "auto" itself (JAVA_HOME/PATH live here), so it
+  // asks. Mirrors processManager.start: the per-server path, else the app
+  // default, else JAVA_HOME/PATH.
+  H(IPC.javaResolve, (_e, override: string) =>
+    detectJava((override && override.trim()) || getConfig().defaults.javaPath)
+  )
 
   // --- worlds ---
   H(IPC.worldsList, (_e, id: string) => worlds.listWorlds(id))

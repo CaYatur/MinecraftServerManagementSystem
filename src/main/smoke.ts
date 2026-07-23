@@ -480,6 +480,16 @@ export async function runJavaSmoke(): Promise<void> {
     // The cache must not re-scan, and must survive being asked twice.
     const again = await listJavaInstalls()
     if (again.length !== installs.length) return fail('the cached list disagreed with the scan')
+
+    // --- 5. resolving "auto" - the path the default config takes ----------
+    // Empty override must still come back with a real Java (JAVA_HOME/PATH),
+    // which is what lets the picker warn a server nobody configured by hand.
+    const { detectJava } = await import('./core/java')
+    const auto = await detectJava('')
+    if (!auto || !auto.major) return fail('resolving auto java returned nothing')
+    const direct = await detectJava(installs[0].path)
+    if (direct?.major !== installs[0].major) return fail('resolving an explicit path gave the wrong java')
+    console.log(`JAVA-SMOKE: auto resolves to Java ${auto.major}, explicit paths honoured`)
     console.log(
       `JAVA-SMOKE: scan OK (${installs.length} install(s): ${installs.map((i) => `${i.major}/${i.source}`).join(', ')})`
     )
@@ -1841,6 +1851,31 @@ export async function runSmoke(): Promise<void> {
         if (opts.opts.filter((o) => /^Java \d/.test(o)).length !== found.length) {
           return fail('picker lists ' + opts.opts.length + ' entries for ' + found.length + ' installs')
         }
+
+        // The default config uses javaPath='' (auto). Its verdict must appear
+        // WITHOUT selecting anything - this is the case that catches a server
+        // nobody configured, and the one the first cut of this feature missed.
+        const { detectJava } = await import('./core/java')
+        const autoJava = await detectJava('')
+        const autoWant = autoJava
+          ? checkJava(mc, autoJava.major).verdict
+          : 'unknown'
+        const autoCls = JSON.parse(
+          await win.webContents.executeJavaScript(
+            `(()=>{const c=document.querySelector('.java-compat');
+             return JSON.stringify({cls:c?c.className.replace('java-compat ',''):'',text:(c?.textContent||'').trim().slice(0,80)})})()`
+          )
+        ) as { cls: string; text: string }
+        const autoExpectCls =
+          autoWant === 'too-old' ? 'bad' : autoWant === 'risky-new' ? 'warn' : autoWant === 'ok' ? 'ok' : ''
+        if (autoCls.cls !== autoExpectCls) {
+          return fail(`auto java (${autoJava?.major}) on MC ${mc}: UI "${autoCls.cls}", table "${autoExpectCls}"`)
+        }
+        if (autoExpectCls && !/auto|otomatik/i.test(autoCls.text)) {
+          return fail('auto verdict did not say it was auto-detected: ' + autoCls.text)
+        }
+        console.log(`SMOKE: java auto-verdict OK (auto -> Java ${autoJava?.major}, ${autoExpectCls || 'no verdict'})`)
+
         const verdictClass = JSON.parse(
           await win.webContents.executeJavaScript(
             `(()=>{const s=[...document.querySelectorAll('.select')].find(x=>[...x.options].some(o=>/^Java \\d/.test(o.text)));

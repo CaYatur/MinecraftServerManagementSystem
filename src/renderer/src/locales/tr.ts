@@ -211,6 +211,7 @@ const tr: typeof en = {
     preview: 'Komut önizlemesi',
     javaPath: 'Java',
     rescanJava: 'Kurulu Java sürümlerini yeniden tara',
+    javaAutoContext: '(otomatik algılandı: {{version}})',
     javaOk: 'Java {{java}}, Minecraft {{mc}} için uygun.',
     javaTooOld: 'Minecraft {{mc}} için Java {{min}} veya üstü gerekli — bu Java {{java}}. Sunucu açılmaz.',
     javaRisky: 'Minecraft {{mc}}, Java {{min}} için yapıldı. Java {{java}} o dönemin sunucu yazılımlarını sık sık bozar; Java {{max}} ve altı daha güvenli.'

@@ -209,6 +209,7 @@ export default {
     preview: 'Command preview',
     javaPath: 'Java',
     rescanJava: 'Scan for installed Java versions again',
+    javaAutoContext: '(auto-detected: {{version}})',
     javaOk: 'Java {{java}} suits Minecraft {{mc}}.',
     javaTooOld: 'Minecraft {{mc}} needs Java {{min}} or newer — this is Java {{java}}. The server will not start.',
     javaRisky: 'Minecraft {{mc}} was built for Java {{min}}. Java {{java}} often breaks server software of that era; Java {{max}} or lower is safer.'

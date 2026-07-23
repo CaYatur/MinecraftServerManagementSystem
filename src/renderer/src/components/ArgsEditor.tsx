@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { Check, Terminal, RefreshCw, AlertTriangle, CheckCircle2, XCircle } from 'lucide-react'
 import { useStore } from '../store'
 import { checkJava } from '@shared/javaCompat'
-import type { JavaArgsConfig, JavaInstall, JavaPreset, ServerConfig } from '@shared/types'
+import type { JavaArgsConfig, JavaInfo, JavaInstall, JavaPreset, ServerConfig } from '@shared/types'
 
 const PRESETS: JavaPreset[] = ['basic', 'aikars', 'aikars-large', 'proxy', 'custom']
 
@@ -15,6 +15,8 @@ export function ArgsEditor({ server }: { server: ServerConfig }): JSX.Element {
   const [preview, setPreview] = useState('')
   const [installs, setInstalls] = useState<JavaInstall[]>([])
   const [scanning, setScanning] = useState(false)
+  /** What "auto" resolves to — only the main process knows (JAVA_HOME/PATH). */
+  const [autoJava, setAutoJava] = useState<JavaInfo | null>(null)
 
   // Re-sync when switching servers.
   useEffect(() => setJava(server.java), [server.id, server.java])
@@ -33,25 +35,49 @@ export function ArgsEditor({ server }: { server: ServerConfig }): JSX.Element {
     void loadInstalls()
   }, [loadInstalls])
 
+  // Ask the main process what "auto" (or a hand-typed path) actually resolves
+  // to, so the default configuration - which nobody picks from the dropdown -
+  // still gets a verdict. Debounced against typing.
+  useEffect(() => {
+    let alive = true
+    const timer = setTimeout(() => {
+      window.msms
+        .resolveJava(java.javaPath)
+        .then((info) => alive && setAutoJava(info))
+        .catch(() => alive && setAutoJava(null))
+    }, 200)
+    return () => {
+      alive = false
+      clearTimeout(timer)
+    }
+  }, [java.javaPath])
+
   /**
-   * Judge the Java that will actually be used. Only the explicitly chosen one
-   * can be judged - "auto" is resolved in the main process at launch, and
-   * guessing here would be worse than saying nothing.
+   * Judge the Java that will actually launch. A path chosen from the dropdown
+   * is judged directly; for anything else - "auto", or a hand-typed path - we
+   * judge whatever the main process resolves it to, so the default setup is
+   * covered too, not only manual picks.
    */
   const compat = useMemo(() => {
-    const chosen = installs.find((i) => i.path === java.javaPath)
+    const chosen = installs.find((i) => i.path === java.javaPath) ?? autoJava
     if (!chosen) return null
     const { requirement, verdict } = checkJava(server.mcVersion, chosen.major)
     if (verdict === 'unknown') return null
-    const data = { java: chosen.major, mc: server.mcVersion, min: requirement.min, max: requirement.maxKnownGood ?? 0 }
-    if (verdict === 'too-old') {
-      return { cls: 'bad', icon: <XCircle size={12} />, text: t('args.javaTooOld', data) }
+    const auto = chosen === autoJava && java.javaPath !== chosen.path
+    const data = {
+      java: chosen.major,
+      mc: server.mcVersion,
+      min: requirement.min,
+      max: requirement.maxKnownGood ?? 0,
+      context: auto ? t('args.javaAutoContext', { version: chosen.version }) : ''
     }
-    if (verdict === 'risky-new') {
-      return { cls: 'warn', icon: <AlertTriangle size={12} />, text: t('args.javaRisky', data) }
-    }
-    return { cls: 'ok', icon: <CheckCircle2 size={12} />, text: t('args.javaOk', data) }
-  }, [installs, java.javaPath, server.mcVersion, t])
+    const key =
+      verdict === 'too-old' ? 'args.javaTooOld' : verdict === 'risky-new' ? 'args.javaRisky' : 'args.javaOk'
+    const cls = verdict === 'too-old' ? 'bad' : verdict === 'risky-new' ? 'warn' : 'ok'
+    const icon =
+      verdict === 'too-old' ? <XCircle size={12} /> : verdict === 'risky-new' ? <AlertTriangle size={12} /> : <CheckCircle2 size={12} />
+    return { cls, icon, text: t(key, data) + (data.context ? ` ${data.context}` : '') }
+  }, [installs, autoJava, java.javaPath, server.mcVersion, t])
 
   useEffect(() => {
     let alive = true

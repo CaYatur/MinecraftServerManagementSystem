@@ -25,6 +25,7 @@ import type {
   ServerMessages,
   WorldInfo,
   WorldDimension,
+  JavaInfo,
   JavaInstall,
   MetricSeries,
   MetricResolution,
@@ -117,6 +118,7 @@ export const IPC = {
   modInstall: 'mods:install',
 
   javaList: 'java:list',
+  javaResolve: 'java:resolve',
 
   worldsList: 'worlds:list',
   worldActivate: 'worlds:activate',
@@ -280,6 +282,8 @@ export interface MsmsApi {
   installMod(id: string, projectId: string): Promise<string>
 
   listJava(refresh?: boolean): Promise<JavaInstall[]>
+  /** The Java that will actually launch, given a per-server override ('' = auto). */
+  resolveJava(javaPathOverride: string): Promise<JavaInfo | null>
 
   listWorlds(id: string): Promise<WorldInfo[]>
   activateWorld(id: string, name: string): Promise<void>

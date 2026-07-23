@@ -74,6 +74,7 @@ const api: MsmsApi = {
   installMod: (id, projectId) => ipcRenderer.invoke(IPC.modInstall, id, projectId),
 
   listJava: (refresh) => ipcRenderer.invoke(IPC.javaList, refresh),
+  resolveJava: (override) => ipcRenderer.invoke(IPC.javaResolve, override),
 
   listWorlds: (id) => ipcRenderer.invoke(IPC.worldsList, id),
   activateWorld: (id, name) => ipcRenderer.invoke(IPC.worldActivate, id, name),
