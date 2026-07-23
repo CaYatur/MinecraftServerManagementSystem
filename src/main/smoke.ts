@@ -291,15 +291,38 @@ export async function runSmoke(): Promise<void> {
        if(!i)return 'no-img';
        return i.complete&&i.naturalWidth>0?('ok:'+i.naturalWidth):'blank'})()`
     )
+    if (!shown.startsWith('ok:')) {
+      siteMod.setSiteConfig({ theme: { ...themeBefore, logo: themeBefore.logo ?? '' } })
+      rmSync(fixture, { force: true })
+      return fail('CMS logo preview rendered ' + shown)
+    }
+
+    // ...and clearing it the way the user does - X, then Save - must stick.
+    await win.webContents.executeJavaScript(
+      `(()=>{const i=document.querySelector('img[src^="msms-img:"]');if(!i)return;
+       const b=[...i.closest('.row').querySelectorAll('button')];b[b.length-1].click()})()`
+    )
+    await sleep(200)
+    await win.webContents.executeJavaScript(
+      `[...document.querySelectorAll('button')].find(b=>/Save|Kaydet/i.test(b.textContent||''))?.click()`
+    )
+    await sleep(500)
+    const cleared: boolean = await win.webContents.executeJavaScript(
+      `!document.querySelector('img[src^="msms-img:"]')`
+    )
+    const stored = siteMod.getSiteConfig().theme.logo
     siteMod.setSiteConfig({ theme: { ...themeBefore, logo: themeBefore.logo ?? '' } })
     rmSync(fixture, { force: true })
-    if (!shown.startsWith('ok:')) return fail('CMS logo preview rendered ' + shown)
+    if (!cleared) return fail('logo preview still visible after clearing it')
+    if (stored) return fail('cleared logo came back after saving: ' + stored)
     const traversal = await loadImg('msms-img://upload/..%2F..%2Fconfig.json')
     if (traversal !== 'error') return fail('image protocol escaped the uploads folder')
     const missing = await loadImg('msms-img://upload/definitely-not-here.png')
     if (missing !== 'error') return fail('missing image did not fail')
     console.log(
-      'SMOKE: image previews OK (CMS logo ' + shown + ', traversal + missing blocked)'
+      'SMOKE: image previews OK (CMS logo ' +
+        shown +
+        ', cleared via UI + save, traversal + missing blocked)'
     )
   }
 
