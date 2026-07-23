@@ -137,6 +137,23 @@ export async function searchModrinth(id: string, query: string): Promise<Modrint
 
 // ---- update checking ----
 
+/**
+ * Loaders to accept when checking updates. A Paper/Purpur/Folia server runs
+ * plugins tagged for any member of the Bukkit family, and older plugins are
+ * often tagged only `spigot` or `bukkit` - so filtering an update query to the
+ * single canonical loader would report those as "unknown" and silently miss a
+ * real (possibly security) update. Widening across the mutually-compatible
+ * plugin family is safe; modded and proxy loaders do not cross-load and stay
+ * single. `[]` means "do not filter by loader" (an unknown server type).
+ */
+const PLUGIN_LOADER_FAMILY = ['paper', 'purpur', 'folia', 'spigot', 'bukkit']
+
+export function loadersFor(type: ServerType): string[] {
+  if (PLUGIN_TYPES.includes(type) && !MODDED_TYPES.includes(type)) return PLUGIN_LOADER_FAMILY
+  const single = MR_LOADER[type]
+  return single ? [single] : []
+}
+
 function fileSha1(path: string): string {
   return createHash('sha1').update(readFileSync(path)).digest('hex')
 }
@@ -160,12 +177,12 @@ export async function checkUpdates(id: string): Promise<ModUpdateReport> {
   }
   if (!installed.length) return { ok: true, updates: [] }
 
-  const loader = MR_LOADER[server.type]
+  const loaders = loadersFor(server.type)
   try {
     const byHash = await httpJsonPost<Record<string, MrVersion>>(`${MR}/version_files/update`, {
       hashes: installed.map((i) => i.sha1),
       algorithm: 'sha1',
-      ...(loader ? { loaders: [loader] } : {}),
+      ...(loaders.length ? { loaders } : {}),
       ...(server.mcVersion && server.mcVersion !== 'unknown'
         ? { game_versions: [server.mcVersion] }
         : {})

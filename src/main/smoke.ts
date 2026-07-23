@@ -539,6 +539,19 @@ export async function runModUpdateSmoke(): Promise<void> {
     }
     console.log('MODUPDATE-SMOKE: decided by hash, never by version string')
 
+    // Loader family: a Paper server must accept plugins tagged only bukkit or
+    // spigot, or an old hand-added plugin's update reads as "unknown". Modded
+    // and proxy loaders stay single (they do not cross-load).
+    const paperLoaders = modsMod.loadersFor('paper')
+    for (const l of ['paper', 'spigot', 'bukkit', 'purpur', 'folia']) {
+      if (!paperLoaders.includes(l)) return fail(`paper server should accept ${l}-tagged plugins`)
+    }
+    if (modsMod.loadersFor('fabric').join() !== 'fabric') return fail('fabric widened its loader set')
+    if (modsMod.loadersFor('forge').join() !== 'forge') return fail('forge widened its loader set')
+    if (modsMod.loadersFor('velocity').join() !== 'velocity') return fail('velocity widened its loader set')
+    if (modsMod.loadersFor('unknown').length !== 0) return fail('unknown type should not filter by loader')
+    console.log('MODUPDATE-SMOKE: loader family OK (plugin servers widen, modded/proxy stay single)')
+
     console.log('MODUPDATE-SMOKE: PASS')
     app.exit(0)
   } catch (e) {
