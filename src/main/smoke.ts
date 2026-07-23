@@ -25,6 +25,8 @@ import * as metrics from './core/metrics'
 import * as eventsMod from './core/events'
 import * as alertsMod from './core/alerts'
 import * as worldsMod from './core/worlds'
+import { listJavaInstalls, _resetJavaCache } from './core/javaScan'
+import { checkJava, javaRequirement } from '@shared/javaCompat'
 import { computeUptime, clipSessions } from '@shared/uptime'
 import { evaluateRule, normalizeRule, IDLE, type AlertRule, type AlertSample } from '@shared/alerts'
 import { analyze, type Finding } from '@shared/analysis'
@@ -398,6 +400,93 @@ export async function runMetricsSmoke(): Promise<void> {
     app.exit(0)
   } catch (e) {
     wipe()
+    fail('exception ' + String(e))
+  }
+}
+
+/**
+ * Java compatibility + install scan verification (Stage 9).
+ *
+ * The table is the deliverable, so it is pinned version by version - a wrong
+ * cell here tells someone their working setup is broken, or stays silent
+ * while their server refuses to start.
+ */
+export async function runJavaSmoke(): Promise<void> {
+  const fail = (m: string): void => {
+    console.log('JAVA-SMOKE: FAIL -', m)
+    app.exit(1)
+  }
+  try {
+    // --- 1. the requirement table -----------------------------------------
+    const cases: Array<[string, number, number | undefined]> = [
+      // [mc version, expected min java, expected ceiling]
+      ['1.8.9', 8, 11],
+      ['1.12.2', 8, 11],
+      ['1.16.5', 8, 11],
+      ['1.17', 16, undefined],
+      ['1.17.1', 16, undefined],
+      ['1.18', 17, undefined],
+      ['1.19.4', 17, undefined],
+      ['1.20', 17, undefined],
+      ['1.20.4', 17, undefined],
+      ['1.20.5', 21, undefined], // the cutover
+      ['1.20.6', 21, undefined],
+      ['1.21', 21, undefined],
+      ['1.21.4', 21, undefined]
+    ]
+    for (const [mc, min, ceiling] of cases) {
+      const req = javaRequirement(mc)
+      if (!req.known) return fail(`${mc}: not recognised`)
+      if (req.min !== min) return fail(`${mc}: min java ${req.min}, expected ${min}`)
+      if (req.maxKnownGood !== ceiling) {
+        return fail(`${mc}: ceiling ${req.maxKnownGood}, expected ${ceiling}`)
+      }
+    }
+
+    // --- 2. verdicts, including the two failure directions ----------------
+    const v = (mc: string, java: number): string => checkJava(mc, java).verdict
+    if (v('1.21', 17) !== 'too-old') return fail('1.21 on Java 17 should be too-old')
+    if (v('1.21', 21) !== 'ok') return fail('1.21 on Java 21 should be ok')
+    if (v('1.21', 22) !== 'ok') return fail('1.21 on Java 22 should be ok')
+    if (v('1.20.4', 17) !== 'ok') return fail('1.20.4 on Java 17 should be ok')
+    if (v('1.20.5', 17) !== 'too-old') return fail('1.20.5 on Java 17 should be too-old')
+    if (v('1.12.2', 8) !== 'ok') return fail('1.12.2 on Java 8 should be ok')
+    if (v('1.12.2', 11) !== 'ok') return fail('1.12.2 on Java 11 should be ok')
+    if (v('1.12.2', 21) !== 'risky-new') return fail('1.12.2 on Java 21 should be risky-new')
+    if (v('1.8.9', 7) !== 'too-old') return fail('1.8.9 on Java 7 should be too-old')
+
+    // --- 3. silence when the version cannot be read -----------------------
+    for (const odd of ['24w14a', '', 'latest', '1.20.4-pre1', '2.0']) {
+      if (javaRequirement(odd).known) return fail(`"${odd}" should not be recognised`)
+      if (v(odd, 21) !== 'unknown') return fail(`"${odd}" should give no verdict`)
+    }
+    if (v('1.21', 0) !== 'unknown') return fail('an unprobed java should give no verdict')
+    console.log('JAVA-SMOKE: compatibility table OK (13 versions pinned, both failure directions, snapshots silent)')
+
+    // --- 4. the scan finds the Java this machine actually has -------------
+    _resetJavaCache()
+    const installs = await listJavaInstalls(true)
+    if (!installs.length) return fail('no Java found on a machine that just ran Java-based tests')
+    for (const i of installs) {
+      if (!i.major || i.major < 6) return fail('scan reported a bogus major: ' + JSON.stringify(i))
+      if (!i.version) return fail('scan reported no version for ' + i.path)
+      if (!['JAVA_HOME', 'PATH', 'installed'].includes(i.source)) return fail('bad source ' + i.source)
+    }
+    const paths = installs.map((i) => i.path.toLowerCase())
+    if (new Set(paths).size !== paths.length) return fail('the scan listed the same path twice')
+    for (let i = 1; i < installs.length; i++) {
+      if (installs[i - 1].major < installs[i].major) return fail('installs are not newest-first')
+    }
+    // The cache must not re-scan, and must survive being asked twice.
+    const again = await listJavaInstalls()
+    if (again.length !== installs.length) return fail('the cached list disagreed with the scan')
+    console.log(
+      `JAVA-SMOKE: scan OK (${installs.length} install(s): ${installs.map((i) => `${i.major}/${i.source}`).join(', ')})`
+    )
+
+    console.log('JAVA-SMOKE: PASS')
+    app.exit(0)
+  } catch (e) {
     fail('exception ' + String(e))
   }
 }
@@ -1728,6 +1817,50 @@ export async function runSmoke(): Promise<void> {
         if (existsSync(clonePath)) return fail('deleting the clone through the UI did nothing')
         if (!existsSync(worldFixture)) return fail('the UI deleted the ACTIVE world instead of the copy')
         console.log('SMOKE: world clone + delete round-tripped through the UI')
+
+        // Java picker: the dropdown must list what the scan found, and
+        // choosing one must produce the verdict the shared table gives for
+        // this server's Minecraft version - computed here, not hardcoded, so
+        // the assertion holds on any machine.
+        const found = await listJavaInstalls()
+        const oldest = [...found].sort((a, b) => a.major - b.major)[0]
+        if (!oldest) return fail('no Java on this machine to drive the picker with')
+        const mc = getConfig().servers.find((s) => s.id === id)?.mcVersion ?? ''
+        const expected = checkJava(mc, oldest.major).verdict
+        await win.webContents.executeJavaScript(
+          `[...document.querySelectorAll('.tab')].find(t=>/Dashboard|Panel|Genel/i.test(t.textContent||''))?.click()`
+        )
+        await sleep(900)
+        const opts = JSON.parse(
+          await win.webContents.executeJavaScript(
+            `(()=>{const s=[...document.querySelectorAll('.select')].find(x=>[...x.options].some(o=>/^Java \\d/.test(o.text)));
+             return JSON.stringify({found:!!s,opts:s?[...s.options].map(o=>o.text):[]})})()`
+          )
+        ) as { found: boolean; opts: string[] }
+        if (!opts.found) return fail('the Java picker did not render')
+        if (opts.opts.filter((o) => /^Java \d/.test(o)).length !== found.length) {
+          return fail('picker lists ' + opts.opts.length + ' entries for ' + found.length + ' installs')
+        }
+        const verdictClass = JSON.parse(
+          await win.webContents.executeJavaScript(
+            `(()=>{const s=[...document.querySelectorAll('.select')].find(x=>[...x.options].some(o=>/^Java \\d/.test(o.text)));
+             const set=Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype,'value').set;
+             set.call(s, ${JSON.stringify(oldest.path)});
+             s.dispatchEvent(new Event('change',{bubbles:true}));
+             return new Promise(r=>setTimeout(()=>{const c=document.querySelector('.java-compat');
+               r(JSON.stringify({cls:c?c.className.replace('java-compat ',''):'',text:(c?.textContent||'').trim().slice(0,70)}))},300))})()`
+          )
+        ) as { cls: string; text: string }
+        const want = expected === 'too-old' ? 'bad' : expected === 'risky-new' ? 'warn' : expected === 'ok' ? 'ok' : ''
+        if (verdictClass.cls !== want) {
+          return fail(`Java ${oldest.major} on MC ${mc}: UI said "${verdictClass.cls}", table says "${want}"`)
+        }
+        if (want && /args\.|\{\{/.test(verdictClass.text)) {
+          return fail('compatibility line not translated: ' + verdictClass.text)
+        }
+        console.log(
+          `SMOKE: java picker OK (${found.length} listed, Java ${oldest.major} on MC ${mc} -> ${want || 'no verdict'})`
+        )
       } finally {
         rmSync(clonePath, { recursive: true, force: true })
         rmSync(worldFixture, { recursive: true, force: true })

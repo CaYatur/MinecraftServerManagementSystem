@@ -4,6 +4,7 @@ import { getConfig, updateConfig } from '../config'
 import { resolveBaseDir } from '../paths'
 import { resolveLanguage, defaultMessages, MESSAGE_KEYS } from '../i18n'
 import { detectJava } from '../core/java'
+import { listJavaInstalls } from '../core/javaScan'
 import { detectServer } from '../core/serverDetect'
 import * as registry from '../core/serverRegistry'
 import { processManager } from '../core/processManager'
@@ -238,6 +239,9 @@ export function registerIpc(): void {
   })
   H(IPC.modSearch, (_e, id: string, query: string) => mods.searchModrinth(id, query))
   H(IPC.modInstall, (_e, id: string, projectId: string) => mods.installModrinth(id, projectId))
+
+  // --- java installs ---
+  H(IPC.javaList, (_e, refresh?: boolean) => listJavaInstalls(!!refresh))
 
   // --- worlds ---
   H(IPC.worldsList, (_e, id: string) => worlds.listWorlds(id))

@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Check, Terminal } from 'lucide-react'
+import { Check, Terminal, RefreshCw, AlertTriangle, CheckCircle2, XCircle } from 'lucide-react'
 import { useStore } from '../store'
-import type { JavaArgsConfig, JavaPreset, ServerConfig } from '@shared/types'
+import { checkJava } from '@shared/javaCompat'
+import type { JavaArgsConfig, JavaInstall, JavaPreset, ServerConfig } from '@shared/types'
 
 const PRESETS: JavaPreset[] = ['basic', 'aikars', 'aikars-large', 'proxy', 'custom']
 
@@ -12,9 +13,45 @@ export function ArgsEditor({ server }: { server: ServerConfig }): JSX.Element {
   const toast = useStore((s) => s.toast)
   const [java, setJava] = useState<JavaArgsConfig>(server.java)
   const [preview, setPreview] = useState('')
+  const [installs, setInstalls] = useState<JavaInstall[]>([])
+  const [scanning, setScanning] = useState(false)
 
   // Re-sync when switching servers.
   useEffect(() => setJava(server.java), [server.id, server.java])
+
+  const loadInstalls = useCallback(async (refresh = false): Promise<void> => {
+    setScanning(true)
+    try {
+      setInstalls(await window.msms.listJava(refresh))
+    } catch {
+      /* a machine with no Java is a normal state; the warning below covers it */
+    }
+    setScanning(false)
+  }, [])
+
+  useEffect(() => {
+    void loadInstalls()
+  }, [loadInstalls])
+
+  /**
+   * Judge the Java that will actually be used. Only the explicitly chosen one
+   * can be judged - "auto" is resolved in the main process at launch, and
+   * guessing here would be worse than saying nothing.
+   */
+  const compat = useMemo(() => {
+    const chosen = installs.find((i) => i.path === java.javaPath)
+    if (!chosen) return null
+    const { requirement, verdict } = checkJava(server.mcVersion, chosen.major)
+    if (verdict === 'unknown') return null
+    const data = { java: chosen.major, mc: server.mcVersion, min: requirement.min, max: requirement.maxKnownGood ?? 0 }
+    if (verdict === 'too-old') {
+      return { cls: 'bad', icon: <XCircle size={12} />, text: t('args.javaTooOld', data) }
+    }
+    if (verdict === 'risky-new') {
+      return { cls: 'warn', icon: <AlertTriangle size={12} />, text: t('args.javaRisky', data) }
+    }
+    return { cls: 'ok', icon: <CheckCircle2 size={12} />, text: t('args.javaOk', data) }
+  }, [installs, java.javaPath, server.mcVersion, t])
 
   useEffect(() => {
     let alive = true
@@ -120,12 +157,41 @@ export function ArgsEditor({ server }: { server: ServerConfig }): JSX.Element {
       <div className="row wrap" style={{ gap: 10 }}>
         <div className="field" style={{ flex: 1, minWidth: 220, marginBottom: 8 }}>
           <label>{t('args.javaPath')}</label>
+          <div className="row">
+            <select
+              className="select"
+              style={{ maxWidth: 260 }}
+              value={installs.some((i) => i.path === java.javaPath) ? java.javaPath : ''}
+              onChange={(e) => set('javaPath', e.target.value)}
+            >
+              <option value="">{t('settings.javaAuto')}</option>
+              {installs.map((i) => (
+                <option key={i.path} value={i.path}>
+                  Java {i.major} · {i.version} {i.source !== 'installed' ? `(${i.source})` : ''}
+                </option>
+              ))}
+            </select>
+            <button
+              className="btn ghost sm"
+              title={t('args.rescanJava')}
+              disabled={scanning}
+              onClick={() => void loadInstalls(true)}
+            >
+              <RefreshCw size={13} className={scanning ? 'spin' : ''} />
+            </button>
+          </div>
           <input
             className="input"
+            style={{ marginTop: 6 }}
             value={java.javaPath}
             placeholder={t('settings.javaAuto')}
             onChange={(e) => set('javaPath', e.target.value)}
           />
+          {compat && (
+            <div className={`java-compat ${compat.cls}`}>
+              {compat.icon} {compat.text}
+            </div>
+          )}
         </div>
         <label className="switch" style={{ marginTop: 24 }}>
           <input

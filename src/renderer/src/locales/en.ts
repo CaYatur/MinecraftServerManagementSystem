@@ -207,7 +207,11 @@ export default {
     customArgs: 'Custom arguments (full command after "java")',
     nogui: 'Append "nogui"',
     preview: 'Command preview',
-    javaPath: 'Java path override'
+    javaPath: 'Java',
+    rescanJava: 'Scan for installed Java versions again',
+    javaOk: 'Java {{java}} suits Minecraft {{mc}}.',
+    javaTooOld: 'Minecraft {{mc}} needs Java {{min}} or newer — this is Java {{java}}. The server will not start.',
+    javaRisky: 'Minecraft {{mc}} was built for Java {{min}}. Java {{java}} often breaks server software of that era; Java {{max}} or lower is safer.'
   },
   create: {
     title: 'Create a new server',

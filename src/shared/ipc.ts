@@ -25,6 +25,7 @@ import type {
   ServerMessages,
   WorldInfo,
   WorldDimension,
+  JavaInstall,
   MetricSeries,
   MetricResolution,
   TelemetryConfig,
@@ -114,6 +115,8 @@ export const IPC = {
   modAdd: 'mods:add',
   modSearch: 'mods:search',
   modInstall: 'mods:install',
+
+  javaList: 'java:list',
 
   worldsList: 'worlds:list',
   worldActivate: 'worlds:activate',
@@ -275,6 +278,8 @@ export interface MsmsApi {
   addMod(id: string, folder: 'plugins' | 'mods'): Promise<string | null>
   searchMods(id: string, query: string): Promise<ModrinthHit[]>
   installMod(id: string, projectId: string): Promise<string>
+
+  listJava(refresh?: boolean): Promise<JavaInstall[]>
 
   listWorlds(id: string): Promise<WorldInfo[]>
   activateWorld(id: string, name: string): Promise<void>

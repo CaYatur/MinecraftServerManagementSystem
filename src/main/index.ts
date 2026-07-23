@@ -21,7 +21,8 @@ import {
   runEventsSmoke,
   runAlertsSmoke,
   runAnalysisSmoke,
-  runWorldsSmoke
+  runWorldsSmoke,
+  runJavaSmoke
 } from './smoke'
 import { registerImageScheme, handleImageProtocol, IMG_SCHEME } from './imgProtocol'
 import { SPLASH_HTML } from './splashHtml'
@@ -174,6 +175,14 @@ if (!gotLock) {
       runMetricsSmoke().catch((e) => {
         // eslint-disable-next-line no-console
         console.log('METRICS-SMOKE: FAIL - exception', String(e))
+        app.exit(1)
+      })
+      return
+    }
+    if (process.env['MSMS_SMOKE_JAVA']) {
+      runJavaSmoke().catch((e) => {
+        // eslint-disable-next-line no-console
+        console.log('JAVA-SMOKE: FAIL - exception', String(e))
         app.exit(1)
       })
       return

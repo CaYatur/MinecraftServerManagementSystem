@@ -270,6 +270,11 @@ export interface JavaInfo {
   major: number
 }
 
+/** One Java found on the machine, plus why it was offered. */
+export interface JavaInstall extends JavaInfo {
+  source: 'JAVA_HOME' | 'PATH' | 'installed'
+}
+
 export interface UpdateInfo {
   current: string
   latest?: string
