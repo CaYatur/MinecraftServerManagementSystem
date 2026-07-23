@@ -153,7 +153,9 @@ export default {
     world: 'World size',
     quickActions: 'Quick actions',
     rconConnected: 'connected',
-    rconConnecting: 'connecting… (TPS/live players need RCON)'
+    rconConnecting: 'connecting… (TPS/live players need RCON)',
+    mspt: 'ms/tick',
+    bridgeActive: 'Bridge active — live TPS/MSPT from the server'
   },
   settings: {
     title: 'Settings',

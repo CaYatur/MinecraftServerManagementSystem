@@ -33,6 +33,15 @@ import type { MrVersion } from '@shared/mods'
 import { computeUptime, clipSessions } from '@shared/uptime'
 import { evaluateRule, normalizeRule, IDLE, type AlertRule, type AlertSample } from '@shared/alerts'
 import { analyze, type Finding } from '@shared/analysis'
+import {
+  parseBridgeLine,
+  hasBridgeMarker,
+  reconcileTps,
+  newBridgeSnapshot,
+  BRIDGE_STALE_FACTOR,
+  BRIDGE_DEFAULT_INTERVAL_MS,
+  type BridgeSnapshot
+} from '@shared/bridge'
 import type { UptimeReport } from '@shared/uptime'
 import type { JavaArgsConfig, MetricSeries, ServerConfig, ServerEvent } from '@shared/types'
 import { alertsPath, uploadsDir } from './paths'
@@ -553,6 +562,124 @@ export async function runModUpdateSmoke(): Promise<void> {
     console.log('MODUPDATE-SMOKE: loader family OK (plugin servers widen, modded/proxy stay single)')
 
     console.log('MODUPDATE-SMOKE: PASS')
+    app.exit(0)
+  } catch (e) {
+    fail('exception ' + String(e))
+  }
+}
+
+/**
+ * MSMS Bridge protocol + TPS reconciliation (Stage 12).
+ *
+ * Two traps this pins, both of which a self-authored test can silently pass:
+ * (1) the marker is NOT at column 0 — Paper routes stdout through log4j2, so
+ * real lines carry an `[HH:MM:SS INFO]:` (and sometimes `[STDOUT]`) preamble; a
+ * parser anchored to `^` would pass its own clean fixtures yet fail live. So
+ * the fixtures here deliberately wear that preamble. (2) a silenced bridge must
+ * never pin a stale TPS on screen — once it goes quiet we fall back to RCON.
+ */
+export async function runBridgeSmoke(): Promise<void> {
+  const fail = (m: string): void => {
+    console.log('BRIDGE-SMOKE: FAIL -', m)
+    app.exit(1)
+  }
+  try {
+    // --- the marker is found anywhere in the line, not just at the start ---
+    const clean = parseBridgeLine(
+      '[MSMS-BRIDGE] {"v":1,"t":"tick","tps":19.9,"tps5":20,"tps15":20,"mspt":3.1}'
+    )
+    if (!clean || clean.t !== 'tick' || clean.tps !== 19.9 || clean.mspt !== 3.1) {
+      return fail('a clean tick line did not parse')
+    }
+    // Real Paper output: a log4j2 preamble sits in front of the marker.
+    const withPreamble = parseBridgeLine(
+      '[12:34:56 INFO]: [MSMS-BRIDGE] {"v":1,"t":"hello","plugin":"MSMS-Bridge","pluginVersion":"1.0.0","server":"Paper","mc":"1.21.1","interval":5000}'
+    )
+    if (!withPreamble || withPreamble.t !== 'hello' || withPreamble.pluginVersion !== '1.0.0') {
+      return fail('a hello behind a log4j2 preamble did not parse')
+    }
+    if (withPreamble.interval !== 5000) return fail('the hello interval was dropped')
+    // Some setups insert a [STDOUT] tag between the preamble and the message.
+    const withStdout = parseBridgeLine(
+      '[12:34:57 INFO]: [STDOUT] [MSMS-BRIDGE] {"v":1,"t":"tick","tps":20,"tps5":20,"tps15":20,"mspt":2.0}'
+    )
+    if (!withStdout || withStdout.t !== 'tick' || withStdout.tps !== 20) {
+      return fail('a tick behind a [STDOUT] tag did not parse')
+    }
+    console.log('BRIDGE-SMOKE: marker parsed at column 0, behind [INFO]: and behind [STDOUT]')
+
+    // --- marker detection must not fire on ordinary console lines ---
+    if (!hasBridgeMarker('[12:00:00 INFO]: [MSMS-BRIDGE] {"v":1,"t":"bye"}')) {
+      return fail('a marked line was not detected')
+    }
+    if (hasBridgeMarker('[12:00:00 INFO]: Done (1.234s)! For help, type "help"')) {
+      return fail('an ordinary log line was mistaken for a bridge line')
+    }
+
+    // --- marked-but-malformed: still detected (so it is hidden + warned),
+    //     but parses to null so nothing acts on garbage ---
+    const bad = '[12:00:01 INFO]: [MSMS-BRIDGE] {this is not json'
+    if (!hasBridgeMarker(bad)) return fail('a malformed marked line lost its marker')
+    if (parseBridgeLine(bad) !== null) return fail('malformed JSON should not parse')
+    if (parseBridgeLine('[MSMS-BRIDGE] {"v":1,"t":"who-knows"}') !== null) {
+      return fail('an unknown message type should not parse')
+    }
+    if (parseBridgeLine('[MSMS-BRIDGE] {"t":"tick","tps":20}') !== null) {
+      return fail('a message with no protocol version should not parse')
+    }
+    if (parseBridgeLine('the server likes [MSMS-BRIDGE] a lot today') !== null) {
+      return fail('a marker with no JSON after it should not parse')
+    }
+    if (parseBridgeLine('[MSMS-BRIDGE] {"v":1,"t":"tick","mspt":2}') !== null) {
+      return fail('a tick with no tps should not parse')
+    }
+    console.log('BRIDGE-SMOKE: malformed / unknown / versionless rejected, marker still detected')
+
+    // --- players message with positions; a nameless entry is dropped ---
+    const players = parseBridgeLine(
+      '[MSMS-BRIDGE] {"v":1,"t":"players","online":2,"list":[{"name":"Alex","uuid":"u1","world":"world","dim":"overworld","x":10.5,"y":64,"z":-3.2},{"noname":true}]}'
+    )
+    if (!players || players.t !== 'players') return fail('a players line did not parse')
+    if (players.online !== 2) return fail('the players online count was lost')
+    if (players.list.length !== 1) return fail('a nameless player entry was not dropped')
+    if (players.list[0].name !== 'Alex' || players.list[0].x !== 10.5) {
+      return fail('a player name/position was lost')
+    }
+    console.log('BRIDGE-SMOKE: players + positions parsed, nameless entry dropped')
+
+    // --- TPS reconciliation: fresh bridge wins, silent bridge falls back ---
+    const now = 1_000_000
+    const fresh: BridgeSnapshot = {
+      connected: true,
+      intervalMs: BRIDGE_DEFAULT_INTERVAL_MS,
+      lastTs: now - 1000,
+      tps: 19.5,
+      mspt: 4.0
+    }
+    const r1 = reconcileTps(fresh, 20, null, now)
+    if (!r1.bridge || r1.tps !== 19.5 || r1.mspt !== 4.0) {
+      return fail('a fresh bridge reading did not win over RCON')
+    }
+    // Quiet for longer than STALE_FACTOR intervals → stale → RCON wins, MSPT drops.
+    const stale: BridgeSnapshot = {
+      ...fresh,
+      lastTs: now - BRIDGE_DEFAULT_INTERVAL_MS * (BRIDGE_STALE_FACTOR + 1)
+    }
+    const r2 = reconcileTps(stale, 20, 19.5, now)
+    if (r2.bridge || r2.tps !== 20 || r2.mspt !== null) {
+      return fail('a silent bridge did not fall back to the RCON reading')
+    }
+    // Stale AND no RCON → the last known value is carried, never frozen as "bridge".
+    const r3 = reconcileTps(stale, null, 18.0, now)
+    if (r3.bridge || r3.tps !== 18.0) {
+      return fail('a stale bridge with no RCON did not carry the last value')
+    }
+    // Never connected → the plain RCON path.
+    const r4 = reconcileTps(newBridgeSnapshot(), 20, null, now)
+    if (r4.bridge || r4.tps !== 20) return fail('with no bridge the RCON reading should pass through')
+    console.log('BRIDGE-SMOKE: fresh wins, silent falls back to RCON, last value carried')
+
+    console.log('BRIDGE-SMOKE: PASS')
     app.exit(0)
   } catch (e) {
     fail('exception ' + String(e))

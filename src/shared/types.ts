@@ -90,6 +90,10 @@ export interface ServerStats {
   memoryMB: number
   players: { online: number; max: number; names: string[] }
   tps: number | null
+  /** Milliseconds per tick, from the MSMS-Bridge plugin. null without it. */
+  mspt: number | null
+  /** True while live bridge telemetry (real TPS/MSPT) is driving the figures. */
+  bridge: boolean
   uptimeMs: number
 }
 

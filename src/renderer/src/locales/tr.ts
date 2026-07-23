@@ -155,7 +155,9 @@ const tr: typeof en = {
     world: 'Dünya boyutu',
     quickActions: 'Hızlı işlemler',
     rconConnected: 'bağlı',
-    rconConnecting: 'bağlanıyor… (TPS/canlı oyuncular için RCON gerekir)'
+    rconConnecting: 'bağlanıyor… (TPS/canlı oyuncular için RCON gerekir)',
+    mspt: 'ms/tik',
+    bridgeActive: 'Köprü aktif — sunucudan canlı TPS/MSPT'
   },
   settings: {
     title: 'Ayarlar',

@@ -15,6 +15,14 @@ import * as events from './events'
 import { mt } from '../i18n'
 import { log } from '../logger'
 import { TPS_TYPES } from '@shared/types'
+import {
+  hasBridgeMarker,
+  parseBridgeLine,
+  newBridgeSnapshot,
+  reconcileTps,
+  type BridgeMessage,
+  type BridgeSnapshot
+} from '@shared/bridge'
 import type {
   LogLine,
   LogStream,
@@ -44,6 +52,9 @@ interface ManagedProcess {
   exitResolvers: Array<() => void>
   players: { online: number; max: number; names: string[] }
   tps: number | null
+  mspt: number | null
+  /** Live telemetry reported by the in-server MSMS-Bridge plugin, if present. */
+  bridge: BridgeSnapshot & { version?: string }
   ips: Record<string, string>
   /** 'error' and 'exit' can both fire; the timeline must get one entry. */
   terminalEmitted: boolean
@@ -78,7 +89,12 @@ export class ProcessManager extends EventEmitter {
           })
           .catch(() => {})
       }
-      mp.tps = rcon.getTps(mp.id) ?? mp.tps
+      // A fresh bridge reading beats RCON; a silent bridge falls back to it.
+      const now = Date.now()
+      const t = reconcileTps(mp.bridge, rcon.getTps(mp.id), mp.tps, now)
+      mp.tps = t.tps
+      mp.mspt = t.mspt
+      if (mp.bridge.connected && !t.bridge) mp.bridge.connected = false
       try {
         const u = await pidusage(pid)
         // pidusage reports % of a single core; normalize to % of the whole CPU.
@@ -90,7 +106,9 @@ export class ProcessManager extends EventEmitter {
           memoryMB,
           players: mp.players,
           tps: mp.tps,
-          uptimeMs: Date.now() - mp.startedAt
+          mspt: mp.mspt,
+          bridge: t.bridge,
+          uptimeMs: now - mp.startedAt
         })
         // Same reading feeds the history tiers (recorded here so it happens
         // whether the desktop UI, the web panel, or neither is open).
@@ -165,8 +183,62 @@ export class ProcessManager extends EventEmitter {
     while ((idx = mp[key].indexOf('\n')) >= 0) {
       const raw = mp[key].slice(0, idx).replace(/\r$/, '')
       mp[key] = mp[key].slice(idx + 1)
+      // Bridge lines are protocol, not console output — never show them in the
+      // log, whether they parse or not (spam in the console is worse than one
+      // hidden bad line). A malformed one is still worth a warning.
+      if (hasBridgeMarker(raw)) {
+        this.handleBridgeLine(mp, raw)
+        continue
+      }
       this.pushLog(mp, raw, stream)
       this.inspectLine(mp, raw)
+    }
+  }
+
+  private handleBridgeLine(mp: ManagedProcess, raw: string): void {
+    const msg = parseBridgeLine(raw)
+    if (!msg) {
+      log.warn(`[bridge] unparseable line (${mp.id}): ${raw.slice(0, 160)}`)
+      return
+    }
+    this.ingestBridge(mp, msg, Date.now())
+  }
+
+  /** Fold one decoded bridge message into the process' live state. */
+  private ingestBridge(mp: ManagedProcess, msg: BridgeMessage, now: number): void {
+    const b = mp.bridge
+    switch (msg.t) {
+      case 'hello':
+        b.connected = true
+        b.version = msg.pluginVersion
+        b.lastTs = now
+        if (msg.interval && msg.interval > 0) b.intervalMs = msg.interval
+        this.systemLine(mp, `[MSMS] Bridge connected — ${msg.plugin} v${msg.pluginVersion} (${msg.server} ${msg.mc})`)
+        break
+      case 'tick':
+        b.connected = true
+        b.lastTs = now
+        b.tps = Math.min(20, Math.max(0, msg.tps))
+        b.mspt = msg.mspt !== null ? Math.max(0, msg.mspt) : null
+        break
+      case 'players':
+        b.lastTs = now
+        // The plugin's own count is authoritative; positions are folded in a
+        // later slice (a per-world store), so they are accepted but not stored.
+        mp.players.online = msg.online
+        if (msg.list.length) mp.players.names = msg.list.map((p) => p.name)
+        break
+      case 'event':
+        // World/event ingestion (save spikes, chunk load storms) lands in a
+        // later slice — the protocol is frozen now, the wiring comes then.
+        b.lastTs = now
+        break
+      case 'bye':
+        b.connected = false
+        b.tps = null
+        b.mspt = null
+        this.systemLine(mp, `[MSMS] Bridge disconnected`)
+        break
     }
   }
 
@@ -252,6 +324,8 @@ export class ProcessManager extends EventEmitter {
       exitResolvers: [],
       players: { online: 0, max: 0, names: [] },
       tps: null,
+      mspt: null,
+      bridge: newBridgeSnapshot(),
       ips: {},
       terminalEmitted: false
     }
@@ -339,6 +413,8 @@ export class ProcessManager extends EventEmitter {
         exitResolvers: [],
         players: { online: 0, max: 0, names: [] },
         tps: null,
+        mspt: null,
+        bridge: newBridgeSnapshot(),
         ips: {},
         terminalEmitted: false
       }
@@ -360,6 +436,9 @@ export class ProcessManager extends EventEmitter {
     const doRestart =
       mp.restartAfterStop || (crashed && getServer(server.id)?.autoRestartOnCrash)
     mp.players = { online: 0, max: mp.players.max, names: [] }
+    // A stopped process reports no bridge; a restart re-establishes it via hello.
+    mp.bridge = newBridgeSnapshot()
+    mp.mspt = null
     if (doRestart) {
       this.systemLine(mp, `[MSMS] Auto-restarting…`)
       await wait(2500)

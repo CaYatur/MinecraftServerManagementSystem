@@ -23,7 +23,8 @@ import {
   runAnalysisSmoke,
   runWorldsSmoke,
   runJavaSmoke,
-  runModUpdateSmoke
+  runModUpdateSmoke,
+  runBridgeSmoke
 } from './smoke'
 import { registerImageScheme, handleImageProtocol, IMG_SCHEME } from './imgProtocol'
 import { SPLASH_HTML } from './splashHtml'
@@ -184,6 +185,14 @@ if (!gotLock) {
       runModUpdateSmoke().catch((e) => {
         // eslint-disable-next-line no-console
         console.log('MODUPDATE-SMOKE: FAIL - exception', String(e))
+        app.exit(1)
+      })
+      return
+    }
+    if (process.env['MSMS_SMOKE_BRIDGE']) {
+      runBridgeSmoke().catch((e) => {
+        // eslint-disable-next-line no-console
+        console.log('BRIDGE-SMOKE: FAIL - exception', String(e))
         app.exit(1)
       })
       return

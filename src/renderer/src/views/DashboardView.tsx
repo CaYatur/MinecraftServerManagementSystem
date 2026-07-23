@@ -95,6 +95,11 @@ export function DashboardView(): JSX.Element {
           value={
             !tpsSupported ? 'N/A' : running && stats?.tps != null ? stats.tps.toFixed(1) : '—'
           }
+          sub={
+            running && stats?.bridge && stats.mspt != null
+              ? `${stats.mspt.toFixed(1)} ${t('dashboard.mspt')}`
+              : undefined
+          }
         />
         <Stat
           icon={<Users size={13} />}
@@ -122,6 +127,12 @@ export function DashboardView(): JSX.Element {
         <p className="hint" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <span className={`dot ${rconOn ? 'running' : 'starting'}`} />
           RCON: {rconOn ? t('dashboard.rconConnected') : t('dashboard.rconConnecting')}
+        </p>
+      )}
+      {running && stats?.bridge && (
+        <p className="hint" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span className="dot running" />
+          {t('dashboard.bridgeActive')}
         </p>
       )}
 
