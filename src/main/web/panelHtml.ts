@@ -103,6 +103,10 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);
 .tab{padding:8px 14px;border-radius:10px;border:1px solid var(--border);background:var(--elev);color:var(--dim);font-weight:650;font-size:13.5px;cursor:pointer;transition:.16s}
 .tab:hover{color:var(--text)}
 .tab.on{background:linear-gradient(135deg,var(--accent),var(--accent2));border-color:transparent;color:#fff;box-shadow:0 8px 20px -12px var(--glow)}
+.audit-tbl{width:100%;border-collapse:collapse;font-size:12.5px}
+.audit-tbl th{text-align:left;padding:7px 10px;color:var(--dim);border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--elev)}
+.audit-tbl td{padding:6px 10px;border-bottom:1px solid var(--border);vertical-align:middle}
+.audit-tbl tr:last-child td{border-bottom:none}
 /* crate */
 .crate-modal{position:fixed;inset:0;background:rgba(0,0,0,.72);display:grid;place-items:center;z-index:50;padding:16px}
 .crate-box{background:linear-gradient(160deg,#17151b,#0c0c11);border:1px solid rgba(220,39,39,.45);border-radius:16px;padding:24px;width:min(470px,94vw);text-align:center;box-shadow:0 30px 70px rgba(0,0,0,.65)}
@@ -144,6 +148,7 @@ h2{margin:8px 0;font-weight:800;letter-spacing:-.4px}
     <div class="tabs">
       <button class="tab on" id="tabServersBtn" onclick="showSection('servers')">Servers</button>
       <button class="tab" id="tabNewsBtn" onclick="showSection('news')">News</button>
+      <button class="tab hidden" id="tabAuditBtn" onclick="showSection('audit')">Audit</button>
     </div>
     <div id="list"></div>
     <div id="newsSection" class="hidden">
@@ -163,6 +168,29 @@ h2{margin:8px 0;font-weight:800;letter-spacing:-.4px}
         </div>
       </div>
       <div id="newsList"></div>
+    </div>
+    <div id="auditSection" class="hidden">
+      <div class="card">
+        <div class="row" style="gap:8px;flex-wrap:wrap;align-items:center">
+          <input id="auditText" placeholder="Search actor, IP, action, target…" style="flex:1;min-width:180px" oninput="auditDebounce()"/>
+          <select id="auditSource" onchange="loadAudit()">
+            <option value="">All sources</option>
+            <option value="console">Console</option>
+            <option value="panel">Panel</option>
+            <option value="webpanel">Web panel</option>
+            <option value="public">Public site</option>
+            <option value="system">System</option>
+          </select>
+          <select id="auditOk" onchange="loadAudit()">
+            <option value="">All</option>
+            <option value="true">Success</option>
+            <option value="false">Failed</option>
+          </select>
+          <button class="btn sm" onclick="loadAudit()" title="Refresh">↻</button>
+        </div>
+        <div class="dim" id="auditMeta" style="font-size:12px;margin-top:8px"></div>
+      </div>
+      <div id="auditList"></div>
     </div>
   </div>
 
@@ -210,7 +238,8 @@ h2{margin:8px 0;font-weight:800;letter-spacing:-.4px}
 
 <script>
 var token=localStorage.getItem('msms_token')||'';
-var current=null, pollTimer=null, statsRange=86400000, activeTab='console';
+var current=null, pollTimer=null, statsRange=86400000, activeTab='console', myRole='';
+function applyRole(){var b=document.getElementById('tabAuditBtn');if(b)b.classList.toggle('hidden',myRole!=='owner')}
 function api(path,opts){opts=opts||{};opts.headers=Object.assign({'Content-Type':'application/json'},opts.headers||{});if(token)opts.headers['Authorization']='Bearer '+token;return fetch(path,opts).then(function(r){return r.json().then(function(j){return{ok:r.ok,status:r.status,body:j}})})}
 function show(id){['login','app','detail'].forEach(function(x){document.getElementById(x).classList.add('hidden')});document.getElementById(id).classList.remove('hidden');
  document.getElementById('logout').classList.toggle('hidden',id==='login');
@@ -219,7 +248,7 @@ function doLogin(){var u=document.getElementById('u').value,p=document.getElemen
  api('/api/login',{method:'POST',body:JSON.stringify({username:u,password:p})}).then(function(r){
   if(!r.ok){document.getElementById('loginErr').textContent=r.body.error==='too-many-attempts'?'Too many attempts, wait a bit.':'Invalid credentials';return}
   token=r.body.token;localStorage.setItem('msms_token',token);
-  if(r.body.user)document.getElementById('who').textContent=r.body.user.username+' · '+r.body.user.role;
+  if(r.body.user){document.getElementById('who').textContent=r.body.user.username+' · '+r.body.user.role;myRole=r.body.user.role||'';applyRole()}
   renderList(r.body.servers)})}
 function logout(){api('/api/logout',{method:'POST'});token='';localStorage.removeItem('msms_token');stopPoll();show('login')}
 function loadServers(){api('/api/servers').then(function(r){if(r.status===401){logout();return}renderList(r.body.servers)})}
@@ -232,7 +261,7 @@ function renderList(servers){show('app');var el=document.getElementById('list');
    '<div class="meta"><div class="name">'+esc(s.name)+'</div><div class="dim" style="font-size:13px">'+
    esc(s.type)+' · '+esc(s.mcVersion)+' · '+esc(s.status)+(players?' · '+players:'')+'</div></div><span class="chev">›</span></div>'}).join('');
  if(!document.getElementById('who').textContent){
-  api('/api/me').then(function(r){if(r.ok)document.getElementById('who').textContent=r.body.username+' · '+r.body.role})}}
+  api('/api/me').then(function(r){if(r.ok){document.getElementById('who').textContent=r.body.username+' · '+r.body.role;myRole=r.body.role||'';applyRole()}})}}
 function esc(t){var d=document.createElement('div');d.textContent=(t==null?'':t);return d.innerHTML}
 function openServer(id){api('/api/servers/'+id).then(function(r){if(!r.ok){alert('No access');return}current=r.body;renderDetail();startPoll()})}
 function renderDetail(){show('detail');var s=current;document.getElementById('dName').textContent=s.name;
@@ -356,9 +385,31 @@ var editingPost=null;
 function showSection(which){
  document.getElementById('list').classList.toggle('hidden',which!=='servers');
  document.getElementById('newsSection').classList.toggle('hidden',which!=='news');
+ document.getElementById('auditSection').classList.toggle('hidden',which!=='audit');
  document.getElementById('tabServersBtn').className='tab'+(which==='servers'?' on':'');
  document.getElementById('tabNewsBtn').className='tab'+(which==='news'?' on':'');
- if(which==='news'){loadPosts();loadUploads()}}
+ document.getElementById('tabAuditBtn').classList.toggle('on',which==='audit');
+ if(which==='news'){loadPosts();loadUploads()}
+ if(which==='audit'){loadAudit()}}
+var auditTimer=null;
+function auditDebounce(){clearTimeout(auditTimer);auditTimer=setTimeout(loadAudit,200)}
+function loadAudit(){var qs=['limit=500'];
+ var tx=document.getElementById('auditText').value.trim();if(tx)qs.push('text='+encodeURIComponent(tx));
+ var src=document.getElementById('auditSource').value;if(src)qs.push('sources='+encodeURIComponent(src));
+ var ok=document.getElementById('auditOk').value;if(ok)qs.push('ok='+ok);
+ api('/api/audit?'+qs.join('&')).then(function(r){
+  var el=document.getElementById('auditList'),meta=document.getElementById('auditMeta');
+  if(r.status===403){el.innerHTML='<div class="card dim">Owner access required to view the audit log.</div>';meta.textContent='';return}
+  if(!r.ok){el.innerHTML='<div class="card dim">Could not load the audit log.</div>';meta.textContent='';return}
+  var p=r.body;meta.textContent=(p.total||0)+' entries';
+  if(!p.entries||!p.entries.length){el.innerHTML='<div class="card dim">No matching audit entries.</div>';return}
+  var rows=p.entries.map(function(e){
+   return '<tr><td class="dim" style="white-space:nowrap">'+new Date(e.ts).toLocaleString()+'</td>'+
+    '<td>'+esc(e.source)+'</td><td><b>'+esc(e.action)+'</b></td><td>'+esc(e.actor)+'</td>'+
+    '<td class="dim">'+esc(e.ip||'—')+'</td><td class="dim">'+esc(e.target||e.detail||e.serverId||'—')+'</td>'+
+    '<td style="text-align:center">'+(e.ok?'<span style="color:#4ade80">✓</span>':'<span style="color:#f87171">✕</span>')+'</td></tr>'}).join('');
+  el.innerHTML='<div class="card tight" style="overflow-x:auto"><table class="audit-tbl"><thead><tr>'+
+   '<th>When</th><th>Source</th><th>Action</th><th>Actor</th><th>IP</th><th>Target</th><th>Outcome</th></tr></thead><tbody>'+rows+'</tbody></table></div>'})}
 function loadUploads(){api('/api/site/uploads').then(function(r){var sel=document.getElementById('npCover');if(!sel)return;
  if(!r.ok){sel.innerHTML='<option value="">(no cover)</option>';return}
  sel.innerHTML='<option value="">(no cover)</option>'+(r.body.uploads||[]).map(function(u){return '<option value="'+esc(u)+'">'+esc(u)+'</option>'}).join('')})}

@@ -528,6 +528,39 @@ async function handlePanel(req: IncomingMessage, res: ServerResponse): Promise<v
     }
   }
 
+  // ---- global audit log (owner only: entries carry player IPs, personal data) ----
+  if (path.startsWith('/api/audit')) {
+    if (user.role !== 'owner') return sendJson(res, 403, { error: 'forbidden', need: 'owner' })
+    if (path === '/api/audit' && method === 'GET') {
+      const q = url.searchParams
+      const csv = (k: string): string[] | undefined => {
+        const v = q.get(k)
+        const parts = v ? v.split(',').map((s) => s.trim()).filter(Boolean) : []
+        return parts.length ? parts : undefined
+      }
+      const numOf = (k: string): number | undefined => {
+        const v = q.get(k)
+        if (v == null || v === '') return undefined
+        const n = Number(v)
+        return Number.isFinite(n) ? n : undefined
+      }
+      const okRaw = q.get('ok')
+      return sendJson(res, 200, audit.query({
+        from: numOf('from'),
+        to: numOf('to'),
+        sources: csv('sources') as audit.AuditQuery['sources'],
+        actions: csv('actions'),
+        serverId: q.get('serverId') || undefined,
+        actor: q.get('actor') || undefined,
+        ip: q.get('ip') || undefined,
+        text: q.get('text') || undefined,
+        ok: okRaw == null ? undefined : okRaw === 'true',
+        limit: numOf('limit'),
+        offset: numOf('offset')
+      }))
+    }
+  }
+
   sendJson(res, 404, { error: 'not-found' })
 }
 

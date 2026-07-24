@@ -2713,6 +2713,53 @@ export async function runWebSmoke(): Promise<void> {
       }
     }
 
+    // ---- audit log over HTTP (#7): owner-only, filterable ----
+    {
+      const af = join(auditDir(), 'audit.jsonl')
+      const snap = existsSync(af) ? readFileSync(af, 'utf-8') : null
+      try {
+        rmSync(af, { force: true })
+        auditMod._reset()
+        const bt = Date.now()
+        auditMod.record({ source: 'webpanel', action: 'login', actor: 'owner_t', ok: true, ip: '198.51.100.9', ts: bt - 4000 })
+        auditMod.record({ source: 'webpanel', action: 'login', actor: 'mallory', ok: false, ip: '198.51.100.9', ts: bt - 3000 })
+        auditMod.record({ source: 'console', action: 'command.run', actor: 'operator', target: 'stop', serverId: id, ts: bt - 2000 })
+        auditMod.record({ source: 'public', action: 'purchase', actor: 'Steve', ok: true, ip: '203.0.113.4', target: 'VIP', ts: bt - 1000 })
+
+        // gate: no token -> 401, non-owner -> 403 (entries carry player IPs)
+        let ra = await get('/api/audit')
+        if (ra.status !== 401) return fail('no-token audit expected 401, got ' + ra.status)
+        ra = await get('/api/audit', ft)
+        if (ra.status !== 403) return fail('non-owner audit expected 403, got ' + ra.status)
+
+        // owner sees the whole log, newest-first, with per-source counts
+        ra = await get('/api/audit', ot)
+        if (ra.status !== 200) return fail('owner audit expected 200, got ' + ra.status)
+        const pg = (await ra.json()) as {
+          entries: { action: string; actor: string }[]
+          total: number
+          bySource: Record<string, number>
+        }
+        if (pg.total !== 4) return fail('audit endpoint total ' + pg.total)
+        if (pg.entries[0].action !== 'purchase') return fail('audit endpoint not newest-first')
+        if (pg.bySource.webpanel !== 2 || pg.bySource.console !== 1 || pg.bySource.public !== 1) {
+          return fail('audit endpoint bySource wrong: ' + JSON.stringify(pg.bySource))
+        }
+
+        // filters ride the query string
+        ra = await get('/api/audit?sources=public&text=vip', ot)
+        const f1 = (await ra.json()) as { total: number; entries: { actor: string }[] }
+        if (f1.total !== 1 || f1.entries[0].actor !== 'Steve') return fail('audit endpoint source+text filter')
+        ra = await get('/api/audit?ok=false', ot)
+        const f2 = (await ra.json()) as { total: number; entries: { actor: string }[] }
+        if (f2.total !== 1 || f2.entries[0].actor !== 'mallory') return fail('audit endpoint ok=false filter')
+        console.log('WEB-SMOKE: audit log over HTTP OK (owner 200 newest-first + filters, non-owner 403, no-token 401)')
+      } finally {
+        if (snap == null) rmSync(af, { force: true })
+        else writeFileSync(af, snap, 'utf-8')
+      }
+    }
+
     // ---- double-spend: two concurrent buys with balance for one -> exactly one wins ----
     webAuth.setUserMc(owner.id, 'Tester')
     economy.addBalance(id, 'Tester', 100)
