@@ -2929,6 +2929,63 @@ export async function runWebSmoke(): Promise<void> {
     if (finalBalance !== 50) return fail('balance after set should be 50, got ' + finalBalance)
     console.log('WEB-SMOKE: currency grant/remove/set + ledger OK (admin attributed, 403 for non-store)')
 
+    // ---- store config admin surface (products + currency), driven by the panel Manage tab ----
+    // These are the exact endpoints the new store-config UI calls; verify scope + round-trip.
+    r = await get('/api/servers/' + id + '/store/admin', ft)
+    if (r.status !== 403) return fail('non-store GET store/admin expected 403, got ' + r.status)
+    r = await get('/api/servers/' + id + '/store/admin', ot)
+    if (r.status !== 200) return fail('store GET store/admin expected 200, got ' + r.status)
+    const cfg = (await r.json()) as {
+      currency: string
+      products: Product[]
+      balances: Record<string, number>
+    }
+    if (typeof cfg.currency !== 'string' || !Array.isArray(cfg.products) || !cfg.balances) {
+      return fail('store/admin config missing currency/products/balances')
+    }
+    // currency edit is store-scope only
+    const curUrl = '/api/servers/' + id + '/store/admin/currency'
+    r = await post(curUrl, { currency: 'Gems' }, ft)
+    if (r.status !== 403) return fail('non-store set currency expected 403, got ' + r.status)
+    r = await post(curUrl, { currency: 'Gems' }, ot)
+    if (r.status !== 200) return fail('set currency expected 200, got ' + r.status)
+    if (economy.publicStore(id).currency !== 'Gems') return fail('currency not persisted')
+    economy.setCurrency(id, cfg.currency) // restore
+    // upsert a crate product over HTTP; the weighted reward pool must round-trip
+    const crate = {
+      id: '',
+      type: 'crate',
+      name: 'PanelCrate',
+      description: 'via panel',
+      price: 40,
+      commands: [],
+      rewards: [{ name: 'Rare', weight: 25, commands: ['give {player} minecraft:diamond 1'] }]
+    } as Product
+    r = await post('/api/servers/' + id + '/store/admin/product', crate, ft)
+    if (r.status !== 403) return fail('non-store upsert product expected 403, got ' + r.status)
+    r = await post('/api/servers/' + id + '/store/admin/product', crate, ot)
+    if (r.status !== 200) return fail('upsert product expected 200, got ' + r.status)
+    const saved = (await r.json()) as Product
+    if (!saved.id) return fail('upserted product has no id')
+    if (saved.type !== 'crate' || saved.rewards.length !== 1 || saved.rewards[0].name !== 'Rare') {
+      return fail('crate rewards did not round-trip: ' + JSON.stringify(saved.rewards))
+    }
+    if (!economy.getStoreConfig(id).products.some((p) => p.id === saved.id)) {
+      return fail('upserted product not in config')
+    }
+    // delete is store-scope only
+    const delUrl = '/api/servers/' + id + '/store/admin/delete'
+    r = await post(delUrl, { productId: saved.id }, ft)
+    if (r.status !== 403) return fail('non-store delete product expected 403, got ' + r.status)
+    r = await post(delUrl, { productId: saved.id }, ot)
+    if (r.status !== 200) return fail('delete product expected 200, got ' + r.status)
+    if (economy.getStoreConfig(id).products.some((p) => p.id === saved.id)) {
+      return fail('product not deleted')
+    }
+    console.log(
+      'WEB-SMOKE: store config admin OK (GET config, currency, crate upsert round-trip, delete; 403 for non-store)'
+    )
+
     // ---- public site (SITE listener) + separation + traversal ----
     r = await sget('/api/public/site')
     if (r.status !== 200) return fail('site /api/public/site expected 200, got ' + r.status)
