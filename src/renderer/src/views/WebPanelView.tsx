@@ -24,6 +24,7 @@ export function WebPanelView(): JSX.Element {
   const [newRole, setNewRole] = useState<WebRole>('user')
   const [permUser, setPermUser] = useState<WebUserView | null>(null)
   const [permDraft, setPermDraft] = useState<Record<string, Scope[]>>({})
+  const [auditDraft, setAuditDraft] = useState(false)
   const [pwUser, setPwUser] = useState<WebUserView | null>(null)
   const [pwVal, setPwVal] = useState('')
 
@@ -82,6 +83,7 @@ export function WebPanelView(): JSX.Element {
   const openPerms = (u: WebUserView): void => {
     setPermUser(u)
     setPermDraft(JSON.parse(JSON.stringify(u.perms || {})))
+    setAuditDraft(!!u.canAudit)
   }
   const toggleScope = (serverId: string, scope: Scope): void => {
     setPermDraft((prev) => {
@@ -96,6 +98,7 @@ export function WebPanelView(): JSX.Element {
     const clean: Record<string, Scope[]> = {}
     for (const [k, v] of Object.entries(permDraft)) if (v.length) clean[k] = v
     await window.msms.setWebUserPerms(permUser.id, clean)
+    if (auditDraft !== !!permUser.canAudit) await window.msms.setWebUserAudit(permUser.id, auditDraft)
     setPermUser(null)
     toast('success', 'web.saved')
     void refresh()
@@ -251,6 +254,17 @@ export function WebPanelView(): JSX.Element {
         <div className="modal-backdrop" onClick={() => setPermUser(null)}>
           <div className="modal" style={{ width: 'min(680px,94vw)' }} onClick={(e) => e.stopPropagation()}>
             <h3>{t('web.permsFor', { name: permUser.username })}</h3>
+            <div className="panel" style={{ padding: 12, marginBottom: 8 }}>
+              <label className="switch" style={{ fontSize: 13 }}>
+                <input
+                  type="checkbox"
+                  checked={auditDraft}
+                  onChange={() => setAuditDraft((v) => !v)}
+                />
+                {t('web.canAudit')}
+              </label>
+              <div className="dim" style={{ fontSize: 11, marginTop: 4 }}>{t('web.canAuditHint')}</div>
+            </div>
             <div style={{ maxHeight: '60vh', overflow: 'auto' }}>
               {servers.map((s) => (
                 <div key={s.id} className="panel" style={{ padding: 12, marginBottom: 8 }}>

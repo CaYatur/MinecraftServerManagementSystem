@@ -722,6 +722,8 @@ const tr: typeof en = {
     editPerms: 'İzinler',
     noUsers: 'Henüz panel kullanıcısı yok. Bir arkadaşınıza kapsamlı erişim vermek için ekleyin.',
     permsFor: 'İzinler — {{name}}',
+    canAudit: 'Denetim günlüğünü görüntüle',
+    canAuditHint: 'Hesap düzeyinde: bu kullanıcının, oyuncu IP adreslerini içeren genel denetim günlüğünü okumasına izin verir. Varsayılan olarak kapalı.',
     created: 'Kullanıcı oluşturuldu',
     saved: 'Kaydedildi',
     scope: {

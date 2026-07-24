@@ -328,7 +328,7 @@ async function handlePanel(req: IncomingMessage, res: ServerResponse): Promise<v
   }
 
   if (path === '/api/me' && method === 'GET') {
-    return sendJson(res, 200, { username: user.username, role: user.role })
+    return sendJson(res, 200, { username: user.username, role: user.role, canAudit: user.canAudit ?? false })
   }
 
   if (path === '/api/servers' && method === 'GET') {
@@ -577,7 +577,11 @@ async function handlePanel(req: IncomingMessage, res: ServerResponse): Promise<v
 
   // ---- global audit log (owner only: entries carry player IPs, personal data) ----
   if (path.startsWith('/api/audit')) {
-    if (user.role !== 'owner') return sendJson(res, 403, { error: 'forbidden', need: 'owner' })
+    // Owner, or a co-admin explicitly granted the account-level audit permission.
+    // (Entries carry player IPs — personal data — so this stays an explicit grant.)
+    if (user.role !== 'owner' && !user.canAudit) {
+      return sendJson(res, 403, { error: 'forbidden', need: 'audit' })
+    }
     if (path === '/api/audit' && method === 'GET') {
       const q = url.searchParams
       const csv = (k: string): string[] | undefined => {

@@ -381,6 +381,17 @@ export function registerIpc(): void {
   )
   H(IPC.webUserDelete, (_e, id: string) => auth.deleteUser(id))
   H(IPC.webUserPerms, (_e, id: string, perms: Record<string, Scope[]>) => auth.setUserPerms(id, perms))
+  H(IPC.webUserAudit, (_e, id: string, canAudit: boolean) => {
+    // Granting/revoking sight of the personal-data audit log is itself audited.
+    const username = auth.setUserAudit(id, !!canAudit)
+    audit.record({
+      source: 'panel',
+      action: 'user.audit-grant',
+      actor: 'operator',
+      target: username,
+      detail: canAudit ? 'granted' : 'revoked'
+    })
+  })
   H(IPC.webUserPassword, (_e, id: string, password: string) => auth.setUserPassword(id, password))
   H(IPC.webUserMc, (_e, id: string, mcName: string) => auth.setUserMc(id, mcName))
 

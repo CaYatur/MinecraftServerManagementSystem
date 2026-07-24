@@ -303,8 +303,8 @@ h2{margin:8px 0;font-weight:800;letter-spacing:-.4px}
 
 <script>
 var token=localStorage.getItem('msms_token')||'';
-var current=null, pollTimer=null, statsRange=86400000, activeTab='console', myRole='';
-function applyRole(){var b=document.getElementById('tabAuditBtn');if(b)b.classList.toggle('hidden',myRole!=='owner')}
+var current=null, pollTimer=null, statsRange=86400000, activeTab='console', myRole='', myCanAudit=false;
+function applyRole(){var b=document.getElementById('tabAuditBtn');if(b)b.classList.toggle('hidden',myRole!=='owner'&&!myCanAudit)}
 function api(path,opts){opts=opts||{};opts.headers=Object.assign({'Content-Type':'application/json'},opts.headers||{});if(token)opts.headers['Authorization']='Bearer '+token;return fetch(path,opts).then(function(r){return r.json().then(function(j){return{ok:r.ok,status:r.status,body:j}})})}
 function show(id){['login','app','detail'].forEach(function(x){document.getElementById(x).classList.add('hidden')});document.getElementById(id).classList.remove('hidden');
  document.getElementById('logout').classList.toggle('hidden',id==='login');
@@ -313,7 +313,7 @@ function doLogin(){var u=document.getElementById('u').value,p=document.getElemen
  api('/api/login',{method:'POST',body:JSON.stringify({username:u,password:p})}).then(function(r){
   if(!r.ok){document.getElementById('loginErr').textContent=r.body.error==='too-many-attempts'?'Too many attempts, wait a bit.':'Invalid credentials';return}
   token=r.body.token;localStorage.setItem('msms_token',token);
-  if(r.body.user){document.getElementById('who').textContent=r.body.user.username+' · '+r.body.user.role;myRole=r.body.user.role||'';applyRole()}
+  if(r.body.user){document.getElementById('who').textContent=r.body.user.username+' · '+r.body.user.role;myRole=r.body.user.role||'';myCanAudit=!!r.body.user.canAudit;applyRole()}
   renderList(r.body.servers)})}
 function logout(){api('/api/logout',{method:'POST'});token='';localStorage.removeItem('msms_token');stopPoll();show('login')}
 function loadServers(){api('/api/servers').then(function(r){if(r.status===401){logout();return}renderList(r.body.servers)})}
@@ -326,7 +326,7 @@ function renderList(servers){show('app');var el=document.getElementById('list');
    '<div class="meta"><div class="name">'+esc(s.name)+'</div><div class="dim" style="font-size:13px">'+
    esc(s.type)+' · '+esc(s.mcVersion)+' · '+esc(s.status)+(players?' · '+players:'')+'</div></div><span class="chev">›</span></div>'}).join('');
  if(!document.getElementById('who').textContent){
-  api('/api/me').then(function(r){if(r.ok){document.getElementById('who').textContent=r.body.username+' · '+r.body.role;myRole=r.body.role||'';applyRole()}})}}
+  api('/api/me').then(function(r){if(r.ok){document.getElementById('who').textContent=r.body.username+' · '+r.body.role;myRole=r.body.role||'';myCanAudit=!!r.body.canAudit;applyRole()}})}}
 function esc(t){var d=document.createElement('div');d.textContent=(t==null?'':t);return d.innerHTML}
 function openServer(id){api('/api/servers/'+id).then(function(r){if(!r.ok){alert('No access');return}current=r.body;renderDetail();startPoll()})}
 function renderDetail(){show('detail');var s=current;document.getElementById('dName').textContent=s.name;
