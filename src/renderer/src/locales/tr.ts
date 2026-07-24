@@ -152,7 +152,6 @@ const tr: typeof en = {
       accountsCol: 'Hesaplar',
       ipsCol: 'IP’ler',
       player: 'Hesap',
-      servers: 'Sunucular',
       joinsCol: 'Giriş',
       lastSeen: 'Son görülme',
       altBadge: 'alt?',

@@ -150,7 +150,6 @@ export default {
       accountsCol: 'Accounts',
       ipsCol: 'IPs',
       player: 'Account',
-      servers: 'Servers',
       joinsCol: 'Joins',
       lastSeen: 'Last seen',
       altBadge: 'alt?',
