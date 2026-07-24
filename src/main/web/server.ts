@@ -545,6 +545,8 @@ async function handlePanel(req: IncomingMessage, res: ServerResponse): Promise<v
         return Number.isFinite(n) ? n : undefined
       }
       const okRaw = q.get('ok')
+      // Only an explicit true/false filters; an empty or garbage ?ok= is ignored.
+      const okFilter = okRaw === 'true' ? true : okRaw === 'false' ? false : undefined
       return sendJson(res, 200, audit.query({
         from: numOf('from'),
         to: numOf('to'),
@@ -554,7 +556,7 @@ async function handlePanel(req: IncomingMessage, res: ServerResponse): Promise<v
         actor: q.get('actor') || undefined,
         ip: q.get('ip') || undefined,
         text: q.get('text') || undefined,
-        ok: okRaw == null ? undefined : okRaw === 'true',
+        ok: okFilter,
         limit: numOf('limit'),
         offset: numOf('offset')
       }))
