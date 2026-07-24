@@ -11,6 +11,21 @@ const PROXY_TYPES: ServerType[] = ['velocity', 'waterfall', 'bungeecord']
 const PRESETS: JavaPreset[] = ['aikars', 'aikars-large', 'basic']
 
 /**
+ * Display grouping for the type picker (in order). Only types that are also in
+ * CREATABLE_TYPES render; any creatable type not listed here falls into an
+ * "other" bucket at render time, so nothing silently disappears if the set grows.
+ */
+const TYPE_CATEGORIES: { key: string; types: ServerType[] }[] = [
+  { key: 'vanilla', types: ['vanilla'] },
+  { key: 'plugin', types: ['paper', 'purpur', 'folia'] },
+  { key: 'modded', types: ['forge', 'neoforge', 'fabric'] },
+  { key: 'hybrid', types: ['mohist'] },
+  { key: 'proxy', types: ['velocity'] }
+]
+/** Sensible defaults for newcomers, badged in the picker. */
+const RECOMMENDED: ServerType[] = ['vanilla', 'paper', 'fabric']
+
+/**
  * Turn a raw createServer error code into a human message. The backend surfaces
  * short codes (e.g. `no-mohist-build` when the upstream API lists a version but
  * has no build for it, or `empty-download` when a mirror serves a 0-byte body);
@@ -131,6 +146,20 @@ export function CreateView(): JSX.Element {
     }
   }
 
+  // Type picker grouped into explained categories; any creatable type not
+  // placed in TYPE_CATEGORIES lands in a trailing "other" group.
+  const categorized = useMemo(() => {
+    const seen = new Set<ServerType>()
+    const cats = TYPE_CATEGORIES.map((c) => {
+      const types = c.types.filter((tp) => CREATABLE_TYPES.includes(tp))
+      types.forEach((tp) => seen.add(tp))
+      return { key: c.key, types }
+    }).filter((c) => c.types.length > 0)
+    const other = CREATABLE_TYPES.filter((tp) => !seen.has(tp))
+    if (other.length) cats.push({ key: 'other', types: other })
+    return cats
+  }, [])
+
   const progressLabel = useMemo(() => {
     if (!progress) return ''
     switch (progress.stage) {
@@ -159,17 +188,29 @@ export function CreateView(): JSX.Element {
       {/* Step 1: type */}
       <div className="panel" style={{ maxWidth: 900 }}>
         <div className="field-label">{t('wizard.chooseType')}</div>
-        <div className="type-grid">
-          {CREATABLE_TYPES.map((tp) => (
-            <button
-              key={tp}
-              className={`type-card ${type === tp ? 'active' : ''}`}
-              onClick={() => setType(tp)}
-            >
-              {t(`types.${tp}`)}
-            </button>
-          ))}
-        </div>
+        {categorized.map((cat) => (
+          <div key={cat.key} className="type-cat">
+            <h4>{t(`wizard.cat.${cat.key}`)}</h4>
+            <p className="cat-desc">{t(`wizard.cat.${cat.key}Desc`)}</p>
+            <div className="type-grid">
+              {cat.types.map((tp) => (
+                <button
+                  key={tp}
+                  className={`type-card ${type === tp ? 'active' : ''}`}
+                  onClick={() => setType(tp)}
+                >
+                  <span className="tc-head">
+                    <span className="tc-name">{t(`types.${tp}`)}</span>
+                    {RECOMMENDED.includes(tp) && (
+                      <span className="tc-rec">{t('wizard.recommended')}</span>
+                    )}
+                  </span>
+                  <span className="tc-blurb">{t(`wizard.typeBlurb.${tp}`)}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
 
         {type && (
           <>

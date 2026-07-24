@@ -788,19 +788,63 @@ textarea.input:focus {
 }
 .type-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
   gap: 8px;
 }
+.type-cat {
+  margin-top: 16px;
+}
+.type-cat:first-of-type {
+  margin-top: 4px;
+}
+.type-cat > h4 {
+  margin: 0 0 2px;
+  font-size: 13.5px;
+  font-weight: 700;
+}
+.type-cat > .cat-desc {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.4;
+}
 .type-card {
-  padding: 12px 10px;
+  padding: 11px 12px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);
   background: var(--bg-input);
   color: var(--text);
-  font-weight: 600;
-  font-size: 13px;
-  text-align: center;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  cursor: pointer;
   transition: border-color 0.12s, background 0.12s;
+}
+.type-card .tc-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.type-card .tc-name {
+  font-weight: 650;
+  font-size: 13.5px;
+}
+.type-card .tc-rec {
+  font-size: 9.5px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+}
+.type-card .tc-blurb {
+  font-size: 11.5px;
+  color: var(--text-dim);
+  font-weight: 400;
+  line-height: 1.35;
 }
 .type-card:hover {
   background: var(--bg-hover);
