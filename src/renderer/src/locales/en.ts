@@ -273,7 +273,10 @@ export default {
     javaAutoContext: '(auto-detected: {{version}})',
     javaOk: 'Java {{java}} suits Minecraft {{mc}}.',
     javaTooOld: 'Minecraft {{mc}} needs Java {{min}} or newer — this is Java {{java}}. The server will not start.',
-    javaRisky: 'Minecraft {{mc}} was built for Java {{min}}. Java {{java}} often breaks server software of that era; Java {{max}} or lower is safer.'
+    javaRisky: 'Minecraft {{mc}} was built for Java {{min}}. Java {{java}} often breaks server software of that era; Java {{max}} or lower is safer.',
+    javaUse: 'Use Java {{major}}',
+    javaSwitchHint: 'A compatible Java {{major}} is already installed — one click to use it.',
+    javaNeedInstall: 'No compatible Java {{major}} is installed for Minecraft {{mc}}.'
   },
   create: {
     title: 'Create a new server',

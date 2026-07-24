@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Check, Terminal, RefreshCw, AlertTriangle, CheckCircle2, XCircle } from 'lucide-react'
+import { Check, Terminal, RefreshCw, AlertTriangle, CheckCircle2, XCircle, Wand2 } from 'lucide-react'
 import { useStore } from '../store'
-import { checkJava } from '@shared/javaCompat'
+import { checkJava, javaRequirement, javaVerdict } from '@shared/javaCompat'
+import { provisionPlan } from '@shared/javaProvision'
 import type { JavaArgsConfig, JavaInfo, JavaInstall, JavaPreset, ServerConfig } from '@shared/types'
 
 const PRESETS: JavaPreset[] = ['basic', 'aikars', 'aikars-large', 'proxy', 'custom']
@@ -78,6 +79,29 @@ export function ArgsEditor({ server }: { server: ServerConfig }): JSX.Element {
       verdict === 'too-old' ? <XCircle size={12} /> : verdict === 'risky-new' ? <AlertTriangle size={12} /> : <CheckCircle2 size={12} />
     return { cls, icon, text: t(key, data) + (data.context ? ` ${data.context}` : '') }
   }, [installs, autoJava, java.javaPath, server.mcVersion, t])
+
+  /**
+   * Beyond judging the current pick, offer the fix. If the Java that would
+   * actually launch is not compatible but a compatible one is already
+   * installed, one click switches the per-server path to it — writing an
+   * explicit path, never leaving it on the "auto" that ignores the requirement.
+   * When nothing installed fits we only flag it here; installing the missing
+   * Java lands in a later slice.
+   */
+  const provision = useMemo(() => {
+    const req = javaRequirement(server.mcVersion)
+    if (!req.known) return null
+    const plan = provisionPlan(req, installs)
+    const effective = installs.find((i) => i.path === java.javaPath) ?? autoJava
+    if (effective && javaVerdict(effective.major, req) === 'ok') return null
+    if (plan.state === 'ok' && plan.chosen && plan.chosen.path !== java.javaPath) {
+      return { kind: 'switch' as const, major: plan.chosen.major, path: plan.chosen.path }
+    }
+    if (plan.state === 'needs-install' && plan.suggestedMajor != null) {
+      return { kind: 'install' as const, major: plan.suggestedMajor }
+    }
+    return null
+  }, [installs, autoJava, java.javaPath, server.mcVersion])
 
   useEffect(() => {
     let alive = true
@@ -216,6 +240,27 @@ export function ArgsEditor({ server }: { server: ServerConfig }): JSX.Element {
           {compat && (
             <div className={`java-compat ${compat.cls}`}>
               {compat.icon} {compat.text}
+            </div>
+          )}
+          {provision?.kind === 'switch' && (
+            <div className="java-provision">
+              <span>{t('args.javaSwitchHint', { major: provision.major })}</span>
+              <button className="btn sm" onClick={() => set('javaPath', provision.path)}>
+                <Wand2 size={13} /> {t('args.javaUse', { major: provision.major })}
+              </button>
+            </div>
+          )}
+          {/*
+            Slice 1 only flags a missing compatible Java when nothing else is
+            already warning: when `compat` shows the "wrong Java" line, a second
+            red line saying "and no right one is installed" is just noise. When
+            no Java resolves at all `compat` is silent, so this is the only
+            signal. Slice 2 replaces this with an actionable "Install" button.
+          */}
+          {provision?.kind === 'install' && !compat && (
+            <div className="java-compat bad">
+              <AlertTriangle size={12} />{' '}
+              {t('args.javaNeedInstall', { major: provision.major, mc: server.mcVersion })}
             </div>
           )}
         </div>

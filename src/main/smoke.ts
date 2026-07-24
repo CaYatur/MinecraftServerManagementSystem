@@ -28,6 +28,7 @@ import * as alertsMod from './core/alerts'
 import * as worldsMod from './core/worlds'
 import { listJavaInstalls, _resetJavaCache } from './core/javaScan'
 import { checkJava, javaRequirement } from '@shared/javaCompat'
+import { pickJavaFor, provisionPlan } from '@shared/javaProvision'
 import { diffUpdates } from '@shared/mods'
 import type { MrVersion } from '@shared/mods'
 import { computeUptime, clipSessions } from '@shared/uptime'
@@ -904,6 +905,47 @@ export async function runJavaSmoke(): Promise<void> {
     console.log(
       `JAVA-SMOKE: scan OK (${installs.length} install(s): ${installs.map((i) => `${i.major}/${i.source}`).join(', ')})`
     )
+
+    // --- 6. the provision decision: pick a compatible install, or ask ------
+    // The pick must respect the era ceiling: newest-is-best hands a 1.12 server
+    // Java 21 (risky-new), which is the exact bug this replaces. `provisionPlan`
+    // must instead say "install Java 8" even though a 21 is sitting right there.
+    type J = { major: number; path: string }
+    const fake = (major: number): J => ({ major, path: `/x/j${major}` })
+
+    const only21 = [fake(21)]
+    const p112 = provisionPlan(javaRequirement('1.12.2'), only21)
+    if (p112.state !== 'needs-install') return fail('1.12 + only Java 21 must need an install')
+    if (p112.suggestedMajor !== 8) return fail(`1.12 should suggest Java 8, got ${p112.suggestedMajor}`)
+    if (p112.chosen !== null) return fail('1.12 + only Java 21 must not pick anything')
+    if (pickJavaFor(javaRequirement('1.12.2'), only21) !== null) {
+      return fail('pickJavaFor must reject a risky-new install')
+    }
+
+    // Both compatible → the one closest to `recommended` wins (8, not 11).
+    const j8 = fake(8)
+    const p112ok = provisionPlan(javaRequirement('1.12.2'), [fake(11), j8])
+    if (p112ok.state !== 'ok' || p112ok.chosen?.major !== 8) {
+      return fail(`1.12 + Java 8&11 should pick 8, got ${p112ok.state}/${p112ok.chosen?.major}`)
+    }
+
+    // Modern server, only old Javas → still an install (min not met).
+    const p121 = provisionPlan(javaRequirement('1.21'), [fake(8), fake(17)])
+    if (p121.state !== 'needs-install' || p121.suggestedMajor !== 21) {
+      return fail(`1.21 + Java 8&17 should need Java 21, got ${p121.state}/${p121.suggestedMajor}`)
+    }
+
+    // Exact recommended beats a newer-but-also-ok install (17 over 21 for 1.18).
+    const p118 = provisionPlan(javaRequirement('1.18'), [fake(21), fake(17)])
+    if (p118.state !== 'ok' || p118.chosen?.major !== 17) {
+      return fail(`1.18 + Java 17&21 should pick 17, got ${p118.state}/${p118.chosen?.major}`)
+    }
+
+    // An unreadable version stays silent — no plan, no nagging.
+    if (provisionPlan(javaRequirement('24w14a'), only21).state !== 'unknown') {
+      return fail('a snapshot version must yield an unknown plan')
+    }
+    console.log('JAVA-SMOKE: provision plan OK (ceiling respected, recommended preferred, snapshots silent)')
 
     console.log('JAVA-SMOKE: PASS')
     app.exit(0)
