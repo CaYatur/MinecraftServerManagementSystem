@@ -199,12 +199,42 @@ export function getPost(id: string): SitePost | undefined {
 }
 
 // ---- uploads ----
+/** Maximum accepted upload; also the streaming cap the HTTP layer enforces. */
+export const MAX_UPLOAD = MAX_IMG
+
+/**
+ * The only content types we accept, mapped to a single canonical extension
+ * (jpeg -> .jpg so callers never branch). SVG/HTML are deliberately absent:
+ * uploads are served back same-origin, so an executable type would be stored
+ * XSS. Every value here is in RASTER, so listUploads() surfaces them.
+ */
+const MIME_EXT: Record<string, string> = {
+  'image/png': '.png',
+  'image/jpeg': '.jpg',
+  'image/webp': '.webp',
+  'image/gif': '.gif'
+}
+
 export function saveImage(sourcePath: string): string {
   const ext = extname(sourcePath).toLowerCase()
   if (!RASTER.has(ext)) throw new Error('unsupported-image-type')
   if (statSync(sourcePath).size > MAX_IMG) throw new Error('image-too-large')
   const name = randomUUID() + ext
   copyFileSync(sourcePath, join(uploadsDir(), name))
+  return name
+}
+
+/**
+ * Save raw image bytes (from the web panel's upload endpoint). The content type
+ * is validated against the allowlist and the size against MAX_UPLOAD; the name
+ * is a fresh UUID so the client never influences the path.
+ */
+export function saveImageBuffer(buf: Buffer, mime: string): string {
+  const ext = MIME_EXT[String(mime || '').toLowerCase().split(';')[0].trim()]
+  if (!ext) throw new Error('unsupported-image-type')
+  if (buf.length > MAX_UPLOAD) throw new Error('image-too-large')
+  const name = randomUUID() + ext
+  writeFileSync(join(uploadsDir(), name), buf)
   return name
 }
 export function listUploads(): string[] {

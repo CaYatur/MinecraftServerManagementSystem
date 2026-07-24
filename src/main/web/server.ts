@@ -66,6 +66,36 @@ function readBody(req: IncomingMessage): Promise<unknown> {
   })
 }
 
+/**
+ * Buffer a raw (binary) request body. Once it passes `maxBytes` we stop keeping
+ * chunks — so memory stays bounded even for a chunked body with no
+ * content-length — but keep reading to `end` so the caller can still answer a
+ * clean 413 (destroying the socket mid-stream would surface as a reset instead).
+ * Only an egregious overrun (>2x) gets the socket destroyed, to stop real abuse.
+ * Used for image uploads; readBody is JSON-only + 256KB.
+ */
+function readRawBody(req: IncomingMessage, maxBytes: number): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = []
+    let size = 0
+    let tooBig = false
+    req.on('data', (c: Buffer) => {
+      size += c.length
+      if (size > maxBytes) {
+        tooBig = true
+        if (size > maxBytes * 2) {
+          reject(new Error('body-too-large'))
+          req.destroy()
+        }
+        return
+      }
+      chunks.push(c)
+    })
+    req.on('end', () => (tooBig ? reject(new Error('body-too-large')) : resolve(Buffer.concat(chunks))))
+    req.on('error', reject)
+  })
+}
+
 function bearer(req: IncomingMessage): string | undefined {
   const h = req.headers['authorization']
   if (h && h.startsWith('Bearer ')) return h.slice(7)
@@ -511,10 +541,26 @@ async function handlePanel(req: IncomingMessage, res: ServerResponse): Promise<v
     if (path === '/api/site/posts' && method === 'GET') {
       return sendJson(res, 200, { posts: site.getSiteConfig().posts })
     }
-    // Existing uploads can be attached from the panel; uploading itself stays a
-    // desktop-only action (no unauthenticated/large-body upload endpoint).
     if (path === '/api/site/uploads' && method === 'GET') {
       return sendJson(res, 200, { uploads: site.listUploads() })
+    }
+    // Upload a new image straight from the panel: raw bytes, content-type in the
+    // header, size capped while streaming. Gated by canSite like the rest.
+    if (path === '/api/site/upload' && method === 'POST') {
+      const mime = String(req.headers['content-type'] || '').split(';')[0].trim()
+      try {
+        const buf = await readRawBody(req, site.MAX_UPLOAD)
+        return sendJson(res, 200, { name: site.saveImageBuffer(buf, mime) })
+      } catch (e) {
+        const msg = String((e as Error)?.message ?? e)
+        const code =
+          msg === 'body-too-large' || msg === 'image-too-large'
+            ? 413
+            : msg === 'unsupported-image-type'
+              ? 415
+              : 400
+        return sendJson(res, code, { error: msg })
+      }
     }
     if (path === '/api/site/posts' && method === 'POST') {
       const b = (await readBody(req).catch(() => ({}))) as Partial<SitePost>

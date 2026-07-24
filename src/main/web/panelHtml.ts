@@ -107,6 +107,9 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);
 .audit-tbl th{text-align:left;padding:7px 10px;color:var(--dim);border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--elev)}
 .audit-tbl td{padding:6px 10px;border-bottom:1px solid var(--border);vertical-align:middle}
 .audit-tbl tr:last-child td{border-bottom:none}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{padding:5px 9px;font-size:11.5px;border-radius:8px;border:1px solid var(--border);background:var(--elev);color:var(--dim);cursor:pointer}
+.chip.on{border-color:transparent;color:#fff;background:linear-gradient(135deg,var(--accent),var(--accent2))}
 /* crate */
 .crate-modal{position:fixed;inset:0;background:rgba(0,0,0,.72);display:grid;place-items:center;z-index:50;padding:16px}
 .crate-box{background:linear-gradient(160deg,#17151b,#0c0c11);border:1px solid rgba(220,39,39,.45);border-radius:16px;padding:24px;width:min(470px,94vw);text-align:center;box-shadow:0 30px 70px rgba(0,0,0,.65)}
@@ -157,11 +160,19 @@ h2{margin:8px 0;font-weight:800;letter-spacing:-.4px}
         <input id="npTitle" placeholder="Title"/>
         <input id="npExcerpt" placeholder="Short summary (optional)"/>
         <textarea id="npBody" rows="7" placeholder="Write your post…"></textarea>
-        <div class="row" style="margin:6px 0">
+        <div class="dim" style="font-size:12px;margin:6px 0 2px">Cover image</div>
+        <div class="row" style="margin:2px 0">
           <select id="npCover" style="flex:1"></select>
           <button class="btn sm" onclick="loadUploads()" title="Refresh images">↻</button>
         </div>
-        <div class="row">
+        <div class="row" style="margin:6px 0">
+          <input type="file" id="npFile" accept="image/png,image/jpeg,image/webp,image/gif" style="display:none" onchange="uploadImage()"/>
+          <button class="btn sm" id="npUpBtn" onclick="document.getElementById('npFile').click()">Upload image…</button>
+          <span class="dim" id="npUpHint" style="font-size:12px"></span>
+        </div>
+        <div class="dim" style="font-size:12px;margin:4px 0 2px">Gallery images (click to include)</div>
+        <div id="npGallery" class="chips"></div>
+        <div class="row" style="margin-top:8px">
           <button class="btn primary" onclick="savePost()">Publish</button>
           <button class="btn sm" onclick="resetPostForm()">Clear</button>
           <span class="dim" id="npHint" style="font-size:12px"></span>
@@ -381,7 +392,7 @@ function startPoll(){stopPoll();pollConsole();pollTimer=setInterval(function(){p
 function stopPoll(){if(pollTimer){clearInterval(pollTimer);pollTimer=null}}
 function showList(){stopPoll();current=null;loadServers()}
 /* ---- news (publish to the public website from the panel) ---- */
-var editingPost=null;
+var editingPost=null;var galleryImages=[];var allUploads=[];
 function showSection(which){
  document.getElementById('list').classList.toggle('hidden',which!=='servers');
  document.getElementById('newsSection').classList.toggle('hidden',which!=='news');
@@ -410,9 +421,28 @@ function loadAudit(){var qs=['limit=500'];
     '<td style="text-align:center">'+(e.ok?'<span style="color:#4ade80">✓</span>':'<span style="color:#f87171">✕</span>')+'</td></tr>'}).join('');
   el.innerHTML='<div class="card tight" style="overflow-x:auto"><table class="audit-tbl"><thead><tr>'+
    '<th>When</th><th>Source</th><th>Action</th><th>Actor</th><th>IP</th><th>Target</th><th>Outcome</th></tr></thead><tbody>'+rows+'</tbody></table></div>'})}
-function loadUploads(){api('/api/site/uploads').then(function(r){var sel=document.getElementById('npCover');if(!sel)return;
- if(!r.ok){sel.innerHTML='<option value="">(no cover)</option>';return}
- sel.innerHTML='<option value="">(no cover)</option>'+(r.body.uploads||[]).map(function(u){return '<option value="'+esc(u)+'">'+esc(u)+'</option>'}).join('')})}
+function loadUploads(){return api('/api/site/uploads').then(function(r){var sel=document.getElementById('npCover');if(!sel)return;
+ if(!r.ok){allUploads=[];sel.innerHTML='<option value="">(no cover)</option>';renderGallery();return}
+ allUploads=r.body.uploads||[];var cover=sel.value;
+ sel.innerHTML='<option value="">(no cover)</option>'+allUploads.map(function(u){return '<option value="'+esc(u)+'">'+esc(u)+'</option>'}).join('');
+ sel.value=cover;renderGallery()})}
+function renderGallery(){var g=document.getElementById('npGallery');if(!g)return;
+ if(!allUploads.length){g.innerHTML='<span class="dim" style="font-size:12px">No images uploaded yet.</span>';return}
+ g.innerHTML=allUploads.map(function(u){var on=galleryImages.indexOf(u)>=0;
+  return '<button type="button" class="chip'+(on?' on':'')+'" onclick="toggleGallery(\\''+u+'\\')">'+esc(u.slice(0,14))+'</button>'}).join('')}
+function toggleGallery(name){var i=galleryImages.indexOf(name);if(i>=0)galleryImages.splice(i,1);else galleryImages.push(name);renderGallery()}
+function uploadImage(){var inp=document.getElementById('npFile'),hint=document.getElementById('npUpHint'),btn=document.getElementById('npUpBtn');
+ var f=inp.files&&inp.files[0];if(!f)return;
+ if(f.size>6*1024*1024){hint.textContent='Too large (max 6 MB)';return}
+ btn.disabled=true;hint.textContent='Uploading…';
+ fetch('/api/site/upload',{method:'POST',headers:{'Authorization':'Bearer '+token,'Content-Type':f.type},body:f})
+  .then(function(r){return r.json().then(function(j){return{ok:r.ok,status:r.status,body:j}})})
+  .then(function(r){btn.disabled=false;inp.value='';
+   if(!r.ok){hint.textContent='Failed: '+((r.body&&r.body.error)||r.status);return}
+   hint.textContent='Uploaded';var name=r.body.name;
+   loadUploads().then(function(){if(!document.getElementById('npCover').value)document.getElementById('npCover').value=name;
+    if(galleryImages.indexOf(name)<0)galleryImages.push(name);renderGallery()})})
+  .catch(function(){btn.disabled=false;hint.textContent='Upload failed'})}
 function loadPosts(){api('/api/site/posts').then(function(r){var el=document.getElementById('newsList');if(!el)return;
  if(!r.ok){el.innerHTML='<div class="card dim">No permission to manage news.</div>';return}
  var posts=r.body.posts||[];
@@ -426,13 +456,18 @@ function editPost(id){api('/api/site/posts').then(function(r){if(!r.ok)return;
  editingPost=p.id;document.getElementById('npTitle').value=p.title||'';
  document.getElementById('npExcerpt').value=p.excerpt||'';document.getElementById('npBody').value=p.body||'';
  document.getElementById('npCover').value=p.cover||'';
+ /* Load the existing gallery so saving an edit doesn't wipe it (the API
+    overwrites images[] whenever the field is present). */
+ galleryImages=(p.images||[]).slice();renderGallery();
  document.getElementById('newsFormTitle').textContent='Edit post';
  document.getElementById('npHint').textContent='editing';window.scrollTo(0,0)})}
 function resetPostForm(){editingPost=null;['npTitle','npExcerpt','npBody'].forEach(function(i){document.getElementById(i).value=''});
- document.getElementById('npCover').value='';document.getElementById('newsFormTitle').textContent='New post';document.getElementById('npHint').textContent=''}
+ document.getElementById('npCover').value='';galleryImages=[];renderGallery();
+ var uh=document.getElementById('npUpHint');if(uh)uh.textContent='';
+ document.getElementById('newsFormTitle').textContent='New post';document.getElementById('npHint').textContent=''}
 function savePost(){var body={id:editingPost||undefined,title:document.getElementById('npTitle').value,
  excerpt:document.getElementById('npExcerpt').value,body:document.getElementById('npBody').value,
- cover:document.getElementById('npCover').value||undefined};
+ cover:document.getElementById('npCover').value||undefined,images:galleryImages.slice()};
  if(!body.title.trim()){alert('Title required');return}
  api('/api/site/posts',{method:'POST',body:JSON.stringify(body)}).then(function(r){
   if(!r.ok){alert('Failed: '+(r.body.error||r.status));return}
