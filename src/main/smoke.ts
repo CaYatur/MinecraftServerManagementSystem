@@ -2974,6 +2974,30 @@ export async function runWebSmoke(): Promise<void> {
       }
     }
 
+    // ---- audit as a grantable account-level permission (#45) ----
+    // A dedicated user so we never flip friend_t's state under the other tests.
+    {
+      const auditor = webAuth.createUser('auditor_t', 'auditorpass', 'user', {})
+      const rl = await post('/api/login', { username: 'auditor_t', password: 'auditorpass' })
+      const at = ((await rl.json()) as { token: string }).token
+      let ra = await get('/api/audit', at)
+      if (ra.status !== 403) return fail('non-owner without canAudit expected 403, got ' + ra.status)
+      // grant -> reflected on the next request (resolveSession rebuilds from the store)
+      webAuth.setUserAudit(auditor.id, true)
+      ra = await get('/api/audit', at)
+      if (ra.status !== 200) return fail('granted canAudit expected 200, got ' + ra.status)
+      // /api/me carries the flag so the panel can reveal the Audit tab
+      ra = await get('/api/me', at)
+      const me = (await ra.json()) as { canAudit?: boolean }
+      if (me.canAudit !== true) return fail('/api/me should report canAudit=true, got ' + JSON.stringify(me))
+      // revoke -> back to 403
+      webAuth.setUserAudit(auditor.id, false)
+      ra = await get('/api/audit', at)
+      if (ra.status !== 403) return fail('revoked canAudit expected 403, got ' + ra.status)
+      webAuth.deleteUser(auditor.id)
+      console.log('WEB-SMOKE: audit grant OK (non-owner 403 → granted 200 + /api/me flag → revoked 403)')
+    }
+
     // ---- panel image upload (raw bytes, validated, settings-gated) ----
     {
       // a real 1x1 PNG so saveImageBuffer's checks run against genuine bytes

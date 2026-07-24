@@ -719,6 +719,8 @@ export default {
     editPerms: 'Permissions',
     noUsers: 'No panel users yet. Add one to give a friend scoped access.',
     permsFor: 'Permissions — {{name}}',
+    canAudit: 'View the audit log',
+    canAuditHint: 'Account-level: lets this user read the global audit log, which includes player IP addresses. Off by default.',
     created: 'User created',
     saved: 'Saved',
     scope: {

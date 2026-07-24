@@ -169,6 +169,7 @@ export const IPC = {
   webUserCreate: 'web:user-create',
   webUserDelete: 'web:user-delete',
   webUserPerms: 'web:user-perms',
+  webUserAudit: 'web:user-audit',
   webUserPassword: 'web:user-password',
   webUserMc: 'web:user-mc',
 
@@ -362,6 +363,8 @@ export interface MsmsApi {
   }): Promise<WebUserView>
   deleteWebUser(id: string): Promise<void>
   setWebUserPerms(id: string, perms: Record<string, Scope[]>): Promise<void>
+  /** Grant/revoke the account-level audit-log permission (owner-set, desktop-only). */
+  setWebUserAudit(id: string, canAudit: boolean): Promise<void>
   setWebUserPassword(id: string, password: string): Promise<void>
   setWebUserMc(id: string, mcName: string): Promise<void>
 

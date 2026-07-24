@@ -47,6 +47,8 @@ export interface WebUserView {
   perms: Record<string, Scope[]>
   /** Linked Minecraft username — required for store purchases/delivery. */
   mcName?: string
+  /** Account-level grant to read the global audit log (which carries player IPs). */
+  canAudit?: boolean
   createdAt: number
 }
 

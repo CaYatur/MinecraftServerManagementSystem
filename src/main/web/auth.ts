@@ -17,6 +17,8 @@ interface StoredUser {
   role: WebRole
   perms: Record<string, Scope[]>
   mcName?: string
+  /** Account-level grant to read the global audit log (personal-data IPs). */
+  canAudit?: boolean
   createdAt: number
 }
 
@@ -64,6 +66,7 @@ const view = (u: StoredUser): WebUserView => ({
   role: u.role,
   perms: u.perms,
   mcName: u.mcName,
+  canAudit: u.canAudit ?? false,
   createdAt: u.createdAt
 })
 
@@ -125,6 +128,16 @@ export function setUserPerms(id: string, perms: Record<string, Scope[]>): void {
   save()
 }
 
+/** Grant/revoke the account-level audit-log permission. Returns the username so
+ *  the caller (desktop IPC) can attribute the change in the audit log. */
+export function setUserAudit(id: string, canAudit: boolean): string {
+  const u = users.find((x) => x.id === id)
+  if (!u) throw new Error('user-not-found')
+  u.canAudit = canAudit
+  save()
+  return u.username
+}
+
 export function setUserPassword(id: string, password: string): void {
   const u = users.find((x) => x.id === id)
   if (!u) throw new Error('user-not-found')
@@ -141,6 +154,7 @@ export interface AuthUser {
   role: WebRole
   perms: Record<string, Scope[]>
   mcName?: string
+  canAudit?: boolean
 }
 
 export function login(username: string, password: string): { token: string; user: AuthUser } | null {
@@ -150,7 +164,7 @@ export function login(username: string, password: string): { token: string; user
   sessions.set(token, { userId: u.id, expires: Date.now() + SESSION_TTL })
   return {
     token,
-    user: { id: u.id, username: u.username, role: u.role, perms: u.perms, mcName: u.mcName }
+    user: { id: u.id, username: u.username, role: u.role, perms: u.perms, mcName: u.mcName, canAudit: u.canAudit ?? false }
   }
 }
 
@@ -168,7 +182,7 @@ export function resolveSession(token: string | undefined): AuthUser | null {
   }
   const u = users.find((x) => x.id === s.userId)
   if (!u) return null
-  return { id: u.id, username: u.username, role: u.role, perms: u.perms, mcName: u.mcName }
+  return { id: u.id, username: u.username, role: u.role, perms: u.perms, mcName: u.mcName, canAudit: u.canAudit ?? false }
 }
 
 /** The core authorization check — every HTTP route calls this. */

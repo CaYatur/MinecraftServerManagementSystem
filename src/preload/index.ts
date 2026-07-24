@@ -120,6 +120,7 @@ const api: MsmsApi = {
   createWebUser: (input) => ipcRenderer.invoke(IPC.webUserCreate, input),
   deleteWebUser: (id) => ipcRenderer.invoke(IPC.webUserDelete, id),
   setWebUserPerms: (id, perms) => ipcRenderer.invoke(IPC.webUserPerms, id, perms),
+  setWebUserAudit: (id, canAudit) => ipcRenderer.invoke(IPC.webUserAudit, id, canAudit),
   setWebUserPassword: (id, password) => ipcRenderer.invoke(IPC.webUserPassword, id, password),
   setWebUserMc: (id, mcName) => ipcRenderer.invoke(IPC.webUserMc, id, mcName),
 
