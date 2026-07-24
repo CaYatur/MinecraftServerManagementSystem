@@ -576,6 +576,25 @@ export async function runModUpdateSmoke(): Promise<void> {
     if (modsMod.loadersFor('unknown').length !== 0) return fail('unknown type should not filter by loader')
     console.log('MODUPDATE-SMOKE: loader family OK (plugin servers widen, modded/proxy stay single)')
 
+    // Browse-search loaders (#47): what the Modrinth tab filters by, so mods and
+    // plugins don't mix. Plugin servers = Bukkit family, modded = single loader,
+    // hybrid (mohist) = plugin family UNION its mod loaders (both must show),
+    // proxy = single, vanilla/unknown = unfiltered.
+    const sl = (t: Parameters<typeof modsMod.searchLoaders>[0]): string[] => modsMod.searchLoaders(t)
+    for (const l of ['paper', 'spigot', 'bukkit', 'purpur', 'folia']) {
+      if (!sl('paper').includes(l)) return fail(`paper browse should search ${l}`)
+    }
+    if (sl('fabric').join() !== 'fabric') return fail('fabric browse should search only fabric')
+    if (sl('forge').join() !== 'forge') return fail('forge browse should search only forge')
+    if (sl('velocity').join() !== 'velocity') return fail('velocity browse should search only velocity')
+    // hybrid must surface BOTH plugins and Forge mods
+    const moh = sl('mohist')
+    for (const l of ['paper', 'spigot', 'bukkit', 'forge']) {
+      if (!moh.includes(l)) return fail(`mohist (hybrid) browse should search ${l}, got ${moh.join()}`)
+    }
+    if (sl('vanilla').length !== 0) return fail('vanilla browse should not filter by loader')
+    console.log('MODUPDATE-SMOKE: browse-search loaders OK (plugin family, modded single, hybrid unions both)')
+
     console.log('MODUPDATE-SMOKE: PASS')
     app.exit(0)
   } catch (e) {

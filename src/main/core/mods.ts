@@ -116,9 +116,15 @@ const MR_LOADER: Partial<Record<ServerType, string>> = {
 export async function searchModrinth(id: string, query: string): Promise<ModrinthHit[]> {
   const server = getServer(id)
   if (!server) throw new Error('server-not-found')
-  const loader = MR_LOADER[server.type]
+  // Filter to the loaders this server can actually run. A single inner array is
+  // OR'd by Modrinth, so a plugin server matches the whole Bukkit family (incl.
+  // plugins tagged only `spigot`/`bukkit`); disjoint taxonomies then keep mods
+  // and plugins from mixing. Plugins are indexed as project_type "mod" on
+  // Modrinth, so we deliberately do NOT filter by project_type (it would drop
+  // every plugin) — the loader facet is the correct separator.
+  const loaders = searchLoaders(server.type)
   const facets: string[][] = []
-  if (loader) facets.push([`categories:${loader}`])
+  if (loaders.length) facets.push(loaders.map((l) => `categories:${l}`))
   if (server.mcVersion && server.mcVersion !== 'unknown') facets.push([`versions:${server.mcVersion}`])
   const url =
     `${MR}/search?limit=20&index=relevance&query=${encodeURIComponent(query)}` +
@@ -150,6 +156,26 @@ const PLUGIN_LOADER_FAMILY = ['paper', 'purpur', 'folia', 'spigot', 'bukkit']
 
 export function loadersFor(type: ServerType): string[] {
   if (PLUGIN_TYPES.includes(type) && !MODDED_TYPES.includes(type)) return PLUGIN_LOADER_FAMILY
+  const single = MR_LOADER[type]
+  return single ? [single] : []
+}
+
+/** Mod loaders a hybrid (mohist/arclight) can run alongside Bukkit plugins. */
+const HYBRID_MOD_LOADERS = ['forge']
+
+/**
+ * Modrinth loaders to *search* for a server type. Unlike loadersFor (which drives
+ * the hash-based update check), this decides what browse results a user should
+ * see, so a hybrid unions the plugin family with its mod loaders — mohist should
+ * show both plugins and Forge mods. Because the loader taxonomies are disjoint
+ * (nothing is tagged both `paper` and `fabric`), filtering to these loaders is
+ * what keeps a Fabric server from listing plugins and vice-versa. Pure.
+ */
+export function searchLoaders(type: ServerType): string[] {
+  const isPlugin = PLUGIN_TYPES.includes(type)
+  const isModded = MODDED_TYPES.includes(type)
+  if (isPlugin && isModded) return [...new Set([...PLUGIN_LOADER_FAMILY, ...HYBRID_MOD_LOADERS])]
+  if (isPlugin) return PLUGIN_LOADER_FAMILY
   const single = MR_LOADER[type]
   return single ? [single] : []
 }
