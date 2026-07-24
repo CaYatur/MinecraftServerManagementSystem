@@ -61,3 +61,87 @@ export function provisionPlan<T extends { major: number }>(
   if (chosen) return { state: 'ok', chosen, suggestedMajor: null }
   return { state: 'needs-install', chosen: null, suggestedMajor: req.recommended }
 }
+
+// ---------------------------------------------------------------------------
+// Installing a missing Java from Eclipse Temurin (Adoptium). The URL shaping
+// and package selection are pure so a wrong segment is a one-line, testable
+// fix; the download/extract itself lives in the main process (core/).
+// ---------------------------------------------------------------------------
+
+/** Adoptium os/arch segment names for one platform. */
+export interface AdoptiumTarget {
+  os: string
+  arch: string
+}
+
+/**
+ * Map Node's `platform`/`arch` to Adoptium's segment names, or null when there
+ * is no build we know how to name — the UI then declines to auto-install rather
+ * than fetch a guess.
+ */
+export function adoptiumTarget(platform: NodeJS.Platform, arch: string): AdoptiumTarget | null {
+  const os =
+    platform === 'win32'
+      ? 'windows'
+      : platform === 'darwin'
+        ? 'mac'
+        : platform === 'linux'
+          ? 'linux'
+          : null
+  const a = arch === 'x64' ? 'x64' : arch === 'arm64' ? 'aarch64' : null
+  return os && a ? { os, arch: a } : null
+}
+
+/**
+ * The Adoptium v3 "latest assets" endpoint for one JRE. It answers with the
+ * direct download link *and* its published SHA256, so the installer verifies
+ * against the vendor's own checksum rather than trusting the bytes.
+ */
+export function adoptiumAssetsUrl(major: number, target: AdoptiumTarget, imageType = 'jre'): string {
+  const q = new URLSearchParams({
+    architecture: target.arch,
+    image_type: imageType,
+    os: target.os,
+    vendor: 'eclipse'
+  })
+  return `https://api.adoptium.net/v3/assets/latest/${major}/hotspot?${q.toString()}`
+}
+
+/** The download details we sign against, pulled from an assets response. */
+export interface AdoptiumPackage {
+  link: string
+  checksum: string
+  name: string
+}
+
+/** The assets response, trimmed to the fields we read. */
+export interface AdoptiumAsset {
+  release_name?: string
+  binary?: { package?: Partial<AdoptiumPackage> }
+}
+
+/**
+ * Pull the download package out of an assets response, throwing a stable reason
+ * when it is empty or missing the link/checksum/name — the installer must never
+ * proceed on a half-answer (an unverifiable download is worse than none).
+ */
+export function pickAdoptiumPackage(assets: AdoptiumAsset[]): AdoptiumPackage {
+  const pkg = assets?.[0]?.binary?.package
+  if (!pkg?.link || !pkg.checksum || !pkg.name) throw new Error('no-adoptium-package')
+  return { link: pkg.link, checksum: pkg.checksum, name: pkg.name }
+}
+
+/** This slice only extracts .zip (Windows). tar.gz packages are declined. */
+export function isZipPackage(name: string): boolean {
+  return /\.zip$/i.test(name)
+}
+
+/** Phases surfaced to the UI while a JRE is being provisioned. */
+export type JavaInstallPhase = 'resolve' | 'download' | 'extract' | 'done'
+
+export interface JavaInstallProgress {
+  major: number
+  phase: JavaInstallPhase
+  /** 0..100 during download; omitted otherwise or when length is unknown. */
+  percent?: number
+}

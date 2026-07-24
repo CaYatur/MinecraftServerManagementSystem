@@ -10,6 +10,7 @@ import * as registry from '../core/serverRegistry'
 import { processManager } from '../core/processManager'
 import * as audit from '../core/audit'
 import * as joins from '../core/joins'
+import { installJava } from '../core/javaProvision'
 import { getProvider } from '../core/versions'
 import { createServer } from '../core/createServer'
 import { buildLaunchArgs } from '../core/javaArgs'
@@ -277,6 +278,17 @@ export function registerIpc(): void {
   H(IPC.javaResolve, (_e, override: string) =>
     detectJava((override && override.trim()) || getConfig().defaults.javaPath)
   )
+  // Downloading + running a JRE is worth a line in the trail, like server.create.
+  H(IPC.javaInstall, async (_e, major: number) => {
+    try {
+      const info = await installJava(major, (p) => broadcast(EVT.javaInstallProgress, p))
+      audit.record({ source: 'panel', action: 'java.install', actor: 'operator', target: `temurin-${major}`, detail: info.version })
+      return info
+    } catch (err) {
+      audit.record({ source: 'panel', action: 'java.install', actor: 'operator', ok: false, target: `temurin-${major}`, detail: String((err as Error)?.message ?? err) })
+      throw err
+    }
+  })
 
   // --- worlds ---
   H(IPC.worldsList, (_e, id: string) => worlds.listWorlds(id))

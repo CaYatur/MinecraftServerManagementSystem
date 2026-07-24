@@ -278,7 +278,14 @@ const tr: typeof en = {
     javaRisky: 'Minecraft {{mc}}, Java {{min}} için yapıldı. Java {{java}} o dönemin sunucu yazılımlarını sık sık bozar; Java {{max}} ve altı daha güvenli.',
     javaUse: 'Java {{major}} kullan',
     javaSwitchHint: 'Uyumlu bir Java {{major}} zaten kurulu — tek tıkla kullan.',
-    javaNeedInstall: 'Minecraft {{mc}} için uyumlu Java {{major}} kurulu değil.'
+    javaNeedInstall: 'Minecraft {{mc}} için uyumlu Java {{major}} kurulu değil.',
+    javaInstall: 'Java {{major}} kur',
+    javaInstalled: 'Java {{major}} kuruldu — bu sunucu için seçildi.',
+    javaInstallFailed: 'Java kurulamadı. Bağlantını kontrol edip tekrar dene.',
+    javaPhaseResolve: 'Uygun yapı bulunuyor…',
+    javaPhaseDownload: 'İndiriliyor…',
+    javaPhaseExtract: 'Çıkarılıyor…',
+    javaPhaseDone: 'Bitti'
   },
   create: {
     title: 'Yeni sunucu oluştur',

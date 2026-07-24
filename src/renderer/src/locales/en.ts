@@ -276,7 +276,14 @@ export default {
     javaRisky: 'Minecraft {{mc}} was built for Java {{min}}. Java {{java}} often breaks server software of that era; Java {{max}} or lower is safer.',
     javaUse: 'Use Java {{major}}',
     javaSwitchHint: 'A compatible Java {{major}} is already installed — one click to use it.',
-    javaNeedInstall: 'No compatible Java {{major}} is installed for Minecraft {{mc}}.'
+    javaNeedInstall: 'No compatible Java {{major}} is installed for Minecraft {{mc}}.',
+    javaInstall: 'Install Java {{major}}',
+    javaInstalled: 'Java {{major}} installed — now selected for this server.',
+    javaInstallFailed: "Couldn't install Java. Check your connection and try again.",
+    javaPhaseResolve: 'Finding the right build…',
+    javaPhaseDownload: 'Downloading…',
+    javaPhaseExtract: 'Extracting…',
+    javaPhaseDone: 'Done'
   },
   create: {
     title: 'Create a new server',
