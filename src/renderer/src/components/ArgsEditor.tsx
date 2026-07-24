@@ -146,6 +146,11 @@ export function ArgsEditor({ server }: { server: ServerConfig }): JSX.Element {
     try {
       const info = await window.msms.installJava(major)
       await loadInstalls(true)
+      // Persist immediately onto the *saved* config — installing is a heavyweight
+      // action and the toast says "now selected", so it must survive without a
+      // separate Save. Spread server.java (not local `java`) so an unrelated
+      // unsaved form edit isn't silently committed alongside it.
+      await updateServer(server.id, { java: { ...server.java, javaPath: info.path } })
       set('javaPath', info.path)
       toast('success', 'args.javaInstalled', { major: info.major })
     } catch (e) {

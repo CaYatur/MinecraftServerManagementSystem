@@ -69,7 +69,9 @@ export async function installJava(major: number, onProgress?: ProgressFn): Promi
   const staging = mkdtempSync(join(javaRoot(), '.msms-java-'))
   try {
     onProgress?.({ major, phase: 'download', percent: 0 })
-    const archivePath = join(staging, pkg.name)
+    // A fixed name — never the API-supplied pkg.name — so an external string is
+    // never used as a path component. adm-zip reads by content, not filename.
+    const archivePath = join(staging, 'jre.zip')
     // No timeout: a JRE is tens of MB and a slow link must not abort mid-stream.
     await downloadFile(pkg.link, archivePath, {
       sha256: pkg.checksum,
