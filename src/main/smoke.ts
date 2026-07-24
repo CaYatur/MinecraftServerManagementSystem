@@ -15,6 +15,7 @@ import { pickSiteLang } from './web/siteLang'
 import type { Product } from '@shared/web'
 import { getProvider } from './core/versions'
 import { createServer } from './core/createServer'
+import { pickForgeRunJar } from './core/serverDetect'
 import { removeServer } from './core/serverRegistry'
 import * as sf from './core/serverFiles'
 import * as playersMod from './core/players'
@@ -2635,6 +2636,43 @@ export async function runWizardSmoke(): Promise<void> {
     if (!jarOk || !eulaOk || !propsOk || !registered) return fail('created server missing files')
   } catch (e) {
     return fail('fabric create threw: ' + String(e))
+  }
+
+  // 3. Forge/NeoForge run-jar fallback for pre-1.17 (the installer itself needs
+  //    a real JDK, so exercise the pure jar-vs-args decision instead). #42
+  {
+    const inst12 = 'forge-1.12.2-14.23.5.2860-installer.jar'
+    const pick12 = pickForgeRunJar(
+      [inst12, 'forge-1.12.2-14.23.5.2860-universal.jar', 'minecraft_server.1.12.2.jar'],
+      inst12,
+      'forge'
+    )
+    if (pick12 !== 'forge-1.12.2-14.23.5.2860-universal.jar') {
+      return fail('pre-1.12 forge should pick the universal jar, got ' + pick12)
+    }
+    const inst16 = 'forge-1.16.5-36.2.39-installer.jar'
+    const pick16 = pickForgeRunJar([inst16, 'forge-1.16.5-36.2.39.jar'], inst16, 'forge')
+    if (pick16 !== 'forge-1.16.5-36.2.39.jar') {
+      return fail('1.16 forge should pick the loader run jar, got ' + pick16)
+    }
+    // 1.17+ leaves only the installer (it uses @args) -> no run jar to fall back to.
+    const inst20 = 'forge-1.20.1-47.2.0-installer.jar'
+    if (pickForgeRunJar([inst20], inst20, 'forge') !== null) {
+      return fail('1.17+ forge (installer only) should yield no run jar')
+    }
+    // Never pick the installer itself, and never a plain vanilla server jar.
+    if (pickForgeRunJar([inst12, 'minecraft_server.1.12.2.jar'], inst12, 'forge') !== null) {
+      return fail('forge fallback must not pick the installer or a vanilla server jar')
+    }
+    // NeoForge keyword is honoured (defensive; NeoForge is always 1.20.1+).
+    const instNeo = 'neoforge-20.4.100-installer.jar'
+    if (
+      pickForgeRunJar([instNeo, 'neoforge-20.4.100-universal.jar'], instNeo, 'neoforge') !==
+      'neoforge-20.4.100-universal.jar'
+    ) {
+      return fail('neoforge fallback should pick the neoforge universal jar')
+    }
+    console.log('WIZARD-SMOKE: forge run-jar fallback OK (universal/loader/none, installer excluded)')
   }
 
   console.log('WIZARD-SMOKE: PASS')
