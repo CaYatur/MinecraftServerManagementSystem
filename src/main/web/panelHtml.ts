@@ -128,6 +128,14 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);
 .crate-result{margin-top:15px;font-size:19px;font-weight:850;min-height:26px}
 .crate-result.win{color:var(--accent);animation:pulse .5s ease 3}
 @keyframes pulse{50%{transform:scale(1.12)}}
+/* store admin */
+.mrow{display:flex;gap:10px;align-items:center;padding:9px 0;border-bottom:1px solid var(--border)}
+.mrow:last-child{border-bottom:none}
+.mrow .ic{width:20px;text-align:center;flex:none}
+.pm-modal{position:fixed;inset:0;background:rgba(0,0,0,.72);display:grid;place-items:center;z-index:50;padding:16px}
+.pm-box{background:linear-gradient(160deg,#17151b,#0c0c11);border:1px solid var(--border);border-radius:16px;padding:20px;width:min(560px,95vw);max-height:88vh;overflow:auto;box-shadow:0 30px 70px rgba(0,0,0,.65)}
+.pm-box label{display:block;font-size:12px;color:var(--dim);margin-top:8px}
+.rw-card{border:1px solid var(--border);border-radius:10px;padding:10px;margin:8px 0;background:var(--elev)}
 .title{font-weight:800;font-size:18px;margin:2px 0 12px;display:flex;align-items:center;gap:9px}
 .title::before{content:'';width:4px;height:17px;border-radius:3px;background:var(--accent);box-shadow:0 0 12px var(--glow)}
 h2{margin:8px 0;font-weight:800;letter-spacing:-.4px}
@@ -223,6 +231,7 @@ h2{margin:8px 0;font-weight:800;letter-spacing:-.4px}
       <button class="tab" id="tabStats" onclick="showTab('stats')">Performance</button>
       <button class="tab" id="tabTimeline" onclick="showTab('timeline')">Timeline</button>
       <button class="tab" id="tabStore" onclick="showTab('store')">Store</button>
+      <button class="tab hidden" id="tabManageBtn" onclick="showTab('manage')">Manage</button>
     </div>
     <div id="panelConsole">
       <div id="dConsole" class="console"></div>
@@ -245,8 +254,26 @@ h2{margin:8px 0;font-weight:800;letter-spacing:-.4px}
       <div class="row" style="margin-bottom:10px"><b>Store</b><div class="spacer"></div><span id="dBal" class="badge"></span></div>
       <div id="dProducts" class="pgrid"></div>
     </div>
+    <div id="panelManage" class="hidden">
+      <div class="card">
+        <div class="title">Store settings</div>
+        <div class="row" style="align-items:flex-end">
+          <div style="flex:1;min-width:160px"><div class="dim" style="font-size:12px">Currency</div><input id="mCur" placeholder="Coins"/></div>
+          <button class="btn primary" onclick="saveCurrency()">Save</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="row"><b>Products</b><div class="spacer"></div>
+          <button class="btn sm" onclick="pmNew('item')">＋ Item</button>
+          <button class="btn sm" onclick="pmNew('crate')">🎁 Crate</button>
+        </div>
+        <div id="mProducts" style="margin-top:10px"></div>
+      </div>
+    </div>
   </div>
 </div>
+
+<div id="pmModal" class="pm-modal hidden" onclick="pmBackdrop(event)"><div class="pm-box" id="pmBox"></div></div>
 
 <div id="crate" class="crate-modal hidden" onclick="closeCrate(event)">
   <div class="crate-box">
@@ -290,12 +317,14 @@ function renderDetail(){show('detail');var s=current;document.getElementById('dN
  var c=document.getElementById('dControls');c.innerHTML='';
  if(has('power')){c.innerHTML=[['start','▶ Start'],['stop','■ Stop'],['restart','↻ Restart'],['kill','⚡ Kill']].map(function(a){
    return '<button class="btn sm'+(a[0]==='start'?' primary':a[0]==='kill'?' danger':'')+'" onclick="power(\\''+a[0]+'\\')">'+a[1]+'</button>'}).join('')}
- document.getElementById('dCmdRow').style.display=has('console')?'flex':'none';showTab('console')}
+ document.getElementById('dCmdRow').style.display=has('console')?'flex':'none';
+ document.getElementById('tabManageBtn').classList.toggle('hidden',!has('store'));showTab('console')}
 function showTab(tab){activeTab=tab;
- [['console','panelConsole','tabConsole'],['stats','panelStats','tabStats'],['timeline','panelTimeline','tabTimeline'],['store','panelStore','tabStore']]
+ [['console','panelConsole','tabConsole'],['stats','panelStats','tabStats'],['timeline','panelTimeline','tabTimeline'],['store','panelStore','tabStore'],['manage','panelManage','tabManageBtn']]
   .forEach(function(t){document.getElementById(t[1]).classList.toggle('hidden',tab!==t[0]);
    document.getElementById(t[2]).classList.toggle('on',tab===t[0])});
  if(tab==='store')loadStore();
+ if(tab==='manage')loadManage();
  if(tab==='stats')loadStats();
  if(tab==='timeline')loadEvents()}
 
@@ -387,10 +416,67 @@ function loadEvents(){
 
 /* ---- store ---- */
 function loadStore(){api('/api/servers/'+current.id+'/store').then(function(r){if(!r.ok)return;api('/api/servers/'+current.id+'/store/balance').then(function(b){var bal=b.ok?b.body:{balance:0,mcName:null};document.getElementById('dBal').textContent=(bal.mcName?bal.mcName+': ':'')+(bal.balance||0)+' '+(r.body.currency||'');renderProducts(r.body)})})}
-function renderProducts(store){var el=document.getElementById('dProducts');if(!store.products.length){el.innerHTML='<div class="dim">No products yet.</div>';return}el.innerHTML=store.products.map(function(p){return '<div class="pcard">'+(p.icon?'<img src="'+esc(p.icon)+'"/>':'')+'<div class="pname">'+esc(p.name)+(p.type==='crate'?' 🎁':'')+'</div><div class="pdesc">'+esc(p.description||'')+'</div><div class="row"><span class="price">'+p.price+' '+esc(store.currency)+'</span><div class="spacer"></div><button class="btn primary sm" onclick="buy(\\''+p.id+'\\')">Buy</button></div></div>'}).join('')}
+function renderProducts(store){var el=document.getElementById('dProducts');if(!store.products.length){el.innerHTML='<div class="dim">No products yet.</div>';return}el.innerHTML=store.products.map(function(p){return '<div class="pcard">'+(p.icon?'<img src="'+escAttr(p.icon)+'"/>':'')+'<div class="pname">'+esc(p.name)+(p.type==='crate'?' 🎁':'')+'</div><div class="pdesc">'+esc(p.description||'')+'</div><div class="row"><span class="price">'+p.price+' '+esc(store.currency)+'</span><div class="spacer"></div><button class="btn primary sm" onclick="buy(\\''+p.id+'\\')">Buy</button></div></div>'}).join('')}
 function buy(pid){api('/api/servers/'+current.id+'/store/buy',{method:'POST',body:JSON.stringify({productId:pid})}).then(function(r){if(!r.ok){alert(r.body.error==='insufficient'?'Not enough balance':r.body.error==='no-mc-linked'?'No Minecraft name linked to your account':('Error: '+r.body.error));return}loadStore();if(r.body.reward&&r.body.reward.crate){openCrate(r.body.reward)}else{alert('You received: '+(r.body.reward?r.body.reward.name:''))}})}
 function openCrate(reward){var modal=document.getElementById('crate');modal.classList.remove('hidden');var reel=document.getElementById('reel');var res=document.getElementById('crateResult');res.textContent='';res.className='crate-result';var pool=reward.pool&&reward.pool.length?reward.pool:[{name:reward.name}];var strip=[];for(var i=0;i<40;i++){strip.push(pool[Math.floor(Math.random()*pool.length)])}var winIdx=strip.length-4;strip[winIdx]={name:reward.name,icon:reward.icon};reel.style.transition='none';reel.style.transform='translateX(0)';reel.innerHTML=strip.map(function(it){return '<div class="reel-item">'+(it.icon?'<img src="'+esc(it.icon)+'"/>':'')+esc(it.name)+'</div>'}).join('');var itemW=128;var mask=document.querySelector('.reel-mask').clientWidth;var offset=winIdx*itemW-(mask/2-60);requestAnimationFrame(function(){reel.style.transition='transform 4s cubic-bezier(.12,.7,.2,1)';reel.style.transform='translateX(-'+offset+'px)'});setTimeout(function(){res.textContent='🎉 '+reward.name;res.className='crate-result win'},4100)}
 function closeCrate(e){if(e&&e.target&&e.target.id!=='crate'&&e.target.tagName!=='BUTTON')return;document.getElementById('crate').classList.add('hidden')}
+
+/* ---- store admin: configuration (store scope) ---- */
+function escAttr(t){return esc(t).replace(/"/g,'&quot;')}
+var mstore={currency:'Coins',products:[]}, pmDraft=null;
+function loadManage(){api('/api/servers/'+current.id+'/store/admin').then(function(r){
+ if(!r.ok){document.getElementById('mProducts').innerHTML='<div class="dim">No access.</div>';return}
+ mstore=r.body;document.getElementById('mCur').value=mstore.currency||'';renderMProducts()})}
+function saveCurrency(){var c=document.getElementById('mCur').value.trim()||'Coins';
+ api('/api/servers/'+current.id+'/store/admin/currency',{method:'POST',body:JSON.stringify({currency:c})}).then(function(r){if(!r.ok){alert('Could not save currency');return}loadManage()})}
+function renderMProducts(){var el=document.getElementById('mProducts');var ps=mstore.products||[];
+ if(!ps.length){el.innerHTML='<div class="dim">No products yet.</div>';return}
+ el.innerHTML=ps.map(function(p){return '<div class="mrow"><span class="ic">'+(p.type==='crate'?'🎁':'📦')+'</span>'+
+  '<div style="flex:1;min-width:0"><div style="font-weight:700">'+esc(p.name)+'</div>'+
+  '<div class="dim" style="font-size:12px">'+(p.price||0)+' '+esc(mstore.currency||'')+' · '+esc(p.description||'')+'</div></div>'+
+  '<button class="btn sm" onclick="pmEdit(\\''+p.id+'\\')">Edit</button>'+
+  '<button class="btn sm danger" onclick="pmDelete(\\''+p.id+'\\')">🗑</button></div>'}).join('')}
+function pmDelete(id){if(!confirm('Delete this product?'))return;
+ api('/api/servers/'+current.id+'/store/admin/delete',{method:'POST',body:JSON.stringify({productId:id})}).then(function(r){if(r.ok)loadManage()})}
+function pmNew(type){pmDraft={id:'',type:type,name:'',description:'',price:100,icon:'',_cmdText:'',rewards:type==='crate'?[{name:'Common',weight:70,icon:'',_ct:''}]:[]};renderPmEditor()}
+function pmEdit(id){var p=null,ps=mstore.products||[];for(var i=0;i<ps.length;i++){if(ps[i].id===id)p=ps[i]}if(!p)return;
+ pmDraft={id:p.id,type:p.type==='crate'?'crate':'item',name:p.name||'',description:p.description||'',price:p.price||0,icon:p.icon||'',_cmdText:(p.commands||[]).join('\\n'),
+  rewards:(p.rewards||[]).map(function(r){return {name:r.name||'',weight:r.weight||0,icon:r.icon||'',_ct:(r.commands||[]).join('\\n')}})};renderPmEditor()}
+function pmClose(){document.getElementById('pmModal').classList.add('hidden')}
+function pmBackdrop(e){if(e.target&&e.target.id==='pmModal')pmClose()}
+function pmField(f,v){pmDraft[f]=v}
+function pmSetReward(i,f,v){var r=pmDraft.rewards[i];if(!r)return;r[f]=v;if(f==='weight')pmPct()}
+function pmPct(){var tot=0;(pmDraft.rewards||[]).forEach(function(r){tot+=Math.max(0,Number(r.weight)||0)});if(!tot)tot=1;
+ (pmDraft.rewards||[]).forEach(function(r,i){var b=document.getElementById('pmPct'+i);if(b)b.textContent=Math.round(Math.max(0,Number(r.weight)||0)/tot*100)+'%'})}
+function pmAddReward(){pmDraft.rewards.push({name:'',weight:10,icon:'',_ct:''});renderPmEditor()}
+function pmDelReward(i){pmDraft.rewards.splice(i,1);renderPmEditor()}
+function renderPmEditor(){var d=pmDraft;
+ var h='<h3 style="margin:0 0 10px">'+(d.id?'Edit ':'New ')+(d.type==='crate'?'crate':'item')+'</h3>';
+ h+='<div class="row" style="gap:10px">'+
+  '<div style="flex:1;min-width:150px"><label>Name</label><input value="'+escAttr(d.name)+'" oninput="pmField(\\'name\\',this.value)"/></div>'+
+  '<div style="width:120px"><label>Price</label><input type="number" value="'+(Number(d.price)||0)+'" oninput="pmField(\\'price\\',Number(this.value))"/></div></div>';
+ h+='<label>Description</label><input value="'+escAttr(d.description)+'" oninput="pmField(\\'description\\',this.value)"/>';
+ h+='<label>Icon URL (optional)</label><input value="'+escAttr(d.icon)+'" oninput="pmField(\\'icon\\',this.value)"/>';
+ if(d.type==='item'){
+  h+='<label>Commands — one per line, {player} = buyer</label><textarea style="min-height:90px" oninput="pmField(\\'_cmdText\\',this.value)">'+esc(d._cmdText)+'</textarea>';
+ }else{
+  h+='<label>Rewards (weighted)</label>';
+  h+=(d.rewards||[]).map(function(r,i){return '<div class="rw-card"><div class="row" style="gap:8px">'+
+   '<input style="flex:1;min-width:100px" placeholder="Reward name" value="'+escAttr(r.name)+'" oninput="pmSetReward('+i+',\\'name\\',this.value)"/>'+
+   '<input style="width:78px" type="number" placeholder="Weight" value="'+(Number(r.weight)||0)+'" oninput="pmSetReward('+i+',\\'weight\\',Number(this.value))"/>'+
+   '<span class="badge" id="pmPct'+i+'"></span>'+
+   '<button class="btn sm danger" onclick="pmDelReward('+i+')">✕</button></div>'+
+   '<input placeholder="Icon URL (optional)" value="'+escAttr(r.icon||'')+'" oninput="pmSetReward('+i+',\\'icon\\',this.value)"/>'+
+   '<textarea style="min-height:48px" placeholder="give {player} minecraft:diamond 3" oninput="pmSetReward('+i+',\\'_ct\\',this.value)">'+esc(r._ct||'')+'</textarea></div>'}).join('');
+  h+='<button class="btn sm" onclick="pmAddReward()">＋ Add reward</button>';
+ }
+ h+='<div class="row" style="justify-content:flex-end;margin-top:14px"><button class="btn" onclick="pmClose()">Cancel</button><button class="btn primary" onclick="pmSave()">Save</button></div>';
+ document.getElementById('pmBox').innerHTML=h;document.getElementById('pmModal').classList.remove('hidden');if(d.type==='crate')pmPct()}
+function pmSave(){var d=pmDraft;var split=function(t){return (t||'').split('\\n').map(function(s){return s.trim()}).filter(Boolean)};
+ var product={id:d.id||'',type:d.type==='crate'?'crate':'item',name:(d.name||'').trim()||'Product',description:d.description||'',price:Math.max(0,Math.floor(Number(d.price)||0)),icon:d.icon||'',
+  commands:d.type==='item'?split(d._cmdText):[],
+  rewards:d.type==='crate'?(d.rewards||[]).map(function(r){return {name:r.name||'',weight:Math.max(0,Number(r.weight)||0),icon:r.icon||'',commands:split(r._ct)}}):[]};
+ api('/api/servers/'+current.id+'/store/admin/product',{method:'POST',body:JSON.stringify(product)}).then(function(r){if(!r.ok){alert('Could not save product');return}pmClose();loadManage()})}
 function power(a){api('/api/servers/'+current.id+'/power',{method:'POST',body:JSON.stringify({action:a})})}
 function sendCmd(){var i=document.getElementById('dCmd');var v=i.value.trim();if(!v)return;api('/api/servers/'+current.id+'/command',{method:'POST',body:JSON.stringify({command:v})});i.value=''}
 function pollConsole(){if(!current)return;api('/api/servers/'+current.id+'/console').then(function(r){if(!r.ok)return;var box=document.getElementById('dConsole');var atBottom=box.scrollTop+box.clientHeight>=box.scrollHeight-40;
