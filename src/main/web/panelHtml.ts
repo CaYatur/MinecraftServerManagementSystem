@@ -475,14 +475,16 @@ function resetPostForm(){editingPost=null;['npTitle','npExcerpt','npBody'].forEa
  var uh=document.getElementById('npUpHint');if(uh)uh.textContent='';
  var pv=document.getElementById('npPreview');if(pv)pv.classList.add('hidden');
  document.getElementById('newsFormTitle').textContent='New post';document.getElementById('npHint').textContent=''}
+function hidePreview(){var b=document.getElementById('npPreview');if(b)b.classList.add('hidden')}
 /* Render the post as it will look published (mirrors the public site's detail:
-   cover, excerpt, pre-wrapped body, gallery). A second click hides it. */
+   cover, excerpt, pre-wrapped body, gallery). Each click re-renders the current
+   form state so it never goes stale after an edit; the x closes it. */
 function previewPost(){var box=document.getElementById('npPreview');
- if(!box.classList.contains('hidden')){box.classList.add('hidden');return}
  function up(n){return '/uploads/'+encodeURIComponent(n)}
  var title=document.getElementById('npTitle').value,exc=document.getElementById('npExcerpt').value,
   body=document.getElementById('npBody').value,cover=document.getElementById('npCover').value;
- box.innerHTML='<div class="dim" style="font-size:11px;margin-bottom:6px">Preview</div>'+
+ box.innerHTML='<div class="row" style="justify-content:space-between;margin-bottom:6px"><span class="dim" style="font-size:11px">Preview</span>'+
+  '<button class="btn sm" onclick="hidePreview()">✕</button></div>'+
   '<h3>'+esc(title||'Untitled')+'</h3>'+
   (exc?'<div class="pv-excerpt">'+esc(exc)+'</div>':'')+
   (cover?'<img class="pv-cover" src="'+up(cover)+'" alt=""/>':'')+
