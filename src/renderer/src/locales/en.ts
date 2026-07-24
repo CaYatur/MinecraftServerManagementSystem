@@ -329,7 +329,11 @@ export default {
     errNoBuild: 'No build is available for this Minecraft version yet — pick another version.',
     errEmptyDownload: 'The download server returned an empty file. That build may be temporarily unavailable — try another build or version.',
     errFolderExists: 'A server folder with that name already exists — choose a different name.',
-    errNoLauncher: 'The installer finished but produced no launchable server. This loader/version combination may be unsupported.'
+    errNoLauncher: 'The installer finished but produced no launchable server. This loader/version combination may be unsupported.',
+    errChecksum: 'The downloaded file was corrupted (checksum did not match). Please try again.',
+    errNetwork: 'Could not download from the server — it may be offline or that file was removed. Check your connection, try again, or pick another version.',
+    errInstaller: 'The loader installer failed to run. This version may need a different Java version.',
+    errUnsupportedType: 'This server type is not supported.'
   },
   players: {
     title: 'Players',
