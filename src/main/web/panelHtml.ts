@@ -263,6 +263,24 @@ h2{margin:8px 0;font-weight:800;letter-spacing:-.4px}
         </div>
       </div>
       <div class="card">
+        <div class="title">Player credits</div>
+        <div class="row" style="align-items:flex-end">
+          <div style="flex:1;min-width:120px"><div class="dim" style="font-size:12px">Player</div><input id="mBalName" placeholder="Steve"/></div>
+          <div style="width:120px"><div class="dim" style="font-size:12px">Amount</div><input id="mBalAmt" type="number" value="100"/></div>
+          <div style="flex:1;min-width:120px"><div class="dim" style="font-size:12px">Reason</div><input id="mBalReason" placeholder="(optional)"/></div>
+        </div>
+        <div class="row" style="margin-top:8px">
+          <button class="btn primary" onclick="adjustBalance('add')">＋ Give</button>
+          <button class="btn" onclick="adjustBalance('remove')">－ Remove</button>
+          <button class="btn" onclick="adjustBalance('set')">= Set</button>
+        </div>
+        <div id="mBalances" style="margin-top:10px;max-height:240px;overflow:auto"></div>
+      </div>
+      <div class="card">
+        <div class="row"><b>Balance ledger</b><div class="spacer"></div><button class="btn sm" onclick="loadLedger()" title="Refresh">↻</button></div>
+        <div id="mLedger" style="margin-top:10px;max-height:340px;overflow:auto"></div>
+      </div>
+      <div class="card">
         <div class="row"><b>Products</b><div class="spacer"></div>
           <button class="btn sm" onclick="pmNew('item')">＋ Item</button>
           <button class="btn sm" onclick="pmNew('crate')">🎁 Crate</button>
@@ -426,7 +444,25 @@ function escAttr(t){return esc(t).replace(/"/g,'&quot;')}
 var mstore={currency:'Coins',products:[]}, pmDraft=null;
 function loadManage(){api('/api/servers/'+current.id+'/store/admin').then(function(r){
  if(!r.ok){document.getElementById('mProducts').innerHTML='<div class="dim">No access.</div>';return}
- mstore=r.body;document.getElementById('mCur').value=mstore.currency||'';renderMProducts()})}
+ mstore=r.body;document.getElementById('mCur').value=mstore.currency||'';renderMProducts();renderBalances();loadLedger()})}
+function renderBalances(){var el=document.getElementById('mBalances');var bals=mstore.balances||{};var names=Object.keys(bals);
+ if(!names.length){el.innerHTML='<div class="dim">No balances yet.</div>';return}
+ el.innerHTML=names.map(function(n){return '<div class="mrow"><span style="flex:1;min-width:0;font-weight:700">'+esc(n)+'</span>'+
+  '<span class="price">'+(bals[n]||0)+' '+esc(mstore.currency||'')+'</span>'+
+  '<button class="btn sm" onclick="pickPlayer(\\''+n+'\\')" title="Adjust">Adjust</button></div>'}).join('')}
+function pickPlayer(n){document.getElementById('mBalName').value=n}
+function adjustBalance(mode){var name=document.getElementById('mBalName').value.trim();if(!name){alert('Enter a player name');return}
+ var amt=Math.floor(Number(document.getElementById('mBalAmt').value)||0);var reason=document.getElementById('mBalReason').value;
+ var body=mode==='set'?{mcName:name,amount:amt,reason:reason,mode:'set'}:{mcName:name,amount:mode==='remove'?-amt:amt,reason:reason,mode:'add'};
+ api('/api/servers/'+current.id+'/store/admin/balance',{method:'POST',body:JSON.stringify(body)}).then(function(r){
+  if(!r.ok){alert(r.body&&r.body.error==='invalid-mcname'?'Invalid Minecraft name (3-16 letters, digits, underscore)':('Error: '+(r.body&&r.body.error||r.status)));return}
+  document.getElementById('mBalReason').value='';loadManage()})}
+function loadLedger(){api('/api/servers/'+current.id+'/store/admin/ledger').then(function(r){if(r.ok)renderLedger(r.body.ledger||[])})}
+function renderLedger(led){var el=document.getElementById('mLedger');
+ if(!led.length){el.innerHTML='<div class="dim">No balance changes recorded yet.</div>';return}
+ el.innerHTML=led.map(function(e){var d=e.delta||0;return '<div class="mrow"><span class="badge" style="'+(d>=0?'color:var(--online)':'color:#f87171')+'">'+(d>=0?'+':'')+d+'</span>'+
+  '<div style="flex:1;min-width:0"><div style="font-weight:700">'+esc(e.mcName)+' <span class="dim" style="font-weight:400">→ '+(e.balanceAfter||0)+' '+esc(mstore.currency||'')+'</span></div>'+
+  '<div class="dim" style="font-size:11px">'+esc(e.kind||'')+' · by '+esc(e.by||'')+(e.reason?' · '+esc(e.reason):'')+' · '+new Date(e.at).toLocaleString()+'</div></div></div>'}).join('')}
 function saveCurrency(){var c=document.getElementById('mCur').value.trim()||'Coins';
  api('/api/servers/'+current.id+'/store/admin/currency',{method:'POST',body:JSON.stringify({currency:c})}).then(function(r){if(!r.ok){alert('Could not save currency');return}loadManage()})}
 function renderMProducts(){var el=document.getElementById('mProducts');var ps=mstore.products||[];
