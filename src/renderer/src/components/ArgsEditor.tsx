@@ -250,7 +250,14 @@ export function ArgsEditor({ server }: { server: ServerConfig }): JSX.Element {
               </button>
             </div>
           )}
-          {provision?.kind === 'install' && (
+          {/*
+            Slice 1 only flags a missing compatible Java when nothing else is
+            already warning: when `compat` shows the "wrong Java" line, a second
+            red line saying "and no right one is installed" is just noise. When
+            no Java resolves at all `compat` is silent, so this is the only
+            signal. Slice 2 replaces this with an actionable "Install" button.
+          */}
+          {provision?.kind === 'install' && !compat && (
             <div className="java-compat bad">
               <AlertTriangle size={12} />{' '}
               {t('args.javaNeedInstall', { major: provision.major, mc: server.mcVersion })}
