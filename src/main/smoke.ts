@@ -16,6 +16,8 @@ import type { Product } from '@shared/web'
 import { getProvider } from './core/versions'
 import { createServer } from './core/createServer'
 import { pickForgeRunJar } from './core/serverDetect'
+import { downloadFile } from './core/net'
+import { createServer as httpCreateServer } from 'node:http'
 import { removeServer } from './core/serverRegistry'
 import * as sf from './core/serverFiles'
 import * as playersMod from './core/players'
@@ -2673,6 +2675,42 @@ export async function runWizardSmoke(): Promise<void> {
       return fail('neoforge fallback should pick the neoforge universal jar')
     }
     console.log('WIZARD-SMOKE: forge run-jar fallback OK (universal/loader/none, installer excluded)')
+  }
+
+  // 4. net.ts empty-download guard: a reachable 200 with a 0-byte body must fail
+  //    as `empty-download`, not as a baffling checksum mismatch against the hash
+  //    of empty input (the confusing Mohist symptom in #43). #43
+  {
+    const srv = httpCreateServer((_req, res) => {
+      res.writeHead(200, { 'Content-Type': 'application/java-archive' })
+      res.end() // zero bytes, chunked (no content-length) so fetch still yields a body
+    })
+    await new Promise<void>((r) => srv.listen(0, '127.0.0.1', () => r()))
+    const addr = srv.address()
+    const port = typeof addr === 'object' && addr ? addr.port : 0
+    const dest = join(app.getPath('temp'), 'msms-empty-dl-test.jar')
+    let msg = ''
+    try {
+      await downloadFile(`http://127.0.0.1:${port}/x.jar`, dest, {
+        sha256: '5ad74546004d0e5b9a5b0f6f8e2b1c3d4e5f60718293a4b5c6d7e8f9011223344'
+      })
+    } catch (e) {
+      msg = String((e as Error)?.message ?? e)
+    }
+    srv.close()
+    try {
+      rmSync(dest, { force: true })
+    } catch {
+      /* ignore */
+    }
+    if (!msg.includes('empty-download')) {
+      return fail('0-byte download should throw empty-download, got: ' + (msg || '(no error)'))
+    }
+    if (/checksum mismatch/i.test(msg)) {
+      return fail('0-byte download surfaced as a checksum mismatch instead of empty-download')
+    }
+    if (existsSync(dest)) return fail('empty-download must not leave a partial file behind')
+    console.log('WIZARD-SMOKE: empty-download guard OK (0-byte body fails clearly, no checksum confusion, dest removed)')
   }
 
   console.log('WIZARD-SMOKE: PASS')

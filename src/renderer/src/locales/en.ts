@@ -325,7 +325,11 @@ export default {
     progressConfiguring: 'Configuring…',
     progressDone: 'Done!',
     createdOk: 'Server "{{name}}" created',
-    createFailed: 'Creation failed: {{error}}'
+    createFailed: 'Creation failed: {{error}}',
+    errNoBuild: 'No build is available for this Minecraft version yet — pick another version.',
+    errEmptyDownload: 'The download server returned an empty file. That build may be temporarily unavailable — try another build or version.',
+    errFolderExists: 'A server folder with that name already exists — choose a different name.',
+    errNoLauncher: 'The installer finished but produced no launchable server. This loader/version combination may be unsupported.'
   },
   players: {
     title: 'Players',
