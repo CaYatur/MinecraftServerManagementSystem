@@ -1,10 +1,17 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Check, Terminal, RefreshCw, AlertTriangle, CheckCircle2, XCircle, Wand2 } from 'lucide-react'
+import { Check, Terminal, RefreshCw, AlertTriangle, CheckCircle2, XCircle, Wand2, Download } from 'lucide-react'
 import { useStore } from '../store'
 import { checkJava, javaRequirement, javaVerdict } from '@shared/javaCompat'
-import { provisionPlan } from '@shared/javaProvision'
+import { provisionPlan, type JavaInstallPhase, type JavaInstallProgress } from '@shared/javaProvision'
 import type { JavaArgsConfig, JavaInfo, JavaInstall, JavaPreset, ServerConfig } from '@shared/types'
+
+const PHASE_KEY: Record<JavaInstallPhase, string> = {
+  resolve: 'args.javaPhaseResolve',
+  download: 'args.javaPhaseDownload',
+  extract: 'args.javaPhaseExtract',
+  done: 'args.javaPhaseDone'
+}
 
 const PRESETS: JavaPreset[] = ['basic', 'aikars', 'aikars-large', 'proxy', 'custom']
 
@@ -18,6 +25,8 @@ export function ArgsEditor({ server }: { server: ServerConfig }): JSX.Element {
   const [scanning, setScanning] = useState(false)
   /** What "auto" resolves to — only the main process knows (JAVA_HOME/PATH). */
   const [autoJava, setAutoJava] = useState<JavaInfo | null>(null)
+  /** Non-null while a JRE download/extract is in flight. */
+  const [installing, setInstalling] = useState<JavaInstallProgress | null>(null)
 
   // Re-sync when switching servers.
   useEffect(() => setJava(server.java), [server.id, server.java])
@@ -35,6 +44,12 @@ export function ArgsEditor({ server }: { server: ServerConfig }): JSX.Element {
   useEffect(() => {
     void loadInstalls()
   }, [loadInstalls])
+
+  // Live progress from the main process while a JRE downloads/extracts.
+  useEffect(
+    () => window.msms.onJavaInstallProgress((p) => setInstalling(p.phase === 'done' ? null : p)),
+    []
+  )
 
   // Ask the main process what "auto" (or a hand-typed path) actually resolves
   // to, so the default configuration - which nobody picks from the dropdown -
@@ -123,6 +138,29 @@ export function ArgsEditor({ server }: { server: ServerConfig }): JSX.Element {
   const save = async (): Promise<void> => {
     await updateServer(server.id, { java })
     toast('success', 'common.saved')
+  }
+
+  /** Download a compatible JRE, then pin it as this server's Java. */
+  const runInstall = async (major: number): Promise<void> => {
+    setInstalling({ major, phase: 'resolve' })
+    try {
+      const info = await window.msms.installJava(major)
+      await loadInstalls(true)
+      // Persist immediately onto the *saved* config — installing is a heavyweight
+      // action and the toast says "now selected", so it must survive without a
+      // separate Save. Spread server.java (not local `java`) so an unrelated
+      // unsaved form edit isn't silently committed alongside it.
+      await updateServer(server.id, { java: { ...server.java, javaPath: info.path } })
+      set('javaPath', info.path)
+      toast('success', 'args.javaInstalled', { major: info.major })
+    } catch (e) {
+      // "unsupported-platform"/"unsupported-package" isn't a transient failure —
+      // this OS/arch has no .zip build we auto-install, so say that, not "retry".
+      const msg = String((e as Error)?.message ?? e)
+      toast('error', /unsupported/.test(msg) ? 'args.javaInstallUnsupported' : 'args.javaInstallFailed')
+    } finally {
+      setInstalling(null)
+    }
   }
 
   return (
@@ -250,19 +288,23 @@ export function ArgsEditor({ server }: { server: ServerConfig }): JSX.Element {
               </button>
             </div>
           )}
-          {/*
-            Slice 1 only flags a missing compatible Java when nothing else is
-            already warning: when `compat` shows the "wrong Java" line, a second
-            red line saying "and no right one is installed" is just noise. When
-            no Java resolves at all `compat` is silent, so this is the only
-            signal. Slice 2 replaces this with an actionable "Install" button.
-          */}
-          {provision?.kind === 'install' && !compat && (
-            <div className="java-compat bad">
-              <AlertTriangle size={12} />{' '}
-              {t('args.javaNeedInstall', { major: provision.major, mc: server.mcVersion })}
-            </div>
-          )}
+          {provision?.kind === 'install' &&
+            (installing ? (
+              <div className="java-provision">
+                <RefreshCw size={13} className="spin" />
+                <span className="mono">
+                  {t(PHASE_KEY[installing.phase])}
+                  {installing.percent != null ? ` ${installing.percent}%` : ''}
+                </span>
+              </div>
+            ) : (
+              <div className="java-provision">
+                <span>{t('args.javaNeedInstall', { major: provision.major, mc: server.mcVersion })}</span>
+                <button className="btn sm" onClick={() => void runInstall(provision.major)}>
+                  <Download size={13} /> {t('args.javaInstall', { major: provision.major })}
+                </button>
+              </div>
+            ))}
         </div>
         <label className="switch" style={{ marginTop: 24 }}>
           <input

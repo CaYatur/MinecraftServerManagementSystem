@@ -37,6 +37,7 @@ import type {
 import type { UptimeReport } from './uptime'
 import type { AuditPage, AuditQuery } from './audit'
 import type { JoinAggregate, JoinQuery } from './joins'
+import type { JavaInstallProgress } from './javaProvision'
 import type { AlertRule, NewAlertRule } from './alerts'
 import type { McVersion, BuildInfo, CreateServerOptions, CreateProgress } from './versions'
 import type { ModEntry, ModrinthHit, ModUpdateReport } from './mods'
@@ -123,6 +124,7 @@ export const IPC = {
 
   javaList: 'java:list',
   javaResolve: 'java:resolve',
+  javaInstall: 'java:install',
 
   worldsList: 'worlds:list',
   worldActivate: 'worlds:activate',
@@ -196,6 +198,7 @@ export const EVT = {
   serverEvent: 'evt:server-event',
   configChanged: 'evt:config-changed',
   createProgress: 'evt:create-progress',
+  javaInstallProgress: 'evt:java-install-progress',
   toast: 'evt:toast'
 } as const
 
@@ -295,6 +298,8 @@ export interface MsmsApi {
   listJava(refresh?: boolean): Promise<JavaInstall[]>
   /** The Java that will actually launch, given a per-server override ('' = auto). */
   resolveJava(javaPathOverride: string): Promise<JavaInfo | null>
+  /** Download + verify a Temurin JRE for `major` into the app dir; returns the runnable java. */
+  installJava(major: number): Promise<JavaInfo>
 
   listWorlds(id: string): Promise<WorldInfo[]>
   activateWorld(id: string, name: string): Promise<void>
@@ -383,5 +388,6 @@ export interface MsmsApi {
   onServerStats(cb: (s: ServerStats) => void): () => void
   onServerEvent(cb: (e: ServerEvent) => void): () => void
   onCreateProgress(cb: (p: CreateProgress) => void): () => void
+  onJavaInstallProgress(cb: (p: JavaInstallProgress) => void): () => void
   onToast(cb: (t: ToastEvent) => void): () => void
 }

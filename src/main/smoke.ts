@@ -28,7 +28,15 @@ import * as alertsMod from './core/alerts'
 import * as worldsMod from './core/worlds'
 import { listJavaInstalls, _resetJavaCache } from './core/javaScan'
 import { checkJava, javaRequirement } from '@shared/javaCompat'
-import { pickJavaFor, provisionPlan } from '@shared/javaProvision'
+import {
+  pickJavaFor,
+  provisionPlan,
+  adoptiumTarget,
+  adoptiumAssetsUrl,
+  pickAdoptiumPackage,
+  isZipPackage,
+  type AdoptiumAsset
+} from '@shared/javaProvision'
 import { diffUpdates } from '@shared/mods'
 import type { MrVersion } from '@shared/mods'
 import { computeUptime, clipSessions } from '@shared/uptime'
@@ -946,6 +954,46 @@ export async function runJavaSmoke(): Promise<void> {
       return fail('a snapshot version must yield an unknown plan')
     }
     console.log('JAVA-SMOKE: provision plan OK (ceiling respected, recommended preferred, snapshots silent)')
+
+    // --- 7. Adoptium URL/package shaping (pure; the network fetch is not) ---
+    const win = adoptiumTarget('win32', 'x64')
+    if (win?.os !== 'windows' || win.arch !== 'x64') return fail('win32/x64 target wrong')
+    const macArm = adoptiumTarget('darwin', 'arm64')
+    if (macArm?.os !== 'mac' || macArm.arch !== 'aarch64') return fail('darwin/arm64 target wrong')
+    const lin = adoptiumTarget('linux', 'x64')
+    if (lin?.os !== 'linux' || lin.arch !== 'x64') return fail('linux/x64 target wrong')
+    if (adoptiumTarget('freebsd' as NodeJS.Platform, 'x64') !== null) return fail('unknown OS must decline')
+    if (adoptiumTarget('win32', 'ia32') !== null) return fail('unknown arch must decline')
+
+    const url = adoptiumAssetsUrl(21, win!)
+    for (const seg of ['/assets/latest/21/hotspot?', 'architecture=x64', 'image_type=jre', 'os=windows', 'vendor=eclipse']) {
+      if (!url.includes(seg)) return fail(`assets URL missing "${seg}": ${url}`)
+    }
+
+    const goodAssets: AdoptiumAsset[] = [
+      { release_name: 'jdk-21.0.1+12', binary: { package: { link: 'https://x/j.zip', checksum: 'abc123', name: 'OpenJDK21U-jre_x64_windows_hotspot_21.0.1_12.zip' } } }
+    ]
+    const pkg = pickAdoptiumPackage(goodAssets)
+    if (pkg.link !== 'https://x/j.zip' || pkg.checksum !== 'abc123') return fail('package fields not read')
+    if (!isZipPackage(pkg.name)) return fail('a .zip name should be a zip package')
+    if (isZipPackage('OpenJDK21U-jre_x64_linux_hotspot_21.0.1_12.tar.gz')) return fail('a .tar.gz must not be a zip')
+
+    let threwEmpty = false
+    try {
+      pickAdoptiumPackage([])
+    } catch {
+      threwEmpty = true
+    }
+    if (!threwEmpty) return fail('an empty assets response must throw, not proceed unverified')
+
+    let threwNoChecksum = false
+    try {
+      pickAdoptiumPackage([{ binary: { package: { link: 'https://x/j.zip', name: 'j.zip' } } }])
+    } catch {
+      threwNoChecksum = true
+    }
+    if (!threwNoChecksum) return fail('a package with no checksum must throw')
+    console.log('JAVA-SMOKE: Adoptium shaping OK (os/arch mapped, URL segments, package + checksum guarded)')
 
     console.log('JAVA-SMOKE: PASS')
     app.exit(0)

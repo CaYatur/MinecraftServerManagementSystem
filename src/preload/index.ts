@@ -77,6 +77,7 @@ const api: MsmsApi = {
 
   listJava: (refresh) => ipcRenderer.invoke(IPC.javaList, refresh),
   resolveJava: (override) => ipcRenderer.invoke(IPC.javaResolve, override),
+  installJava: (major) => ipcRenderer.invoke(IPC.javaInstall, major),
 
   listWorlds: (id) => ipcRenderer.invoke(IPC.worldsList, id),
   activateWorld: (id, name) => ipcRenderer.invoke(IPC.worldActivate, id, name),
@@ -146,6 +147,7 @@ const api: MsmsApi = {
   onServerStats: (cb) => subscribe(EVT.serverStats, cb),
   onServerEvent: (cb) => subscribe(EVT.serverEvent, cb),
   onCreateProgress: (cb) => subscribe(EVT.createProgress, cb),
+  onJavaInstallProgress: (cb) => subscribe(EVT.javaInstallProgress, cb),
   onToast: (cb) => subscribe(EVT.toast, cb)
 }
 
