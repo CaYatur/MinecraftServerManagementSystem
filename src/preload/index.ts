@@ -108,6 +108,7 @@ const api: MsmsApi = {
   queryEvents: (id, q) => ipcRenderer.invoke(IPC.eventsQuery, id, q),
   getUptime: (id, from, to) => ipcRenderer.invoke(IPC.eventsUptime, id, from, to),
   queryAudit: (q) => ipcRenderer.invoke(IPC.auditQuery, q),
+  queryJoins: (q) => ipcRenderer.invoke(IPC.auditJoins, q),
   queryMetrics: (id, opts) => ipcRenderer.invoke(IPC.metricsQuery, id, opts),
   getTelemetryConfig: () => ipcRenderer.invoke(IPC.metricsConfigGet),
   setTelemetryConfig: (patch) => ipcRenderer.invoke(IPC.metricsConfigSet, patch),

@@ -115,6 +115,8 @@ export default {
   },
   audit: {
     title: 'Audit log',
+    modeLog: 'Log',
+    modeJoins: 'Joins & alts',
     all: 'All',
     okOnly: 'Success',
     failOnly: 'Failed',
@@ -135,6 +137,25 @@ export default {
       webpanel: 'Web panel',
       public: 'Public site',
       system: 'System'
+    },
+    joins: {
+      search: 'Search a name or IP…',
+      altsOnly: 'Shared IPs only',
+      statAccounts: '{{n}} accounts',
+      statJoins: '{{n}} joins',
+      statAlts: '{{n}} shared IPs',
+      ips: 'By IP address',
+      accounts: 'By account',
+      ip: 'IP',
+      accountsCol: 'Accounts',
+      ipsCol: 'IPs',
+      player: 'Account',
+      servers: 'Servers',
+      joinsCol: 'Joins',
+      lastSeen: 'Last seen',
+      altBadge: 'alt?',
+      noIp: 'no IP',
+      empty: 'No join history yet.'
     }
   },
   auditAct: {
