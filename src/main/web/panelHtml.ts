@@ -433,7 +433,7 @@ function renderGallery(){var g=document.getElementById('npGallery');if(!g)return
 function toggleGallery(name){var i=galleryImages.indexOf(name);if(i>=0)galleryImages.splice(i,1);else galleryImages.push(name);renderGallery()}
 function uploadImage(){var inp=document.getElementById('npFile'),hint=document.getElementById('npUpHint'),btn=document.getElementById('npUpBtn');
  var f=inp.files&&inp.files[0];if(!f)return;
- if(f.size>6*1024*1024){hint.textContent='Too large (max 6 MB)';return}
+ if(f.size>6*1024*1024){hint.textContent='Too large (max 6 MB)';inp.value='';return}
  btn.disabled=true;hint.textContent='Uploading…';
  fetch('/api/site/upload',{method:'POST',headers:{'Authorization':'Bearer '+token,'Content-Type':f.type},body:f})
   .then(function(r){return r.json().then(function(j){return{ok:r.ok,status:r.status,body:j}})})

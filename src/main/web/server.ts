@@ -553,12 +553,13 @@ async function handlePanel(req: IncomingMessage, res: ServerResponse): Promise<v
         return sendJson(res, 200, { name: site.saveImageBuffer(buf, mime) })
       } catch (e) {
         const msg = String((e as Error)?.message ?? e)
+        // Validation failures are 4xx; anything else (e.g. a failed write) is ours.
         const code =
           msg === 'body-too-large' || msg === 'image-too-large'
             ? 413
             : msg === 'unsupported-image-type'
               ? 415
-              : 400
+              : 500
         return sendJson(res, code, { error: msg })
       }
     }
