@@ -282,6 +282,7 @@ const tr: typeof en = {
     javaInstall: 'Java {{major}} kur',
     javaInstalled: 'Java {{major}} kuruldu — bu sunucu için seçildi.',
     javaInstallFailed: 'Java kurulamadı. Bağlantını kontrol edip tekrar dene.',
+    javaInstallUnsupported: 'Otomatik kurulum işletim sistemin için henüz yok — Java yolunu elle ayarla.',
     javaPhaseResolve: 'Uygun yapı bulunuyor…',
     javaPhaseDownload: 'İndiriliyor…',
     javaPhaseExtract: 'Çıkarılıyor…',

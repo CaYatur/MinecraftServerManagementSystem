@@ -141,15 +141,18 @@ export function ArgsEditor({ server }: { server: ServerConfig }): JSX.Element {
   }
 
   /** Download a compatible JRE, then pin it as this server's Java. */
-  const installJava = async (major: number): Promise<void> => {
+  const runInstall = async (major: number): Promise<void> => {
     setInstalling({ major, phase: 'resolve' })
     try {
       const info = await window.msms.installJava(major)
       await loadInstalls(true)
       set('javaPath', info.path)
       toast('success', 'args.javaInstalled', { major: info.major })
-    } catch {
-      toast('error', 'args.javaInstallFailed')
+    } catch (e) {
+      // "unsupported-platform"/"unsupported-package" isn't a transient failure —
+      // this OS/arch has no .zip build we auto-install, so say that, not "retry".
+      const msg = String((e as Error)?.message ?? e)
+      toast('error', /unsupported/.test(msg) ? 'args.javaInstallUnsupported' : 'args.javaInstallFailed')
     } finally {
       setInstalling(null)
     }
@@ -292,7 +295,7 @@ export function ArgsEditor({ server }: { server: ServerConfig }): JSX.Element {
             ) : (
               <div className="java-provision">
                 <span>{t('args.javaNeedInstall', { major: provision.major, mc: server.mcVersion })}</span>
-                <button className="btn sm" onClick={() => void installJava(provision.major)}>
+                <button className="btn sm" onClick={() => void runInstall(provision.major)}>
                   <Download size={13} /> {t('args.javaInstall', { major: provision.major })}
                 </button>
               </div>

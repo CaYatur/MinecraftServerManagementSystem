@@ -280,6 +280,7 @@ export default {
     javaInstall: 'Install Java {{major}}',
     javaInstalled: 'Java {{major}} installed — now selected for this server.',
     javaInstallFailed: "Couldn't install Java. Check your connection and try again.",
+    javaInstallUnsupported: "Auto-install isn't available for your operating system yet — set a Java path by hand.",
     javaPhaseResolve: 'Finding the right build…',
     javaPhaseDownload: 'Downloading…',
     javaPhaseExtract: 'Extracting…',
