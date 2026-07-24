@@ -275,7 +275,10 @@ const tr: typeof en = {
     javaAutoContext: '(otomatik algılandı: {{version}})',
     javaOk: 'Java {{java}}, Minecraft {{mc}} için uygun.',
     javaTooOld: 'Minecraft {{mc}} için Java {{min}} veya üstü gerekli — bu Java {{java}}. Sunucu açılmaz.',
-    javaRisky: 'Minecraft {{mc}}, Java {{min}} için yapıldı. Java {{java}} o dönemin sunucu yazılımlarını sık sık bozar; Java {{max}} ve altı daha güvenli.'
+    javaRisky: 'Minecraft {{mc}}, Java {{min}} için yapıldı. Java {{java}} o dönemin sunucu yazılımlarını sık sık bozar; Java {{max}} ve altı daha güvenli.',
+    javaUse: 'Java {{major}} kullan',
+    javaSwitchHint: 'Uyumlu bir Java {{major}} zaten kurulu — tek tıkla kullan.',
+    javaNeedInstall: 'Minecraft {{mc}} için uyumlu Java {{major}} kurulu değil.'
   },
   create: {
     title: 'Yeni sunucu oluştur',
