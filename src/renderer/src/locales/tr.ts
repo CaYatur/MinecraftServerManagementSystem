@@ -117,6 +117,8 @@ const tr: typeof en = {
   },
   audit: {
     title: 'Denetim kaydı',
+    modeLog: 'Kayıt',
+    modeJoins: 'Girişler & alt hesaplar',
     all: 'Tümü',
     okOnly: 'Başarılı',
     failOnly: 'Başarısız',
@@ -137,6 +139,24 @@ const tr: typeof en = {
       webpanel: 'Web panel',
       public: 'Herkese açık',
       system: 'Sistem'
+    },
+    joins: {
+      search: 'Ad veya IP ara…',
+      altsOnly: 'Yalnız paylaşılan IP’ler',
+      statAccounts: '{{n}} hesap',
+      statJoins: '{{n}} giriş',
+      statAlts: '{{n}} paylaşılan IP',
+      ips: 'IP adresine göre',
+      accounts: 'Hesaba göre',
+      ip: 'IP',
+      accountsCol: 'Hesaplar',
+      ipsCol: 'IP’ler',
+      player: 'Hesap',
+      joinsCol: 'Giriş',
+      lastSeen: 'Son görülme',
+      altBadge: 'alt?',
+      noIp: 'IP yok',
+      empty: 'Henüz giriş geçmişi yok.'
     }
   },
   auditAct: {

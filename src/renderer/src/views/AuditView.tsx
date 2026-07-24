@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ScrollText, Search, Check, X, RefreshCw } from 'lucide-react'
+import { ScrollText, Search, Check, X, RefreshCw, Users } from 'lucide-react'
 import { AUDIT_SOURCES, type AuditPage, type AuditSource } from '@shared/audit'
+import type { JoinAggregate } from '@shared/joins'
 
 /** Flat i18n keys for the common actions (dotted action strings would nest in
  *  i18next); anything unknown falls back to the raw action string. */
@@ -26,28 +27,41 @@ const SRC_CLASS: Record<AuditSource, string> = {
   system: 'muted'
 }
 
+type Mode = 'log' | 'joins'
+
 export function AuditView(): JSX.Element {
   const { t } = useTranslation()
+  const [mode, setMode] = useState<Mode>('log')
   const [page, setPage] = useState<AuditPage | null>(null)
+  const [agg, setAgg] = useState<JoinAggregate | null>(null)
   const [loading, setLoading] = useState(false)
   const [source, setSource] = useState<AuditSource | 'all'>('all')
   const [text, setText] = useState('')
   const [outcome, setOutcome] = useState<'all' | 'ok' | 'fail'>('all')
+  const [altsOnly, setAltsOnly] = useState(false)
 
   const load = useCallback(async (): Promise<void> => {
     setLoading(true)
     try {
-      const p = await window.msms.queryAudit({
-        ...(source !== 'all' ? { sources: [source] } : {}),
-        ...(text.trim() ? { text: text.trim() } : {}),
-        ...(outcome !== 'all' ? { ok: outcome === 'ok' } : {}),
-        limit: 500
-      })
-      setPage(p)
+      if (mode === 'joins') {
+        const a = await window.msms.queryJoins({
+          ...(text.trim() ? { text: text.trim() } : {}),
+          ...(altsOnly ? { minAccountsPerIp: 2 } : {})
+        })
+        setAgg(a)
+      } else {
+        const p = await window.msms.queryAudit({
+          ...(source !== 'all' ? { sources: [source] } : {}),
+          ...(text.trim() ? { text: text.trim() } : {}),
+          ...(outcome !== 'all' ? { ok: outcome === 'ok' } : {}),
+          limit: 500
+        })
+        setPage(p)
+      }
     } finally {
       setLoading(false)
     }
-  }, [source, text, outcome])
+  }, [mode, source, text, outcome, altsOnly])
 
   // Debounce so typing in the search box doesn't fire a query per keystroke.
   useEffect(() => {
@@ -62,105 +76,224 @@ export function AuditView(): JSX.Element {
 
   return (
     <div>
-      <div className="section-title">
-        <ScrollText size={15} /> {t('audit.title')}
+      <div className="section-title" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <span className="row" style={{ gap: 8, alignItems: 'center' }}>
+          <ScrollText size={15} /> {t('audit.title')}
+        </span>
+        <span className="row" style={{ gap: 4, marginLeft: 'auto' }}>
+          <button
+            className={`btn sm ${mode === 'log' ? 'primary' : ''}`}
+            onClick={() => setMode('log')}
+          >
+            <ScrollText size={13} /> {t('audit.modeLog')}
+          </button>
+          <button
+            className={`btn sm ${mode === 'joins' ? 'primary' : ''}`}
+            onClick={() => setMode('joins')}
+          >
+            <Users size={13} /> {t('audit.modeJoins')}
+          </button>
+        </span>
       </div>
 
       <div className="panel" style={{ marginBottom: 14 }}>
-        <div className="row wrap" style={{ gap: 8, alignItems: 'center' }}>
-          <button
-            className={`btn sm ${source === 'all' ? 'primary' : ''}`}
-            onClick={() => setSource('all')}
-          >
-            {t('audit.all')}
-          </button>
-          {AUDIT_SOURCES.map((s) => (
+        {mode === 'log' ? (
+          <div className="row wrap" style={{ gap: 8, alignItems: 'center' }}>
             <button
-              key={s}
-              className={`btn sm ${source === s ? 'primary' : ''}`}
-              onClick={() => setSource(s)}
+              className={`btn sm ${source === 'all' ? 'primary' : ''}`}
+              onClick={() => setSource('all')}
             >
-              {srcLabel(s)}
-              {bySource[s] ? <span className="dim"> · {bySource[s]}</span> : null}
+              {t('audit.all')}
             </button>
-          ))}
-        </div>
+            {AUDIT_SOURCES.map((s) => (
+              <button
+                key={s}
+                className={`btn sm ${source === s ? 'primary' : ''}`}
+                onClick={() => setSource(s)}
+              >
+                {srcLabel(s)}
+                {bySource[s] ? <span className="dim"> · {bySource[s]}</span> : null}
+              </button>
+            ))}
+          </div>
+        ) : (
+          <div className="row wrap" style={{ gap: 14, alignItems: 'center' }}>
+            <span className="dim" style={{ fontSize: 12 }}>
+              {t('audit.joins.statAccounts', { n: agg?.accountCount ?? 0 })} ·{' '}
+              {t('audit.joins.statJoins', { n: agg?.totalJoins ?? 0 })} ·{' '}
+              {t('audit.joins.statAlts', { n: agg?.altGroups ?? 0 })}
+            </span>
+            <label className="row" style={{ gap: 6, alignItems: 'center', cursor: 'pointer' }}>
+              <input type="checkbox" checked={altsOnly} onChange={(e) => setAltsOnly(e.target.checked)} />
+              <span style={{ fontSize: 13 }}>{t('audit.joins.altsOnly')}</span>
+            </label>
+          </div>
+        )}
         <div className="row wrap" style={{ gap: 10, marginTop: 10, alignItems: 'center' }}>
           <div className="row" style={{ gap: 6, alignItems: 'center', flex: 1, minWidth: 200 }}>
             <Search size={14} className="dim" />
             <input
               className="input"
               style={{ marginBottom: 0, flex: 1 }}
-              placeholder={t('audit.search')}
+              placeholder={mode === 'joins' ? t('audit.joins.search') : t('audit.search')}
               value={text}
               onChange={(e) => setText(e.target.value)}
             />
           </div>
-          <div className="row" style={{ gap: 4 }}>
-            {(['all', 'ok', 'fail'] as const).map((o) => (
-              <button
-                key={o}
-                className={`btn sm ${outcome === o ? 'primary' : ''}`}
-                onClick={() => setOutcome(o)}
-              >
-                {t(`audit.${o === 'all' ? 'all' : o === 'ok' ? 'okOnly' : 'failOnly'}`)}
-              </button>
-            ))}
-          </div>
+          {mode === 'log' ? (
+            <div className="row" style={{ gap: 4 }}>
+              {(['all', 'ok', 'fail'] as const).map((o) => (
+                <button
+                  key={o}
+                  className={`btn sm ${outcome === o ? 'primary' : ''}`}
+                  onClick={() => setOutcome(o)}
+                >
+                  {t(`audit.${o === 'all' ? 'all' : o === 'ok' ? 'okOnly' : 'failOnly'}`)}
+                </button>
+              ))}
+            </div>
+          ) : null}
           <button className="btn sm" onClick={() => void load()} title={t('audit.refresh')}>
             <RefreshCw size={14} />
           </button>
         </div>
       </div>
 
-      <div className="dim" style={{ margin: '0 2px 8px', fontSize: 12 }}>
-        {loading ? t('common.loading') : t('audit.results', { n: page?.total ?? 0 })}
-      </div>
-
-      {page && page.entries.length === 0 && !loading ? (
-        <div className="panel" style={{ textAlign: 'center', padding: 26 }}>
-          <p className="dim" style={{ margin: 0 }}>
-            {t('audit.empty')}
-          </p>
-        </div>
+      {mode === 'joins' ? (
+        <JoinsPanel agg={agg} loading={loading} />
       ) : (
+        <>
+          <div className="dim" style={{ margin: '0 2px 8px', fontSize: 12 }}>
+            {loading ? t('common.loading') : t('audit.results', { n: page?.total ?? 0 })}
+          </div>
+
+          {page && page.entries.length === 0 && !loading ? (
+            <div className="panel" style={{ textAlign: 'center', padding: 26 }}>
+              <p className="dim" style={{ margin: 0 }}>
+                {t('audit.empty')}
+              </p>
+            </div>
+          ) : (
+            <div className="panel" style={{ padding: 0, overflowX: 'auto' }}>
+              <table className="audit-table">
+                <thead>
+                  <tr>
+                    <th>{t('audit.when')}</th>
+                    <th>{t('audit.source')}</th>
+                    <th>{t('audit.action')}</th>
+                    <th>{t('audit.actor')}</th>
+                    <th>{t('audit.ip')}</th>
+                    <th>{t('audit.target')}</th>
+                    <th style={{ textAlign: 'center' }}>{t('audit.outcome')}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {page?.entries.map((e) => (
+                    <tr key={e.id}>
+                      <td className="dim" style={{ whiteSpace: 'nowrap' }}>{fmt(e.ts)}</td>
+                      <td>
+                        <span className={`audit-badge ${SRC_CLASS[e.source] ?? ''}`}>{srcLabel(e.source)}</span>
+                      </td>
+                      <td style={{ fontWeight: 600 }}>{actionLabel(e.action)}</td>
+                      <td>{e.actor}</td>
+                      <td className="dim mono">{e.ip ?? '—'}</td>
+                      <td className="dim">{e.target ?? e.detail ?? (e.serverId ? e.serverId : '—')}</td>
+                      <td style={{ textAlign: 'center' }}>
+                        {e.ok ? (
+                          <Check size={15} className="audit-ok" />
+                        ) : (
+                          <X size={15} className="audit-fail" />
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
+function JoinsPanel({ agg, loading }: { agg: JoinAggregate | null; loading: boolean }): JSX.Element {
+  const { t } = useTranslation()
+  const fmt = (ts: number): string => new Date(ts).toLocaleString()
+
+  if (!agg) {
+    return (
+      <div className="dim" style={{ margin: '0 2px', fontSize: 12 }}>
+        {t('common.loading')}
+      </div>
+    )
+  }
+  if (agg.accounts.length === 0 && agg.ips.length === 0 && !loading) {
+    return (
+      <div className="panel" style={{ textAlign: 'center', padding: 26 }}>
+        <p className="dim" style={{ margin: 0 }}>{t('audit.joins.empty')}</p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="row wrap" style={{ gap: 14, alignItems: 'flex-start' }}>
+      <div style={{ flex: '1 1 340px', minWidth: 300 }}>
+        <div className="dim" style={{ margin: '0 2px 8px', fontSize: 12 }}>{t('audit.joins.ips')}</div>
         <div className="panel" style={{ padding: 0, overflowX: 'auto' }}>
-          <table className="audit-table">
+          <table className="audit-table joins-table">
             <thead>
               <tr>
-                <th>{t('audit.when')}</th>
-                <th>{t('audit.source')}</th>
-                <th>{t('audit.action')}</th>
-                <th>{t('audit.actor')}</th>
-                <th>{t('audit.ip')}</th>
-                <th>{t('audit.target')}</th>
-                <th style={{ textAlign: 'center' }}>{t('audit.outcome')}</th>
+                <th>{t('audit.joins.ip')}</th>
+                <th>{t('audit.joins.accountsCol')}</th>
+                <th style={{ textAlign: 'right' }}>{t('audit.joins.joinsCol')}</th>
+                <th>{t('audit.joins.lastSeen')}</th>
               </tr>
             </thead>
             <tbody>
-              {page?.entries.map((e) => (
-                <tr key={e.id}>
-                  <td className="dim" style={{ whiteSpace: 'nowrap' }}>{fmt(e.ts)}</td>
-                  <td>
-                    <span className={`audit-badge ${SRC_CLASS[e.source] ?? ''}`}>{srcLabel(e.source)}</span>
+              {agg.ips.map((ip) => (
+                <tr key={ip.ip} className={ip.accounts.length > 1 ? 'joins-alt' : ''}>
+                  <td className="mono" style={{ whiteSpace: 'nowrap' }}>
+                    {ip.ip}
+                    {ip.accounts.length > 1 ? (
+                      <span className="audit-badge warn" style={{ marginLeft: 6 }}>{t('audit.joins.altBadge')}</span>
+                    ) : null}
                   </td>
-                  <td style={{ fontWeight: 600 }}>{actionLabel(e.action)}</td>
-                  <td>{e.actor}</td>
-                  <td className="dim mono">{e.ip ?? '—'}</td>
-                  <td className="dim">{e.target ?? e.detail ?? (e.serverId ? e.serverId : '—')}</td>
-                  <td style={{ textAlign: 'center' }}>
-                    {e.ok ? (
-                      <Check size={15} className="audit-ok" />
-                    ) : (
-                      <X size={15} className="audit-fail" />
-                    )}
-                  </td>
+                  <td>{ip.accounts.join(', ')}</td>
+                  <td className="dim" style={{ textAlign: 'right' }}>{ip.joins}</td>
+                  <td className="dim" style={{ whiteSpace: 'nowrap' }}>{fmt(ip.lastTs)}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
-      )}
+      </div>
+
+      <div style={{ flex: '1 1 340px', minWidth: 300 }}>
+        <div className="dim" style={{ margin: '0 2px 8px', fontSize: 12 }}>{t('audit.joins.accounts')}</div>
+        <div className="panel" style={{ padding: 0, overflowX: 'auto' }}>
+          <table className="audit-table joins-table">
+            <thead>
+              <tr>
+                <th>{t('audit.joins.player')}</th>
+                <th>{t('audit.joins.ipsCol')}</th>
+                <th style={{ textAlign: 'right' }}>{t('audit.joins.joinsCol')}</th>
+                <th>{t('audit.joins.lastSeen')}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {agg.accounts.map((a) => (
+                <tr key={a.player}>
+                  <td style={{ fontWeight: 600, whiteSpace: 'nowrap' }}>{a.player}</td>
+                  <td className="mono dim">{a.ips.length ? a.ips.join(', ') : t('audit.joins.noIp')}</td>
+                  <td className="dim" style={{ textAlign: 'right' }}>{a.joins}</td>
+                  <td className="dim" style={{ whiteSpace: 'nowrap' }}>{fmt(a.lastTs)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
   )
 }

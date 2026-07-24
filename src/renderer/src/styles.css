@@ -752,6 +752,16 @@ textarea.input:focus {
 .audit-fail {
   color: #f87171;
 }
+/* Join / alt-account tables: flag rows where one IP is shared by several names. */
+.joins-table td {
+  font-size: 12.5px;
+}
+.joins-table tr.joins-alt td {
+  background: color-mix(in srgb, #f59e0b 12%, transparent);
+}
+.joins-table tr.joins-alt:hover td {
+  background: color-mix(in srgb, #f59e0b 18%, transparent);
+}
 .dim {
   color: var(--text-dim);
 }

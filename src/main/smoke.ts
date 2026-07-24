@@ -43,6 +43,7 @@ import {
   type BridgeSnapshot
 } from '@shared/bridge'
 import { filterAudit, type AuditEntry } from '@shared/audit'
+import { aggregateJoins, type JoinRecord } from '@shared/joins'
 import * as auditMod from './core/audit'
 import type { UptimeReport } from '@shared/uptime'
 import type { JavaArgsConfig, MetricSeries, ServerConfig, ServerEvent } from '@shared/types'
@@ -776,6 +777,36 @@ export async function runAuditSmoke(): Promise<void> {
       if (snap == null) rmSync(af, { force: true })
       else writeFileSync(af, snap, 'utf-8')
     }
+
+    // ---- join / alt-account aggregation (pure, from join records) ----
+    const jr: JoinRecord[] = [
+      { player: 'Ada', ip: '1.1.1.1', ts: 100, serverId: 's1' },
+      { player: 'Ada', ip: '1.1.1.1', ts: 300, serverId: 's1' },
+      { player: 'Ada', ip: '2.2.2.2', ts: 200, serverId: 's2' },
+      { player: 'Bob', ip: '1.1.1.1', ts: 250, serverId: 's1' }, // shares 1.1.1.1 with Ada -> alt
+      { player: 'Carol', ts: 150, serverId: 's1' } // no IP
+    ]
+    const ja = aggregateJoins(jr)
+    if (ja.totalJoins !== 5) return fail('joins total ' + ja.totalJoins)
+    if (ja.knownIpJoins !== 4) return fail('joins knownIp ' + ja.knownIpJoins)
+    if (ja.accountCount !== 3) return fail('joins accountCount ' + ja.accountCount)
+    if (ja.altGroups !== 1) return fail('joins altGroups ' + ja.altGroups)
+    if (ja.accounts.map((a) => a.player).join(',') !== 'Ada,Bob,Carol') return fail('accounts not newest-first')
+    const ada = ja.accounts[0]
+    if (ada.ips.join(',') !== '1.1.1.1,2.2.2.2') return fail('account IPs not recency-ordered: ' + ada.ips.join(','))
+    if (ada.joins !== 3 || ada.servers.join(',') !== 's1,s2') return fail('account joins/servers wrong')
+    if (ja.ips.length !== 2) return fail('ip table length ' + ja.ips.length)
+    if (ja.ips[0].ip !== '1.1.1.1' || ja.ips[0].accounts.join(',') !== 'Ada,Bob' || ja.ips[0].joins !== 3) {
+      return fail('shared IP not ranked first / wrong: ' + JSON.stringify(ja.ips[0]))
+    }
+    // minAccountsPerIp keeps only shared addresses; text matches an IP via its accounts too
+    const alts = aggregateJoins(jr, { minAccountsPerIp: 2 })
+    if (alts.ips.length !== 1 || alts.ips[0].ip !== '1.1.1.1') return fail('alts-only filter')
+    const byName = aggregateJoins(jr, { text: 'bob' })
+    if (byName.accounts.length !== 1 || byName.accounts[0].player !== 'Bob') return fail('joins text filter (account)')
+    if (byName.ips.length !== 1 || byName.ips[0].ip !== '1.1.1.1') return fail('joins text filter (IP via account)')
+    if (byName.altGroups !== 1) return fail('altGroups is a dataset property, must survive filtering')
+    console.log('AUDIT-SMOKE: join/alt aggregation OK (by-account, shared-IP ranking, alts-only, text)')
 
     console.log('AUDIT-SMOKE: PASS')
     app.exit(0)
@@ -2410,6 +2441,28 @@ export async function runSmoke(): Promise<void> {
       if (!av.hasOperator || !av.hasFailIp) return fail('audit rows missing actor/IP content')
       if (/audit\.|auditAct\.|\{\{/.test(av.title)) return fail('audit view not translated: ' + av.title)
       console.log('SMOKE: audit view OK (table renders — actor, source badge, denied login + IP)')
+
+      // Joins & alts mode: two accounts sharing one IP must flag as an alt cluster.
+      const jn = Date.now()
+      eventsMod.record(id, 'player.join', { ts: jn - 4000, data: { player: 'Ada', online: 1, ip: '9.9.9.9' } })
+      eventsMod.record(id, 'player.join', { ts: jn - 3000, data: { player: 'Ada', online: 1, ip: '9.9.9.9' } })
+      eventsMod.record(id, 'player.join', { ts: jn - 2000, data: { player: 'Bob', online: 2, ip: '9.9.9.9' } })
+      await win.webContents.executeJavaScript(
+        `[...document.querySelectorAll('.section-title .btn')].find(b=>/Joins|Giriş/i.test(b.textContent||''))?.click()`
+      )
+      await sleep(700)
+      const jv = JSON.parse(
+        await win.webContents.executeJavaScript(
+          `(()=>{const txt=[...document.querySelectorAll('.joins-table')].map(x=>x.textContent||'').join(' ');
+           return JSON.stringify({has:!!document.querySelector('.joins-table'),
+             alt:!!document.querySelector('.joins-table tr.joins-alt'),
+             ip:txt.indexOf('9.9.9.9')>=0,ada:/Ada/.test(txt),bob:/Bob/.test(txt)})})()`
+        )
+      ) as { has: boolean; alt: boolean; ip: boolean; ada: boolean; bob: boolean }
+      if (!jv.has) return fail('joins table did not render')
+      if (!jv.ip || !jv.ada || !jv.bob) return fail('joins table missing shared IP / accounts')
+      if (!jv.alt) return fail('shared IP not flagged as an alt cluster')
+      console.log('SMOKE: audit joins view OK (shared IP flags Ada+Bob as alts)')
     } finally {
       if (asnap == null) rmSync(af, { force: true })
       else writeFileSync(af, asnap, 'utf-8')

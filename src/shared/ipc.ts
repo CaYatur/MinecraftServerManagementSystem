@@ -36,6 +36,7 @@ import type {
 } from './types'
 import type { UptimeReport } from './uptime'
 import type { AuditPage, AuditQuery } from './audit'
+import type { JoinAggregate, JoinQuery } from './joins'
 import type { AlertRule, NewAlertRule } from './alerts'
 import type { McVersion, BuildInfo, CreateServerOptions, CreateProgress } from './versions'
 import type { ModEntry, ModrinthHit, ModUpdateReport } from './mods'
@@ -154,6 +155,7 @@ export const IPC = {
   eventsUptime: 'events:uptime',
 
   auditQuery: 'audit:query',
+  auditJoins: 'audit:joins',
 
   metricsQuery: 'metrics:query',
   metricsConfigGet: 'metrics:config-get',
@@ -334,6 +336,7 @@ export interface MsmsApi {
   getUptime(id: string, from: number, to: number): Promise<UptimeReport>
 
   queryAudit(q?: AuditQuery): Promise<AuditPage>
+  queryJoins(q?: JoinQuery): Promise<JoinAggregate>
 
   queryMetrics(
     id: string,

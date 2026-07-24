@@ -9,6 +9,7 @@ import { detectServer } from '../core/serverDetect'
 import * as registry from '../core/serverRegistry'
 import { processManager } from '../core/processManager'
 import * as audit from '../core/audit'
+import * as joins from '../core/joins'
 import { getProvider } from '../core/versions'
 import { createServer } from '../core/createServer'
 import { buildLaunchArgs } from '../core/javaArgs'
@@ -333,6 +334,7 @@ export function registerIpc(): void {
   H(IPC.eventsQuery, (_e, id: string, q?: events.EventQuery) => events.query(id, q))
   H(IPC.eventsUptime, (_e, id: string, from: number, to: number) => events.uptime(id, from, to))
   H(IPC.auditQuery, (_e, q?: audit.AuditQuery) => audit.query(q))
+  H(IPC.auditJoins, (_e, q?: joins.JoinQuery) => joins.joins(q))
 
   // --- telemetry history ---
   H(IPC.metricsQuery, (_e, id: string, opts: metrics.QueryOptions) => metrics.query(id, opts))
