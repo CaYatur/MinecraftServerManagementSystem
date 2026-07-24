@@ -2850,6 +2850,36 @@ export async function runWebSmoke(): Promise<void> {
       }
     }
 
+    // ---- panel image upload (raw bytes, validated, settings-gated) ----
+    {
+      // a real 1x1 PNG so saveImageBuffer's checks run against genuine bytes
+      const png = Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M8AAAMBAQDJ/pLvAAAAAElFTkSuQmCC',
+        'base64'
+      )
+      const upload = (mime: string, body: Uint8Array, tok?: string): Promise<Response> =>
+        fetch(base + '/api/site/upload', {
+          method: 'POST',
+          headers: { 'Content-Type': mime, ...(tok ? { Authorization: 'Bearer ' + tok } : {}) },
+          body
+        })
+      let ru = await upload('image/png', png)
+      if (ru.status !== 401) return fail('upload no-token expected 401, got ' + ru.status)
+      ru = await upload('image/png', png, ft)
+      if (ru.status !== 403) return fail('upload non-settings expected 403, got ' + ru.status)
+      ru = await upload('image/svg+xml', png, ot)
+      if (ru.status !== 415) return fail('upload svg (stored-XSS type) expected 415, got ' + ru.status)
+      ru = await upload('image/png', new Uint8Array(siteMod.MAX_UPLOAD + 1), ot)
+      if (ru.status !== 413) return fail('upload oversized expected 413, got ' + ru.status)
+      ru = await upload('image/png', png, ot)
+      if (ru.status !== 200) return fail('upload valid expected 200, got ' + ru.status)
+      const un = ((await ru.json()) as { name: string }).name
+      if (!un || !un.endsWith('.png')) return fail('upload returned no .png name: ' + un)
+      if (!siteMod.listUploads().includes(un)) return fail('uploaded file not listed in uploads')
+      siteMod.deleteUpload(un)
+      console.log('WEB-SMOKE: panel image upload OK (401/403/415/413 guarded; valid 200 lands in uploads)')
+    }
+
     // ---- double-spend: two concurrent buys with balance for one -> exactly one wins ----
     webAuth.setUserMc(owner.id, 'Tester')
     economy.addBalance(id, 'Tester', 100)
