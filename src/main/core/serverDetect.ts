@@ -17,6 +17,34 @@ export function listJars(dir: string): string[] {
   }
 }
 
+/**
+ * After a Forge/NeoForge installer runs on a pre-1.17 version there is no
+ * `@args` launcher — the installer produces a runnable server jar instead
+ * (`forge-<ver>-universal.jar` on ≤1.12, `forge-<mcver>-<forgever>.jar` on
+ * 1.13–1.16). Pick that jar from the directory listing, skipping the installer
+ * jar itself. Pure (takes filenames) so it is unit-testable without a toolchain.
+ * Returns null when no loader run jar is present (caller then errors).
+ */
+export function pickForgeRunJar(
+  jarNames: string[],
+  installerJar: string,
+  type: ServerType
+): string | null {
+  const kw = type === 'neoforge' ? 'neoforge' : 'forge'
+  const lc = (j: string): string => j.toLowerCase()
+  const cand = jarNames.filter((j) => j !== installerJar && !lc(j).includes('installer'))
+  // universal-first is only correct because the caller passes a NON-recursive,
+  // top-level listing (listJars): on ≤1.12 the runnable `-universal.jar` sits at
+  // top level, while on 1.13–1.16 the top level has a plain `forge-<ver>.jar`
+  // and the `-universal.jar` lives under libraries/ (so it is never in scope).
+  // Do not switch the caller to a recursive scan or this ordering breaks.
+  return (
+    cand.find((j) => lc(j).includes(kw) && lc(j).includes('universal')) ||
+    cand.find((j) => lc(j).includes(kw)) ||
+    null
+  )
+}
+
 /** Pull a Minecraft version like 1.20.4 / 1.21 out of an arbitrary string. */
 export function guessVersion(s: string): string {
   const m = s.match(/\b1\.(\d{1,2})(?:\.(\d{1,2}))?\b/)
