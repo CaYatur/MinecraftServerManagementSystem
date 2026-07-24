@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import type { TFunction } from 'i18next'
 import { Sparkles, Download, Loader2, ExternalLink, ChevronRight, Check } from 'lucide-react'
 import { useStore } from '../store'
 import { CREATABLE_TYPES, HAS_BUILDS } from '@shared/versions'
@@ -8,6 +9,22 @@ import type { JavaPreset, ServerType } from '@shared/types'
 
 const PROXY_TYPES: ServerType[] = ['velocity', 'waterfall', 'bungeecord']
 const PRESETS: JavaPreset[] = ['aikars', 'aikars-large', 'basic']
+
+/**
+ * Turn a raw createServer error code into a human message. The backend surfaces
+ * short codes (e.g. `no-mohist-build` when the upstream API lists a version but
+ * has no build for it, or `empty-download` when a mirror serves a 0-byte body);
+ * shown verbatim these read as gibberish to a non-technical user. Unknown codes
+ * fall through unchanged.
+ */
+function friendlyCreateError(error: string | undefined, t: TFunction): string {
+  const e = error ?? '?'
+  if (/^no-[a-z]+-build$/.test(e)) return t('wizard.errNoBuild')
+  if (e.startsWith('empty-download')) return t('wizard.errEmptyDownload')
+  if (e === 'folder-exists') return t('wizard.errFolderExists')
+  if (e === 'installer-args-not-found') return t('wizard.errNoLauncher')
+  return e
+}
 
 export function CreateView(): JSX.Element {
   const { t } = useTranslation()
@@ -111,7 +128,7 @@ export function CreateView(): JSX.Element {
       await selectServer(res.server.id)
       setView('console')
     } else {
-      toast('error', 'wizard.createFailed', { error: res.error ?? '?' })
+      toast('error', 'wizard.createFailed', { error: friendlyCreateError(res.error, t) })
       setProgress({ stage: 'error', message: res.error })
     }
   }
@@ -130,7 +147,7 @@ export function CreateView(): JSX.Element {
       case 'done':
         return t('wizard.progressDone')
       case 'error':
-        return t('wizard.createFailed', { error: progress.message ?? '?' })
+        return t('wizard.createFailed', { error: friendlyCreateError(progress.message, t) })
     }
   }, [progress, t])
 

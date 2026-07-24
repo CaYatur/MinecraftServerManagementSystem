@@ -328,7 +328,11 @@ const tr: typeof en = {
     progressConfiguring: 'Yapılandırılıyor…',
     progressDone: 'Tamamlandı!',
     createdOk: '"{{name}}" sunucusu oluşturuldu',
-    createFailed: 'Oluşturma başarısız: {{error}}'
+    createFailed: 'Oluşturma başarısız: {{error}}',
+    errNoBuild: 'Bu Minecraft sürümü için henüz bir yapı (build) yok — başka bir sürüm seçin.',
+    errEmptyDownload: 'İndirme sunucusu boş bir dosya döndürdü. O yapı geçici olarak erişilemez olabilir — başka bir yapı veya sürüm deneyin.',
+    errFolderExists: 'Bu adda bir sunucu klasörü zaten var — farklı bir ad seçin.',
+    errNoLauncher: 'Yükleyici tamamlandı ama çalıştırılabilir bir sunucu üretmedi. Bu yükleyici/sürüm birleşimi desteklenmiyor olabilir.'
   },
   players: {
     title: 'Oyuncular',

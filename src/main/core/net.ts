@@ -99,6 +99,15 @@ export async function downloadFile(url: string, dest: string, opts: DownloadOpts
   const source = Readable.fromWeb(r.body as Parameters<typeof Readable.fromWeb>[0])
   await pipeline(source, tap, createWriteStream(dest))
 
+  // A 0-byte body (dead mirror, 404-that-redirects-to-nothing, changed API shape)
+  // would otherwise be hashed to the well-known SHA-256 of empty input
+  // (e3b0c442…) and reported as a baffling "checksum mismatch". Fail honestly and
+  // early instead — this guards every provider, not just the one that regressed.
+  if (received === 0) {
+    await rm(dest, { force: true })
+    throw new Error(`empty-download: ${url} returned 0 bytes`)
+  }
+
   if (hash) {
     const digest = hash.digest('hex').toLowerCase()
     const expected = (opts.sha256 ?? opts.sha1 ?? '').toLowerCase()
