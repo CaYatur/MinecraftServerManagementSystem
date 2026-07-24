@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
 import { Sparkles, Download, Loader2, ExternalLink, ChevronRight, Check } from 'lucide-react'
 import { useStore } from '../store'
-import { CREATABLE_TYPES, HAS_BUILDS } from '@shared/versions'
+import { CREATABLE_TYPES, HAS_BUILDS, createErrorKey } from '@shared/versions'
 import type { McVersion, BuildInfo, CreateProgress } from '@shared/versions'
 import type { JavaPreset, ServerType } from '@shared/types'
 
@@ -14,16 +14,14 @@ const PRESETS: JavaPreset[] = ['aikars', 'aikars-large', 'basic']
  * Turn a raw createServer error code into a human message. The backend surfaces
  * short codes (e.g. `no-mohist-build` when the upstream API lists a version but
  * has no build for it, or `empty-download` when a mirror serves a 0-byte body);
- * shown verbatim these read as gibberish to a non-technical user. Unknown codes
- * fall through unchanged.
+ * shown verbatim these read as gibberish to a non-technical user. The code→key
+ * table lives in @shared/versions (createErrorKey) so it is testable; unmapped
+ * codes fall through unchanged.
  */
 function friendlyCreateError(error: string | undefined, t: TFunction): string {
   const e = error ?? '?'
-  if (/^no-[a-z]+-build$/.test(e)) return t('wizard.errNoBuild')
-  if (e.startsWith('empty-download')) return t('wizard.errEmptyDownload')
-  if (e === 'folder-exists') return t('wizard.errFolderExists')
-  if (e === 'installer-args-not-found') return t('wizard.errNoLauncher')
-  return e
+  const key = createErrorKey(e)
+  return key ? t(key) : e
 }
 
 export function CreateView(): JSX.Element {

@@ -332,7 +332,11 @@ const tr: typeof en = {
     errNoBuild: 'Bu Minecraft sürümü için henüz bir yapı (build) yok — başka bir sürüm seçin.',
     errEmptyDownload: 'İndirme sunucusu boş bir dosya döndürdü. O yapı geçici olarak erişilemez olabilir — başka bir yapı veya sürüm deneyin.',
     errFolderExists: 'Bu adda bir sunucu klasörü zaten var — farklı bir ad seçin.',
-    errNoLauncher: 'Yükleyici tamamlandı ama çalıştırılabilir bir sunucu üretmedi. Bu yükleyici/sürüm birleşimi desteklenmiyor olabilir.'
+    errNoLauncher: 'Yükleyici tamamlandı ama çalıştırılabilir bir sunucu üretmedi. Bu yükleyici/sürüm birleşimi desteklenmiyor olabilir.',
+    errChecksum: 'İndirilen dosya bozuk (sağlama tutmadı). Lütfen tekrar deneyin.',
+    errNetwork: 'Sunucudan indirilemedi — çevrimdışı olabilir ya da o dosya kaldırılmış olabilir. Bağlantınızı kontrol edin, tekrar deneyin veya başka bir sürüm seçin.',
+    errInstaller: 'Yükleyici çalıştırılamadı. Bu sürüm farklı bir Java sürümü gerektirebilir.',
+    errUnsupportedType: 'Bu sunucu türü desteklenmiyor.'
   },
   players: {
     title: 'Oyuncular',

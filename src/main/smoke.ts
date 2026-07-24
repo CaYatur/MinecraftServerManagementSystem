@@ -61,7 +61,7 @@ import type { UptimeReport } from '@shared/uptime'
 import type { JavaArgsConfig, MetricSeries, ServerConfig, ServerEvent } from '@shared/types'
 import { alertsPath, uploadsDir, auditDir } from './paths'
 import { analyzeCrash } from './core/crash'
-import { CREATABLE_TYPES } from '@shared/versions'
+import { CREATABLE_TYPES, createErrorKey } from '@shared/versions'
 
 /* eslint-disable no-console */
 
@@ -2711,6 +2711,54 @@ export async function runWizardSmoke(): Promise<void> {
     }
     if (existsSync(dest)) return fail('empty-download must not leave a partial file behind')
     console.log('WIZARD-SMOKE: empty-download guard OK (0-byte body fails clearly, no checksum confusion, dest removed)')
+  }
+
+  // 5. Error legibility (#44): every raw code the creation path can throw must
+  //    map to a non-raw wizard.* message; a genuinely-unknown string must still
+  //    pass through. Pure + deterministic (no network).
+  {
+    const codes = [
+      'no-build',
+      'no-download',
+      'no-server-jar-for-version',
+      'unknown-version',
+      'no-forge-build',
+      'no-neoforge-build',
+      'no-mohist-build',
+      'empty-download: http://x/y.jar returned 0 bytes',
+      'Checksum mismatch (got ab…, expected cd…)',
+      'HTTP 404 for http://x/y.jar',
+      'installer exited 1: boom',
+      'installer-args-not-found',
+      'folder-exists',
+      'no-provider-for-banana'
+    ]
+    const unmapped = codes.filter((c) => createErrorKey(c) === null)
+    if (unmapped.length) return fail('create error codes not mapped to a message: ' + unmapped.join(', '))
+    if (createErrorKey('some novel unexpected failure') !== null) {
+      return fail('createErrorKey must pass unknown strings through (null), not swallow them')
+    }
+    console.log(`WIZARD-SMOKE: create-error legibility OK (${codes.length} codes mapped, unknown passes through)`)
+  }
+
+  // 6. Provider matrix walk (#44, inspection): resolving a bogus version per
+  //    provider must never yield a MALFORMED descriptor (that would fail
+  //    illegibly). Throws are expected and tolerated — network-dependent — but
+  //    logged with whether the code maps, so gaps surface without flakiness.
+  {
+    for (const type of CREATABLE_TYPES) {
+      try {
+        const r = await getProvider(type).resolve('0.0.0-nope')
+        if (!/^https?:\/\/.+/.test(r.url) || !r.fileName) {
+          return fail(`${type}: bogus version resolved to a malformed descriptor: ${JSON.stringify(r)}`)
+        }
+        console.log(`WIZARD-SMOKE: matrix ${type} bogus -> deferred (${r.url.slice(0, 52)}…)`)
+      } catch (e) {
+        const msg = String((e as Error)?.message ?? e)
+        console.log(`WIZARD-SMOKE: matrix ${type} bogus -> throw [${createErrorKey(msg) ? 'mapped' : 'RAW'}] ${msg.slice(0, 64)}`)
+      }
+    }
+    console.log('WIZARD-SMOKE: provider matrix walked (bogus-version legibility inspected)')
   }
 
   console.log('WIZARD-SMOKE: PASS')
