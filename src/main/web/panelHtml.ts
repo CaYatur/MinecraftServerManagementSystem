@@ -110,6 +110,13 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);
 .chips{display:flex;flex-wrap:wrap;gap:6px}
 .chip{padding:5px 9px;font-size:11.5px;border-radius:8px;border:1px solid var(--border);background:var(--elev);color:var(--dim);cursor:pointer}
 .chip.on{border-color:transparent;color:#fff;background:linear-gradient(135deg,var(--accent),var(--accent2))}
+.np-preview{margin-top:12px;padding:14px;border:1px solid var(--border);border-radius:12px;background:var(--elev)}
+.np-preview h3{margin:0 0 4px;font-size:19px}
+.np-preview .pv-cover{width:100%;max-height:240px;object-fit:cover;border-radius:10px;margin:8px 0}
+.np-preview .pv-excerpt{color:var(--dim);font-style:italic;margin:0 0 8px}
+.np-preview .pv-body{white-space:pre-wrap;line-height:1.6;font-size:14px}
+.np-preview .pv-gal{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.np-preview .pv-gal img{width:96px;height:72px;object-fit:cover;border-radius:8px}
 /* crate */
 .crate-modal{position:fixed;inset:0;background:rgba(0,0,0,.72);display:grid;place-items:center;z-index:50;padding:16px}
 .crate-box{background:linear-gradient(160deg,#17151b,#0c0c11);border:1px solid rgba(220,39,39,.45);border-radius:16px;padding:24px;width:min(470px,94vw);text-align:center;box-shadow:0 30px 70px rgba(0,0,0,.65)}
@@ -174,9 +181,11 @@ h2{margin:8px 0;font-weight:800;letter-spacing:-.4px}
         <div id="npGallery" class="chips"></div>
         <div class="row" style="margin-top:8px">
           <button class="btn primary" onclick="savePost()">Publish</button>
+          <button class="btn" onclick="previewPost()">Preview</button>
           <button class="btn sm" onclick="resetPostForm()">Clear</button>
           <span class="dim" id="npHint" style="font-size:12px"></span>
         </div>
+        <div id="npPreview" class="np-preview hidden"></div>
       </div>
       <div id="newsList"></div>
     </div>
@@ -464,7 +473,22 @@ function editPost(id){api('/api/site/posts').then(function(r){if(!r.ok)return;
 function resetPostForm(){editingPost=null;['npTitle','npExcerpt','npBody'].forEach(function(i){document.getElementById(i).value=''});
  document.getElementById('npCover').value='';galleryImages=[];renderGallery();
  var uh=document.getElementById('npUpHint');if(uh)uh.textContent='';
+ var pv=document.getElementById('npPreview');if(pv)pv.classList.add('hidden');
  document.getElementById('newsFormTitle').textContent='New post';document.getElementById('npHint').textContent=''}
+/* Render the post as it will look published (mirrors the public site's detail:
+   cover, excerpt, pre-wrapped body, gallery). A second click hides it. */
+function previewPost(){var box=document.getElementById('npPreview');
+ if(!box.classList.contains('hidden')){box.classList.add('hidden');return}
+ function up(n){return '/uploads/'+encodeURIComponent(n)}
+ var title=document.getElementById('npTitle').value,exc=document.getElementById('npExcerpt').value,
+  body=document.getElementById('npBody').value,cover=document.getElementById('npCover').value;
+ box.innerHTML='<div class="dim" style="font-size:11px;margin-bottom:6px">Preview</div>'+
+  '<h3>'+esc(title||'Untitled')+'</h3>'+
+  (exc?'<div class="pv-excerpt">'+esc(exc)+'</div>':'')+
+  (cover?'<img class="pv-cover" src="'+up(cover)+'" alt=""/>':'')+
+  '<div class="pv-body">'+esc(body)+'</div>'+
+  (galleryImages.length?'<div class="pv-gal">'+galleryImages.map(function(im){return '<img src="'+up(im)+'" alt=""/>'}).join('')+'</div>':'');
+ box.classList.remove('hidden')}
 function savePost(){var body={id:editingPost||undefined,title:document.getElementById('npTitle').value,
  excerpt:document.getElementById('npExcerpt').value,body:document.getElementById('npBody').value,
  cover:document.getElementById('npCover').value||undefined,images:galleryImages.slice()};
