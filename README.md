@@ -1,16 +1,19 @@
 <p align="center">
   <img src="build/icon.png" width="120" alt="CaYaDev Server Manager" />
 </p>
-# CaYaDev Server Manager (MSMS)
 
 <p align="center">
-  Portable, open-source desktop control panel for Minecraft servers — bilingual (English / Türkçe), built with Electron + React + TypeScript. A **CaYaDev** project.
+  <strong>CaYaDev Server Manager (MSMS)</strong> 
+
+<p align="center">
+  Portable, open-source desktop control panel for Minecraft servers — bilingual (English / Türkçe), built with Electron + React + TypeScript. A <strong>CaYaDev</strong> project.
 </p>
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-blue)
-![Electron](https://img.shields.io/badge/Electron-43-47848F)
-
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green.svg" alt="License: MIT"></a>
+  <img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-blue" alt="Platform">
+  <img src="https://img.shields.io/badge/Electron-43-47848F" alt="Electron">
+</p>
 
 <p align="center">
   <a href="#-overview">Overview</a> •
