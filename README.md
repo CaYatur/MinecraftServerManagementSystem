@@ -1,26 +1,16 @@
+<p align="center">
+  <img src="build/icon.png" width="120" alt="CaYaDev Server Manager" />
+</p>
 # CaYaDev Server Manager (MSMS)
 
 <p align="center">
-  <strong>A portable, bilingual desktop control panel for creating, running, monitoring and maintaining Minecraft servers.</strong>
+  Portable, open-source desktop control panel for Minecraft servers — bilingual (English / Türkçe), built with Electron + React + TypeScript. A **CaYaDev** project.
 </p>
 
-<p align="center">
-  Built with Electron, React and TypeScript • Windows-first • English / Türkçe • MIT licensed
-</p>
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-blue)
+![Electron](https://img.shields.io/badge/Electron-43-47848F)
 
-<p align="center">
-  <a href="https://github.com/CaYatur/MinecraftServerManagementSystem">
-    <img alt="Repository" src="https://img.shields.io/badge/GitHub-MinecraftServerManagementSystem-181717?logo=github">
-  </a>
-  <a href="LICENSE">
-    <img alt="License" src="https://img.shields.io/badge/License-MIT-green.svg">
-  </a>
-  <img alt="Version" src="https://img.shields.io/badge/version-0.1.0-blue.svg">
-  <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-0078D4?logo=windows">
-  <img alt="Electron" src="https://img.shields.io/badge/Electron-43-47848F?logo=electron">
-  <img alt="React" src="https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=000">
-  <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-7-3178C6?logo=typescript&logoColor=fff">
-</p>
 
 <p align="center">
   <a href="#-overview">Overview</a> •
