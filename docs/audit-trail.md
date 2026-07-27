@@ -35,7 +35,7 @@ The split matters: a login attempt, a permission grant or a balance change is no
 |---|---|
 | `ts` | epoch ms — the only key the store is ordered by |
 | `source` | where the action came from (see below) |
-| `action` | namespaced free string, e.g. `server.start`, `login`, `balance.set` |
+| `action` | namespaced free string, e.g. `server.start`, `login`, `purchase` |
 | `actor` | web username, player name, or `operator` for the local desktop user |
 | `ok` | **outcome** — `false` entries are kept deliberately |
 | `ip` | present when the action arrived over the network |
@@ -64,11 +64,29 @@ A persisted log has to remain readable when written by an older or newer build, 
 
 ## Actions currently recorded
 
-- **Auth / accounts** — `login` (success *and* failure, with the attempted username), `account.register`, `user.audit-grant` (both grant and revoke)
-- **Server control** — `server.start`, `server.stop`, `server.restart`, `server.kill`, `server.create`, `server.remove`
-- **Console** — `command.run` (the command text is the `target`)
-- **Economy** — `balance.set`, `purchase`
-- **Runtime** — `java.install`
+This list is read off the actual `audit.record` call sites, not aspirational:
+
+| Action | Sources |
+|---|---|
+| `login` | `webpanel`, `public` — **success and failure**, with the attempted username |
+| `account.register` | `public` |
+| `user.audit-grant` | `panel` — both grant and revoke |
+| `server.start` / `.stop` / `.restart` / `.kill` | `panel`, `webpanel` |
+| `server.create` / `server.remove` | `panel` |
+| `command.run` | **`console`** (desktop console), `webpanel` — success and failure; the command text is the `target` |
+| `purchase` | `public` |
+| `java.install` | `panel` |
+
+### Known gap: balance changes are not in the audit trail
+
+An admin granting, removing or setting a player's balance is recorded in the
+**economy ledger** (`LedgerEntry.by` — the web username, `desktop`, or
+`purchase`) but **not** in the audit trail. The ledger answers "who changed this
+balance" fully, and the desktop and panel both display and search it — but a
+query over the audit trail alone will not show balance administration.
+
+Purchases *are* audited (as `purchase`, from `public`), so the two economy
+paths are currently inconsistent. Tracked in #68.
 
 ---
 
@@ -80,7 +98,7 @@ Attribution is set at the **call site**, never inferred later:
 - **Desktop app** — `operator`. The desktop has no user accounts; the person at the machine already has full filesystem access, so inventing an identity for them would be theatre.
 - **Purchases** — the buying player's Minecraft name.
 
-The economy keeps its own parallel attribution on each `LedgerEntry.by` (`purchase`, `desktop`, or the web username). That is the **same fact recorded once per store**, not a duplicate: the ledger needs it to render a balance history without joining against the audit log, and the audit log needs it to answer cross-source questions. Neither is derived from the other, and neither re-stores the other's data.
+The economy keeps its own attribution on each `LedgerEntry.by` (`purchase`, `desktop`, or the web username). Today this is the **only** record of who changed a balance — see the known gap above — and it is what both the desktop Store view and the web panel display and search.
 
 ---
 
