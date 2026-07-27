@@ -140,6 +140,73 @@ export function folderForLoaders(
   return loaders.some((l) => PLUGIN_LOADERS.includes(l)) ? 'plugins' : 'mods'
 }
 
+// ---- update file-swap (#29) ----
+
+export interface ModSwapPlan {
+  folder: 'plugins' | 'mods'
+  /** What the downloaded jar must be called on disk. */
+  newName: string
+  /**
+   * The old jar to delete afterwards, relative to the server root, or `null`
+   * when the download already replaced it in place.
+   */
+  removeRel: string | null
+}
+
+/** basename without node:path - this module is shared with the renderer. */
+function baseName(rel: string): string {
+  const i = rel.lastIndexOf('/')
+  return i < 0 ? rel : rel.slice(i + 1)
+}
+
+/**
+ * Reduce a filename supplied by the Modrinth API to a plain name that cannot
+ * escape the folder it is joined to.
+ *
+ * The API is not the threat model on a good day, but `filename` is attacker-
+ * controlled data as far as this process is concerned: it is joined straight
+ * onto a server directory, and `../../../start.bat` would land outside the
+ * server entirely. Both separators are stripped because a Windows path uses
+ * backslashes and `join` honours them.
+ */
+export function safeJarName(name: string): string {
+  const flat = name.split(/[\\/]/).pop() ?? ''
+  const clean = flat.replace(/^\.+/, '').trim()
+  if (!clean) throw new Error('invalid-filename')
+  return clean
+}
+
+/**
+ * Pure: decide what an update writes and what it removes.
+ *
+ * Extracted from `applyUpdate` so the decision is testable (#29) rather than
+ * only reachable by actually downloading a jar.
+ *
+ * `caseInsensitive` is not a nicety. On Windows and macOS `LuckPerms.jar` and
+ * `luckperms.jar` are the SAME file, so a version that only changes the
+ * filename's case has already been overwritten by the download - and deleting
+ * "the old one" would delete the jar that was just installed, leaving the
+ * server with no plugin at all. A plain string comparison gets this wrong in
+ * exactly the case where the damage is silent.
+ */
+export function planModSwap(
+  oldRel: string,
+  newFilename: string,
+  opts: { caseInsensitive: boolean }
+): ModSwapPlan {
+  const folder: 'plugins' | 'mods' = oldRel.startsWith('mods/') ? 'mods' : 'plugins'
+  const safeNew = safeJarName(newFilename)
+  const wasDisabled = /\.disabled$/i.test(oldRel)
+  // A disabled jar stays disabled: an update must never silently switch a
+  // plugin the operator turned off back on.
+  const newName = wasDisabled ? safeNew + '.disabled' : safeNew
+  const oldBase = baseName(oldRel)
+  const same = opts.caseInsensitive
+    ? oldBase.toLowerCase() === newName.toLowerCase()
+    : oldBase === newName
+  return { folder, newName, removeRel: same ? null : `${folder}/${oldBase}` }
+}
+
 /** Shrink a version to what the renderer needs. */
 export function summariseVersion(v: MrVersionInfo): ModVersionSummary {
   const pf = v.files.find((f) => f.primary) ?? v.files[0]

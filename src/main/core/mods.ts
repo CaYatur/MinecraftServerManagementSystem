@@ -19,6 +19,8 @@ import {
   diffUpdates,
   folderForLoaders,
   pickCompatibleVersion,
+  planModSwap,
+  safeJarName,
   summariseVersion,
   PLUGIN_LOADERS
 } from '@shared/mods'
@@ -34,6 +36,12 @@ import type {
 } from '@shared/mods'
 
 type ModFolder = 'plugins' | 'mods'
+
+/**
+ * Windows and macOS treat `Foo.jar` and `foo.jar` as one file; Linux does not.
+ * The update swap has to know, or it deletes what it just downloaded.
+ */
+const CASE_INSENSITIVE_FS = process.platform === 'win32' || process.platform === 'darwin'
 
 function root(id: string): string {
   const s = getServer(id)
@@ -244,24 +252,25 @@ export async function applyUpdate(id: string, rel: string, versionId: string): P
   const server = getServer(id)
   if (!server) throw new Error('server-not-found')
   const oldRel = safeRel(rel)
-  const oldFull = join(server.path, oldRel)
-  const wasDisabled = /\.disabled$/i.test(oldRel)
-  const folder: ModFolder = oldRel.startsWith('mods/') ? 'mods' : 'plugins'
 
   const v = await httpJson<MrVersion>(`${MR}/version/${encodeURIComponent(versionId)}`)
   const file = v.files.find((f) => f.primary) ?? v.files[0]
   if (!file?.url) throw new Error('no-file-in-version')
 
+  // The whole decision - target folder, on-disk name, and whether the old jar
+  // is a separate file that must be removed - is pure and smoke-covered.
+  const plan = planModSwap(oldRel, file.filename, { caseInsensitive: CASE_INSENSITIVE_FS })
+  const folder: ModFolder = plan.folder
   const dir = join(server.path, folder)
   mkdirSync(dir, { recursive: true })
-  const newName = wasDisabled ? file.filename + '.disabled' : file.filename
-  const dest = join(dir, newName)
-  await downloadFile(file.url, dest, { sha1: file.hashes?.sha1 })
+  const newName = plan.newName
+  await downloadFile(file.url, join(dir, newName), { sha1: file.hashes?.sha1 })
 
-  // Remove the old jar when the filename changed, or the server would load
-  // both the old and the new copy. A same-name update just overwrote it.
-  if (join(dir, basename(oldFull)) !== dest && existsSync(oldFull)) {
-    rmSync(oldFull, { force: true })
+  // Remove the old jar only when it is genuinely a different file, or the
+  // server would load both copies. A same-name update already overwrote it.
+  if (plan.removeRel) {
+    const oldFull = join(server.path, plan.removeRel)
+    if (existsSync(oldFull)) rmSync(oldFull, { force: true })
   }
   events.record(id, 'mod.updated', {
     text: file.filename,
@@ -375,7 +384,10 @@ export async function installModrinth(
   const folder = folderForLoaders(v.loaders, fallbackFolder(server.type))
   const dir = join(server.path, folder)
   mkdirSync(dir, { recursive: true })
-  await downloadFile(file.url, join(dir, file.filename), { sha1: file.hashes?.sha1 })
-  log.info(`Mod installed: ${file.filename} (${v.version_number}) -> ${folder}/ for ${id}`)
-  return file.filename
+  // The API supplies this name; it must not be able to steer the write out of
+  // the server folder.
+  const name = safeJarName(file.filename)
+  await downloadFile(file.url, join(dir, name), { sha1: file.hashes?.sha1 })
+  log.info(`Mod installed: ${name} (${v.version_number}) -> ${folder}/ for ${id}`)
+  return name
 }

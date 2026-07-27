@@ -48,7 +48,13 @@ import {
   isZipPackage,
   type AdoptiumAsset
 } from '@shared/javaProvision'
-import { diffUpdates, folderForLoaders, pickCompatibleVersion } from '@shared/mods'
+import {
+  diffUpdates,
+  folderForLoaders,
+  pickCompatibleVersion,
+  planModSwap,
+  safeJarName
+} from '@shared/mods'
 import type { MrVersion, MrVersionInfo } from '@shared/mods'
 import { computeUptime, clipSessions } from '@shared/uptime'
 import { evaluateRule, normalizeRule, IDLE, type AlertRule, type AlertSample } from '@shared/alerts'
@@ -678,6 +684,66 @@ export async function runModUpdateSmoke(): Promise<void> {
       return fail('missing loaders should use the fallback')
     }
     console.log('MODUPDATE-SMOKE: install folder decided by version loaders (hybrid-safe)')
+
+    // The update file-swap (#29): previously reachable only by downloading a
+    // jar, now a pure decision.
+    const ci = { caseInsensitive: true }
+    const cs = { caseInsensitive: false }
+
+    // A renamed jar must be removed, or the server loads both copies.
+    const renamed = planModSwap('plugins/LuckPerms-5.4.0.jar', 'LuckPerms-5.5.53.jar', ci)
+    if (renamed.newName !== 'LuckPerms-5.5.53.jar') return fail('wrong new name: ' + renamed.newName)
+    if (renamed.removeRel !== 'plugins/LuckPerms-5.4.0.jar') {
+      return fail('a renamed jar must be removed, got ' + renamed.removeRel)
+    }
+    // A same-name update was overwritten by the download - removing it deletes
+    // the new jar.
+    if (planModSwap('plugins/LuckPerms.jar', 'LuckPerms.jar', ci).removeRel !== null) {
+      return fail('a same-name update must not delete the file it just wrote')
+    }
+    // THE TRAP: on Windows/macOS these are one file. A case-sensitive compare
+    // says "different", deletes the "old" one, and the server is left with no
+    // plugin at all.
+    if (planModSwap('plugins/LuckPerms.jar', 'luckperms.jar', ci).removeRel !== null) {
+      return fail('a case-only rename on a case-insensitive fs must NOT be deleted')
+    }
+    // ...but on Linux they really are two files, so the old one must go.
+    if (planModSwap('plugins/LuckPerms.jar', 'luckperms.jar', cs).removeRel !== 'plugins/LuckPerms.jar') {
+      return fail('a case-only rename on a case-sensitive fs is a real rename')
+    }
+    // A disabled plugin stays disabled - an update must never switch a plugin
+    // the operator turned off back on.
+    const dis = planModSwap('plugins/LuckPerms-5.4.0.jar.disabled', 'LuckPerms-5.5.53.jar', ci)
+    if (dis.newName !== 'LuckPerms-5.5.53.jar.disabled') return fail('update re-enabled a disabled plugin')
+    if (dis.removeRel !== 'plugins/LuckPerms-5.4.0.jar.disabled') return fail('old disabled jar not removed')
+    // ...and a disabled jar whose name is otherwise unchanged is still one file.
+    if (planModSwap('plugins/LuckPerms.jar.disabled', 'LuckPerms.jar', ci).removeRel !== null) {
+      return fail('a disabled same-name update must not delete itself')
+    }
+    // mods/ is preserved, and the removal path is rebuilt under the right folder.
+    const modded = planModSwap('mods/fabric-api-0.1.jar', 'fabric-api-0.2.jar', ci)
+    if (modded.folder !== 'mods') return fail('mods/ folder lost')
+    if (modded.removeRel !== 'mods/fabric-api-0.1.jar') return fail('wrong removal path for mods/')
+    // A filename from the API is joined straight onto a server directory, so it
+    // must not be able to steer the write out of it.
+    if (safeJarName('../../../start.bat') !== 'start.bat') return fail('unix traversal not stripped')
+    if (safeJarName('..\\..\\evil.jar') !== 'evil.jar') return fail('windows traversal not stripped')
+    if (safeJarName('plugins/Sub/Thing.jar') !== 'Thing.jar') return fail('directory part not stripped')
+    if (safeJarName('.hidden.jar') !== 'hidden.jar') return fail('leading dots not stripped')
+    for (const bad of ['', '..', '/', '\\', '...']) {
+      let threw = false
+      try {
+        safeJarName(bad)
+      } catch {
+        threw = true
+      }
+      if (!threw) return fail('a name that reduces to nothing must be refused: ' + JSON.stringify(bad))
+    }
+    // ...and the swap plan applies it, so a traversal name cannot reach join().
+    if (planModSwap('plugins/A.jar', '../../evil.jar', ci).newName !== 'evil.jar') {
+      return fail('planModSwap did not sanitise the new filename')
+    }
+    console.log('MODUPDATE-SMOKE: update swap OK (case-collision safe, disabled stays disabled, traversal stripped)')
 
     console.log('MODUPDATE-SMOKE: PASS')
     app.exit(0)
