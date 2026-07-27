@@ -10,6 +10,7 @@ import { processManager } from '../core/processManager'
 import { getPlayers } from '../core/players'
 import * as metrics from '../core/metrics'
 import * as events from '../core/events'
+import { analyze } from '@shared/analysis'
 import * as audit from '../core/audit'
 import * as economy from '../store/economy'
 import * as site from './site'
@@ -364,6 +365,29 @@ async function handlePanel(req: IncomingMessage, res: ServerResponse): Promise<v
       return sendJson(res, 200, {
         lines: history.map((l) => ({ ts: l.ts, line: l.line, stream: l.stream })),
         status: processManager.getStatus(id).status
+      })
+    }
+    // Performance analysis (#25): the same findings the desktop History tab
+    // shows, computed server-side from the same three inputs. 'view' scope -
+    // it is read-only advice about a server the user can already see.
+    if (sub === 'analysis' && method === 'GET') {
+      if (!gate('view')) return
+      const server = getServer(id)
+      if (!server) return sendJson(res, 404, { error: 'no-server' })
+      const hours = Math.min(720, Math.max(1, Number(url.searchParams.get('hours')) || 24))
+      const to = Date.now()
+      const from = to - hours * 3600_000
+      const series = metrics.query(id, { from, to })
+      return sendJson(res, 200, {
+        hours,
+        findings: analyze({
+          series,
+          uptime: events.uptime(id, from, to),
+          events: events.query(id, { from, to }).events,
+          server: { type: server.type, java: server.java },
+          from,
+          to
+        })
       })
     }
     if (sub === 'power' && method === 'POST') {

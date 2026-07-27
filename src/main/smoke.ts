@@ -3422,6 +3422,31 @@ export async function runWebSmoke(): Promise<void> {
       // and it must not exist on the public website listener
       r = await sget(`/api/servers/${id}/metrics?${range}`, ot)
       if (r.status !== 404) return fail('metrics leaked onto the site listener: ' + r.status)
+
+      // Performance analysis endpoint (#25): read-only advice about a server
+      // the user can already see, so it rides the same 'view' gate as metrics.
+      r = await get(`/api/servers/${id}/analysis`, ot)
+      if (r.status !== 200) return fail('analysis as owner expected 200, got ' + r.status)
+      const an = (await r.json()) as { hours: number; findings: { code: string; severity: string }[] }
+      if (!Array.isArray(an.findings)) return fail('analysis did not return a findings array')
+      if (an.hours !== 24) return fail('analysis default window should be 24h, got ' + an.hours)
+      // Every finding must carry a code and a severity the panel can style.
+      for (const f of an.findings) {
+        if (!f.code) return fail('a finding arrived with no code')
+        if (!['info', 'warn', 'error'].includes(f.severity)) {
+          return fail('unknown finding severity: ' + f.severity)
+        }
+      }
+      r = await get(`/api/servers/${id}/analysis?hours=999999`, ot)
+      if (r.status !== 200) return fail('an absurd window should clamp, not fail: ' + r.status)
+      if (((await r.json()) as { hours: number }).hours !== 720) return fail('hours not clamped to 720')
+      r = await get(`/api/servers/${id}/analysis`, nt)
+      if (r.status !== 403) return fail('analysis without view expected 403, got ' + r.status)
+      r = await get(`/api/servers/${id}/analysis`)
+      if (r.status !== 401) return fail('analysis without token expected 401, got ' + r.status)
+      r = await sget(`/api/servers/${id}/analysis`, ot)
+      if (r.status !== 404) return fail('analysis leaked onto the site listener: ' + r.status)
+      console.log('WEB-SMOKE: analysis endpoint OK (view-gated, window clamped, findings well-formed)')
       webAuth.deleteUser(nosee.id)
       console.log('WEB-SMOKE: metrics endpoint OK (view-gated, 401/403/404, resolutions honoured)')
     } finally {
