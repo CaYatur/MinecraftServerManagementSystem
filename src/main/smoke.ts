@@ -12,7 +12,8 @@ import * as webPlayerAuth from './web/playerAuth'
 import * as economy from './store/economy'
 import * as siteMod from './web/site'
 import { pickSiteLang } from './web/siteLang'
-import type { Product } from '@shared/web'
+import type { LedgerEntry, Product } from '@shared/web'
+import { filterLedger, ledgerSummary } from '@shared/economy'
 import { getProvider } from './core/versions'
 import { createServer } from './core/createServer'
 import { pickForgeRunJar } from './core/serverDetect'
@@ -3442,6 +3443,41 @@ export async function runWebSmoke(): Promise<void> {
     }
     await post('/api/site/posts/delete', { id: created.id }, ot)
     console.log('WEB-SMOKE: panel news publishing OK (author attributed, 403 for unprivileged)')
+
+    // Ledger filter + summary (#14). Pure, and shared by the desktop Store view
+    // and the panel, so both surfaces must agree on what a filter means.
+    const ledEntries: LedgerEntry[] = [
+      { id: '1', mcName: 'Steve', delta: 100, balanceAfter: 100, reason: 'event win', by: 'owner_t', kind: 'grant', at: 3 },
+      { id: '2', mcName: 'Alex', delta: -40, balanceAfter: 60, reason: 'refund fix', by: 'desktop', kind: 'remove', at: 2 },
+      { id: '3', mcName: 'Steve', delta: -25, balanceAfter: 75, reason: 'Rank', by: 'purchase', kind: 'purchase', at: 1 },
+      { id: '4', mcName: 'Notch', delta: 500, balanceAfter: 500, reason: '', by: 'owner_t', kind: 'set', at: 0 }
+    ]
+    if (filterLedger(ledEntries).length !== 4) return fail('an empty filter must not drop entries')
+    if (filterLedger(ledEntries, { text: 'steve' }).length !== 2) {
+      return fail('player search should be case-insensitive')
+    }
+    // Searching the ACTOR is the point of #15 - "what did this admin change".
+    const byOwner = filterLedger(ledEntries, { text: 'owner_t' })
+    if (byOwner.length !== 2 || byOwner.some((e) => e.by !== 'owner_t')) {
+      return fail('searching by actor should return exactly that actor entries')
+    }
+    if (filterLedger(ledEntries, { text: 'refund' }).length !== 1) return fail('reason should be searchable')
+    if (filterLedger(ledEntries, { kind: 'purchase' }).length !== 1) return fail('kind filter broken')
+    if (filterLedger(ledEntries, { kind: 'all' }).length !== 4) return fail("'all' must not filter")
+    // text AND kind together, not either/or
+    if (filterLedger(ledEntries, { text: 'steve', kind: 'grant' }).length !== 1) {
+      return fail('text and kind must both apply')
+    }
+    // Order is preserved (newest-first) - the UI does not re-sort.
+    if (filterLedger(ledEntries, { text: 'steve' }).map((e) => e.id).join() !== '1,3') {
+      return fail('filter must preserve ledger order')
+    }
+    const sum = ledgerSummary(ledEntries)
+    if (sum.count !== 4) return fail('summary count wrong')
+    if (sum.granted !== 600) return fail('granted should total grants+sets: ' + sum.granted)
+    if (sum.removed !== 40) return fail('removed should be positive and exclude purchases: ' + sum.removed)
+    if (sum.spent !== 25) return fail('spent should be the positive purchase total: ' + sum.spent)
+    console.log('WEB-SMOKE: ledger filter + summary OK (actor searchable, purchases not double-counted)')
   } catch (e) {
     return fail('exception: ' + String(e))
   } finally {
