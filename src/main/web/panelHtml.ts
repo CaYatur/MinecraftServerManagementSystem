@@ -480,22 +480,26 @@ function buy(pid){api('/api/servers/'+current.id+'/store/buy',{method:'POST',bod
 // and is coerced here as well: an unknown value must still open the crate, or a
 // player who already paid would see nothing at all.
 var CRATE_MS={reel:4000,spin:3200,flip:2800,burst:1600,instant:0};
+// Every open gets a token. A crate can be closed and another bought while the
+// first animation still has pending timers - without this the old run keeps
+// writing into the reel and announces the PREVIOUS reward over the new one.
+var crateRun=0;
 function crateVariant(){var v=dstore.crateAnimation;return CRATE_MS[v]===undefined?'reel':v}
 function cratePool(reward){var pool=reward.pool&&reward.pool.length?reward.pool:[{name:reward.name}];return pool}
 function crateCell(it,cls){return '<div class="'+cls+'">'+(it.icon?'<img src="'+escAttr(it.icon)+'"/>':'')+esc(it.name)+'</div>'}
-function crateFinish(reward,ms){var res=document.getElementById('crateResult');
- setTimeout(function(){res.textContent='🎉 '+reward.name;res.className='crate-result win'},ms+100)}
+function crateFinish(reward,ms,run){var res=document.getElementById('crateResult');
+ setTimeout(function(){if(run!==crateRun)return;res.textContent='🎉 '+reward.name;res.className='crate-result win'},ms+100)}
 function openCrate(reward){var modal=document.getElementById('crate');modal.classList.remove('hidden');
  var reel=document.getElementById('reel');var mask=document.querySelector('.reel-mask');
  var res=document.getElementById('crateResult');res.textContent='';res.className='crate-result';
- var v=crateVariant();var ms=CRATE_MS[v];
+ var run=++crateRun;var v=crateVariant();var ms=CRATE_MS[v];
  mask.className='reel-mask anim-'+v;reel.className='reel';reel.style.cssText='';
- if(v==='instant'){reel.innerHTML=crateCell({name:reward.name,icon:reward.icon},'reel-item');crateFinish(reward,0);return}
- if(v==='burst'){return crateBurst(reward,ms,reel)}
- if(v==='flip'){return crateFlip(reward,ms,reel)}
- if(v==='spin'){return crateSpin(reward,ms,reel,mask)}
- return crateReel(reward,ms,reel,mask)}
-function crateReel(reward,ms,reel,mask){var pool=cratePool(reward);var strip=[];
+ if(v==='instant'){reel.innerHTML=crateCell({name:reward.name,icon:reward.icon},'reel-item');crateFinish(reward,0,run);return}
+ if(v==='burst'){return crateBurst(reward,ms,reel,run)}
+ if(v==='flip'){return crateFlip(reward,ms,reel,run)}
+ if(v==='spin'){return crateSpin(reward,ms,reel,mask,run)}
+ return crateReel(reward,ms,reel,mask,run)}
+function crateReel(reward,ms,reel,mask,run){var pool=cratePool(reward);var strip=[];
  for(var i=0;i<40;i++){strip.push(pool[Math.floor(Math.random()*pool.length)])}
  var winIdx=strip.length-4;strip[winIdx]={name:reward.name,icon:reward.icon};
  reel.style.transition='none';reel.style.transform='translateX(0)';
@@ -503,8 +507,8 @@ function crateReel(reward,ms,reel,mask){var pool=cratePool(reward);var strip=[];
  var offset=winIdx*128-(mask.clientWidth/2-60);
  requestAnimationFrame(function(){reel.style.transition='transform '+(ms/1000)+'s cubic-bezier(.12,.7,.2,1)';
   reel.style.transform='translateX(-'+offset+'px)'});
- crateFinish(reward,ms)}
-function crateSpin(reward,ms,reel,mask){var pool=cratePool(reward);var strip=[];
+ crateFinish(reward,ms,run)}
+function crateSpin(reward,ms,reel,mask,run){var pool=cratePool(reward);var strip=[];
  for(var i=0;i<30;i++){strip.push(pool[Math.floor(Math.random()*pool.length)])}
  var winIdx=strip.length-3;strip[winIdx]={name:reward.name,icon:reward.icon};
  reel.className='reel reel-v';reel.style.transition='none';reel.style.transform='translateY(0)';
@@ -512,23 +516,24 @@ function crateSpin(reward,ms,reel,mask){var pool=cratePool(reward);var strip=[];
  var offset=winIdx*84-(mask.clientHeight/2-38);
  requestAnimationFrame(function(){reel.style.transition='transform '+(ms/1000)+'s cubic-bezier(.15,.75,.2,1)';
   reel.style.transform='translateY(-'+offset+'px)'});
- crateFinish(reward,ms)}
-function crateFlip(reward,ms,reel){var pool=cratePool(reward);
+ crateFinish(reward,ms,run)}
+function crateFlip(reward,ms,reel,run){var pool=cratePool(reward);
  var cards=[];for(var i=0;i<4;i++){cards.push(pool[Math.floor(Math.random()*pool.length)])}
  var winIdx=cards.length-1;cards[winIdx]={name:reward.name,icon:reward.icon};
  reel.className='reel reel-flip';
  reel.innerHTML=cards.map(function(it){return crateCell(it,'reel-item flip-card')}).join('');
  var nodes=reel.children;var step=ms/cards.length;
- for(var j=0;j<nodes.length;j++){(function(n,d){setTimeout(function(){n.classList.add('flipped')},d)})(nodes[j],j*step)}
- crateFinish(reward,ms)}
-function crateBurst(reward,ms,reel){var pool=cratePool(reward);
+ for(var j=0;j<nodes.length;j++){(function(n,d){setTimeout(function(){if(run!==crateRun)return;n.classList.add('flipped')},d)})(nodes[j],j*step)}
+ crateFinish(reward,ms,run)}
+function crateBurst(reward,ms,reel,run){var pool=cratePool(reward);
  reel.className='reel reel-burst';
  reel.innerHTML=crateCell(pool[Math.floor(Math.random()*pool.length)],'reel-item burst-card');
  var shuffles=Math.max(1,Math.floor(ms/220));var n=0;
  var iv=setInterval(function(){n++;
+  if(run!==crateRun){clearInterval(iv);return}
   if(n>=shuffles){clearInterval(iv);reel.innerHTML=crateCell({name:reward.name,icon:reward.icon},'reel-item burst-card burst-win');return}
   reel.innerHTML=crateCell(pool[Math.floor(Math.random()*pool.length)],'reel-item burst-card')},200);
- crateFinish(reward,ms)}
+ crateFinish(reward,ms,run)}
 function closeCrate(e){if(e&&e.target&&e.target.id!=='crate'&&e.target.tagName!=='BUTTON')return;document.getElementById('crate').classList.add('hidden')}
 
 /* ---- store admin: configuration (store scope) ---- */
