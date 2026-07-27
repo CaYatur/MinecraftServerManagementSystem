@@ -125,6 +125,31 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);
 .reel-item{min-width:120px;height:76px;border-radius:9px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;background:var(--elev);border:1px solid var(--border);font-size:13px;font-weight:650;padding:6px;text-align:center}
 .reel-item img{width:28px;height:28px;image-rendering:pixelated}
 .reel-marker{position:absolute;top:0;left:50%;width:2px;height:100%;background:var(--accent);box-shadow:0 0 12px var(--accent)}
+/* vertical slot machine */
+.reel-mask.anim-spin{height:170px}
+.reel-mask.anim-spin .reel-marker{top:50%;left:0;width:100%;height:2px}
+.reel.reel-v{flex-direction:column;position:absolute;top:0;left:0;right:0}
+.reel.reel-v .reel-item{min-width:0;width:auto;height:76px}
+/* card flip */
+.reel-mask.anim-flip{height:100px}
+.reel-mask.anim-flip .reel-marker{display:none}
+.reel.reel-flip{justify-content:center}
+.flip-card{transform:rotateY(180deg);color:transparent;background:linear-gradient(150deg,#241c22,#12121a);transition:transform .45s ease,color .1s ease .3s;backface-visibility:hidden}
+.flip-card img{opacity:0;transition:opacity .1s ease .3s}
+.flip-card.flipped{transform:rotateY(0deg);color:inherit}
+.flip-card.flipped img{opacity:1}
+/* quick burst */
+.reel-mask.anim-burst{height:100px}
+.reel-mask.anim-burst .reel-marker{display:none}
+.reel.reel-burst{justify-content:center;align-items:center;height:100%}
+.burst-card{min-width:150px;height:80px;animation:burstIn .18s ease}
+.burst-card.burst-win{animation:burstWin .45s cubic-bezier(.2,1.5,.4,1);border-color:var(--accent)}
+@keyframes burstIn{from{opacity:.3;transform:scale(.9)}to{opacity:1;transform:scale(1)}}
+@keyframes burstWin{from{transform:scale(.6);opacity:0}to{transform:scale(1);opacity:1}}
+/* instant */
+.reel-mask.anim-instant{height:100px}
+.reel-mask.anim-instant .reel-marker{display:none}
+.reel-mask.anim-instant .reel{justify-content:center;align-items:center;height:100%}
 .crate-result{margin-top:15px;font-size:19px;font-weight:850;min-height:26px}
 .crate-result.win{color:var(--accent);animation:pulse .5s ease 3}
 @keyframes pulse{50%{transform:scale(1.12)}}
@@ -447,10 +472,68 @@ function loadEvents(){
     '<span>'+esc(evText(e))+'</span><span class="when">'+new Date(e.ts).toLocaleString()+'</span></div>'}).join('')})}
 
 /* ---- store ---- */
-function loadStore(){api('/api/servers/'+current.id+'/store').then(function(r){if(!r.ok)return;api('/api/servers/'+current.id+'/store/balance').then(function(b){var bal=b.ok?b.body:{balance:0,mcName:null};document.getElementById('dBal').textContent=(bal.mcName?bal.mcName+': ':'')+(bal.balance||0)+' '+(r.body.currency||'');renderProducts(r.body)})})}
+var dstore={};
+function loadStore(){api('/api/servers/'+current.id+'/store').then(function(r){if(!r.ok)return;dstore=r.body||{};api('/api/servers/'+current.id+'/store/balance').then(function(b){var bal=b.ok?b.body:{balance:0,mcName:null};document.getElementById('dBal').textContent=(bal.mcName?bal.mcName+': ':'')+(bal.balance||0)+' '+(r.body.currency||'');renderProducts(r.body)})})}
 function renderProducts(store){var el=document.getElementById('dProducts');if(!store.products.length){el.innerHTML='<div class="dim">No products yet.</div>';return}el.innerHTML=store.products.map(function(p){return '<div class="pcard">'+(p.icon?'<img src="'+escAttr(p.icon)+'"/>':'')+'<div class="pname">'+esc(p.name)+(p.type==='crate'?' 🎁':'')+'</div><div class="pdesc">'+esc(p.description||'')+'</div><div class="row"><span class="price">'+p.price+' '+esc(store.currency)+'</span><div class="spacer"></div><button class="btn primary sm" onclick="buy(\\''+p.id+'\\')">Buy</button></div></div>'}).join('')}
 function buy(pid){api('/api/servers/'+current.id+'/store/buy',{method:'POST',body:JSON.stringify({productId:pid})}).then(function(r){if(!r.ok){alert(r.body.error==='insufficient'?'Not enough balance':r.body.error==='no-mc-linked'?'No Minecraft name linked to your account':('Error: '+r.body.error));return}loadStore();if(r.body.reward&&r.body.reward.crate){openCrate(r.body.reward)}else{alert('You received: '+(r.body.reward?r.body.reward.name:''))}})}
-function openCrate(reward){var modal=document.getElementById('crate');modal.classList.remove('hidden');var reel=document.getElementById('reel');var res=document.getElementById('crateResult');res.textContent='';res.className='crate-result';var pool=reward.pool&&reward.pool.length?reward.pool:[{name:reward.name}];var strip=[];for(var i=0;i<40;i++){strip.push(pool[Math.floor(Math.random()*pool.length)])}var winIdx=strip.length-4;strip[winIdx]={name:reward.name,icon:reward.icon};reel.style.transition='none';reel.style.transform='translateX(0)';reel.innerHTML=strip.map(function(it){return '<div class="reel-item">'+(it.icon?'<img src="'+esc(it.icon)+'"/>':'')+esc(it.name)+'</div>'}).join('');var itemW=128;var mask=document.querySelector('.reel-mask').clientWidth;var offset=winIdx*itemW-(mask/2-60);requestAnimationFrame(function(){reel.style.transition='transform 4s cubic-bezier(.12,.7,.2,1)';reel.style.transform='translateX(-'+offset+'px)'});setTimeout(function(){res.textContent='🎉 '+reward.name;res.className='crate-result win'},4100)}
+// Crate animations (#18). The variant comes from the buyer-facing store payload
+// and is coerced here as well: an unknown value must still open the crate, or a
+// player who already paid would see nothing at all.
+var CRATE_MS={reel:4000,spin:3200,flip:2800,burst:1600,instant:0};
+// Every open gets a token. A crate can be closed and another bought while the
+// first animation still has pending timers - without this the old run keeps
+// writing into the reel and announces the PREVIOUS reward over the new one.
+var crateRun=0;
+function crateVariant(){var v=dstore.crateAnimation;return CRATE_MS[v]===undefined?'reel':v}
+function cratePool(reward){var pool=reward.pool&&reward.pool.length?reward.pool:[{name:reward.name}];return pool}
+function crateCell(it,cls){return '<div class="'+cls+'">'+(it.icon?'<img src="'+escAttr(it.icon)+'"/>':'')+esc(it.name)+'</div>'}
+function crateFinish(reward,ms,run){var res=document.getElementById('crateResult');
+ setTimeout(function(){if(run!==crateRun)return;res.textContent='🎉 '+reward.name;res.className='crate-result win'},ms+100)}
+function openCrate(reward){var modal=document.getElementById('crate');modal.classList.remove('hidden');
+ var reel=document.getElementById('reel');var mask=document.querySelector('.reel-mask');
+ var res=document.getElementById('crateResult');res.textContent='';res.className='crate-result';
+ var run=++crateRun;var v=crateVariant();var ms=CRATE_MS[v];
+ mask.className='reel-mask anim-'+v;reel.className='reel';reel.style.cssText='';
+ if(v==='instant'){reel.innerHTML=crateCell({name:reward.name,icon:reward.icon},'reel-item');crateFinish(reward,0,run);return}
+ if(v==='burst'){return crateBurst(reward,ms,reel,run)}
+ if(v==='flip'){return crateFlip(reward,ms,reel,run)}
+ if(v==='spin'){return crateSpin(reward,ms,reel,mask,run)}
+ return crateReel(reward,ms,reel,mask,run)}
+function crateReel(reward,ms,reel,mask,run){var pool=cratePool(reward);var strip=[];
+ for(var i=0;i<40;i++){strip.push(pool[Math.floor(Math.random()*pool.length)])}
+ var winIdx=strip.length-4;strip[winIdx]={name:reward.name,icon:reward.icon};
+ reel.style.transition='none';reel.style.transform='translateX(0)';
+ reel.innerHTML=strip.map(function(it){return crateCell(it,'reel-item')}).join('');
+ var offset=winIdx*128-(mask.clientWidth/2-60);
+ requestAnimationFrame(function(){reel.style.transition='transform '+(ms/1000)+'s cubic-bezier(.12,.7,.2,1)';
+  reel.style.transform='translateX(-'+offset+'px)'});
+ crateFinish(reward,ms,run)}
+function crateSpin(reward,ms,reel,mask,run){var pool=cratePool(reward);var strip=[];
+ for(var i=0;i<30;i++){strip.push(pool[Math.floor(Math.random()*pool.length)])}
+ var winIdx=strip.length-3;strip[winIdx]={name:reward.name,icon:reward.icon};
+ reel.className='reel reel-v';reel.style.transition='none';reel.style.transform='translateY(0)';
+ reel.innerHTML=strip.map(function(it){return crateCell(it,'reel-item')}).join('');
+ var offset=winIdx*84-(mask.clientHeight/2-38);
+ requestAnimationFrame(function(){reel.style.transition='transform '+(ms/1000)+'s cubic-bezier(.15,.75,.2,1)';
+  reel.style.transform='translateY(-'+offset+'px)'});
+ crateFinish(reward,ms,run)}
+function crateFlip(reward,ms,reel,run){var pool=cratePool(reward);
+ var cards=[];for(var i=0;i<4;i++){cards.push(pool[Math.floor(Math.random()*pool.length)])}
+ var winIdx=cards.length-1;cards[winIdx]={name:reward.name,icon:reward.icon};
+ reel.className='reel reel-flip';
+ reel.innerHTML=cards.map(function(it){return crateCell(it,'reel-item flip-card')}).join('');
+ var nodes=reel.children;var step=ms/cards.length;
+ for(var j=0;j<nodes.length;j++){(function(n,d){setTimeout(function(){if(run!==crateRun)return;n.classList.add('flipped')},d)})(nodes[j],j*step)}
+ crateFinish(reward,ms,run)}
+function crateBurst(reward,ms,reel,run){var pool=cratePool(reward);
+ reel.className='reel reel-burst';
+ reel.innerHTML=crateCell(pool[Math.floor(Math.random()*pool.length)],'reel-item burst-card');
+ var shuffles=Math.max(1,Math.floor(ms/220));var n=0;
+ var iv=setInterval(function(){n++;
+  if(run!==crateRun){clearInterval(iv);return}
+  if(n>=shuffles){clearInterval(iv);reel.innerHTML=crateCell({name:reward.name,icon:reward.icon},'reel-item burst-card burst-win');return}
+  reel.innerHTML=crateCell(pool[Math.floor(Math.random()*pool.length)],'reel-item burst-card')},200);
+ crateFinish(reward,ms,run)}
 function closeCrate(e){if(e&&e.target&&e.target.id!=='crate'&&e.target.tagName!=='BUTTON')return;document.getElementById('crate').classList.add('hidden')}
 
 /* ---- store admin: configuration (store scope) ---- */
