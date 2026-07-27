@@ -1,7 +1,20 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Check, Trash2, Plus, Minus, Package, Gift, Coins, X } from 'lucide-react'
+import {
+  Check,
+  Trash2,
+  Plus,
+  Minus,
+  Package,
+  Gift,
+  Coins,
+  X,
+  ChevronDown,
+  ChevronRight
+} from 'lucide-react'
 import { useStore } from '../store'
+import { filterLedger, ledgerSummary } from '@shared/economy'
+import type { LedgerKind } from '@shared/economy'
 import type { Product, CrateReward, StoreConfig, LedgerEntry } from '@shared/web'
 
 type StoreData = StoreConfig & { balances: Record<string, number> }
@@ -21,8 +34,17 @@ export function StoreView(): JSX.Element {
   const [balAmount, setBalAmount] = useState(100)
   const [balReason, setBalReason] = useState('')
   const [ledger, setLedger] = useState<LedgerEntry[]>([])
+  const [ledgerOpen, setLedgerOpen] = useState(false)
+  const [ledgerQuery, setLedgerQuery] = useState('')
+  const [ledgerKind, setLedgerKind] = useState<LedgerKind | 'all'>('all')
   const [edit, setEdit] = useState<Product | null>(null)
   const [cmdText, setCmdText] = useState('')
+
+  const summary = useMemo(() => ledgerSummary(ledger), [ledger])
+  const shownLedger = useMemo(
+    () => filterLedger(ledger, { text: ledgerQuery, kind: ledgerKind }),
+    [ledger, ledgerQuery, ledgerKind]
+  )
 
   const load = async (): Promise<void> => {
     const d = await window.msms.getStore(id)
@@ -142,28 +164,81 @@ export function StoreView(): JSX.Element {
         )}
       </div>
 
-      <div className="section-title">{t('store.ledger')}</div>
-      <div className="panel" style={{ padding: 0 }}>
-        {ledger.length === 0 ? (
-          <p className="dim" style={{ margin: 0, padding: 14 }}>{t('store.noLedger')}</p>
-        ) : (
-          <div style={{ maxHeight: 300, overflow: 'auto' }}>
-            {ledger.map((e) => (
-              <div key={e.id} className="mod-row">
-                <span className={`badge ${e.delta >= 0 ? 'op-badge' : 'error-badge'}`}>
-                  {e.delta >= 0 ? '+' : ''}{e.delta}
-                </span>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div className="mod-name">{e.mcName} <span className="dim" style={{ fontWeight: 400 }}>→ {e.balanceAfter} {currency}</span></div>
-                  <div className="dim" style={{ fontSize: 11 }}>
-                    {e.kind} · {t('store.by')} {e.by}{e.reason ? ` · ${e.reason}` : ''} · {new Date(e.at).toLocaleString()}
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
+      {/* Collapsed by default (#14): the ledger is a long audit list, not
+          something you need in front of you to run the store. The header still
+          carries the totals so it says something useful while closed. */}
+      <div className="section-title">
+        <button
+          className="btn ghost sm"
+          onClick={() => setLedgerOpen((v) => !v)}
+          style={{ padding: '2px 6px', marginRight: 6 }}
+          aria-expanded={ledgerOpen}
+        >
+          {ledgerOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+        </button>
+        {t('store.ledger')}
+        <span className="dim" style={{ fontWeight: 400, fontSize: 12, marginLeft: 8 }}>
+          {t('store.ledgerSummary', {
+            n: summary.count,
+            granted: summary.granted,
+            removed: summary.removed,
+            spent: summary.spent
+          })}
+        </span>
       </div>
+      {ledgerOpen && (
+        <div className="panel" style={{ padding: 0 }}>
+          {ledger.length === 0 ? (
+            <p className="dim" style={{ margin: 0, padding: 14 }}>{t('store.noLedger')}</p>
+          ) : (
+            <>
+              <div className="row wrap" style={{ gap: 8, padding: 10, alignItems: 'center' }}>
+                <input
+                  className="input"
+                  style={{ flex: 1, minWidth: 160 }}
+                  placeholder={t('store.ledgerSearch')}
+                  value={ledgerQuery}
+                  onChange={(e) => setLedgerQuery(e.target.value)}
+                />
+                <select
+                  className="input"
+                  style={{ width: 150 }}
+                  value={ledgerKind}
+                  onChange={(e) => setLedgerKind(e.target.value as LedgerKind | 'all')}
+                >
+                  <option value="all">{t('store.kindAll')}</option>
+                  <option value="grant">{t('store.kindGrant')}</option>
+                  <option value="remove">{t('store.kindRemove')}</option>
+                  <option value="set">{t('store.kindSet')}</option>
+                  <option value="purchase">{t('store.kindPurchase')}</option>
+                </select>
+                <span className="dim" style={{ fontSize: 11 }}>
+                  {t('store.ledgerShowing', { shown: shownLedger.length, total: ledger.length })}
+                </span>
+              </div>
+              {shownLedger.length === 0 ? (
+                <p className="dim" style={{ margin: 0, padding: 14 }}>{t('store.noLedgerMatch')}</p>
+              ) : (
+                <div style={{ maxHeight: 300, overflow: 'auto' }}>
+                  {shownLedger.map((e) => (
+                    <div key={e.id} className="mod-row">
+                      <span className={`badge ${e.delta >= 0 ? 'op-badge' : 'error-badge'}`}>
+                        {e.delta >= 0 ? '+' : ''}{e.delta}
+                      </span>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div className="mod-name">{e.mcName} <span className="dim" style={{ fontWeight: 400 }}>→ {e.balanceAfter} {currency}</span></div>
+                        <div className="dim" style={{ fontSize: 11 }}>
+                          {e.kind} · {t('store.by')} {e.by}{e.reason ? ` · ${e.reason}` : ''} · {new Date(e.at).toLocaleString()}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
 
       <div className="row" style={{ justifyContent: 'space-between', marginTop: 22 }}>
         <div className="section-title" style={{ margin: 0 }}>{t('store.products')}</div>

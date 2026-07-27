@@ -277,8 +277,20 @@ h2{margin:8px 0;font-weight:800;letter-spacing:-.4px}
         <div id="mBalances" style="margin-top:10px;max-height:240px;overflow:auto"></div>
       </div>
       <div class="card">
-        <div class="row"><b>Balance ledger</b><div class="spacer"></div><button class="btn sm" onclick="loadLedger()" title="Refresh">↻</button></div>
-        <div id="mLedger" style="margin-top:10px;max-height:340px;overflow:auto"></div>
+        <div class="row"><button class="btn sm" onclick="toggleLedger()"><span id="mLedgerCaret">▸</span></button><b>Balance ledger</b><span class="dim" id="mLedgerSum" style="font-size:12px"></span><div class="spacer"></div><button class="btn sm" onclick="loadLedger()" title="Refresh">↻</button></div>
+        <div id="mLedgerBody" style="display:none">
+          <div class="row" style="margin-top:8px">
+            <input id="mLedgerQ" placeholder="Search player, reason or admin…" oninput="renderLedger()" style="flex:1;min-width:140px"/>
+            <select id="mLedgerKind" onchange="renderLedger()">
+              <option value="all">All kinds</option>
+              <option value="grant">Grants</option>
+              <option value="remove">Removals</option>
+              <option value="set">Set to value</option>
+              <option value="purchase">Purchases</option>
+            </select>
+          </div>
+          <div id="mLedger" style="margin-top:10px;max-height:340px;overflow:auto"></div>
+        </div>
       </div>
       <div class="card">
         <div class="row"><b>Products</b><div class="spacer"></div>
@@ -457,9 +469,22 @@ function adjustBalance(mode){var name=document.getElementById('mBalName').value.
  api('/api/servers/'+current.id+'/store/admin/balance',{method:'POST',body:JSON.stringify(body)}).then(function(r){
   if(!r.ok){alert(r.body&&r.body.error==='invalid-mcname'?'Invalid Minecraft name (3-16 letters, digits, underscore)':('Error: '+(r.body&&r.body.error||r.status)));return}
   document.getElementById('mBalReason').value='';loadManage()})}
-function loadLedger(){api('/api/servers/'+current.id+'/store/admin/ledger').then(function(r){if(r.ok)renderLedger(r.body.ledger||[])})}
-function renderLedger(led){var el=document.getElementById('mLedger');
- if(!led.length){el.innerHTML='<div class="dim">No balance changes recorded yet.</div>';return}
+var mledger=[];
+function toggleLedger(){var b=document.getElementById('mLedgerBody');var open=b.style.display==='none';
+ b.style.display=open?'block':'none';document.getElementById('mLedgerCaret').textContent=open?'▾':'▸'}
+function loadLedger(){api('/api/servers/'+current.id+'/store/admin/ledger').then(function(r){if(r.ok){mledger=r.body.ledger||[];renderLedger()}})}
+// Mirrors filterLedger/ledgerSummary in shared/economy.ts - the panel is plain
+// browser JS and cannot import the module, so keep the two in step by hand.
+function ledgerFiltered(){var q=(document.getElementById('mLedgerQ').value||'').trim().toLowerCase();
+ var k=document.getElementById('mLedgerKind').value;
+ return mledger.filter(function(e){if(k!=='all'&&e.kind!==k)return false;if(!q)return true;
+  return (e.mcName||'').toLowerCase().indexOf(q)>=0||(e.reason||'').toLowerCase().indexOf(q)>=0||(e.by||'').toLowerCase().indexOf(q)>=0})}
+function renderLedger(){var el=document.getElementById('mLedger');var led=ledgerFiltered();
+ var g=0,rm=0,sp=0;mledger.forEach(function(e){var d=e.delta||0;
+  if(e.kind==='purchase')sp+=Math.abs(d);else if(d>=0)g+=d;else rm+=-d});
+ document.getElementById('mLedgerSum').textContent=' '+mledger.length+' entries · +'+g+' granted · −'+rm+' removed · '+sp+' spent';
+ if(!mledger.length){el.innerHTML='<div class="dim">No balance changes recorded yet.</div>';return}
+ if(!led.length){el.innerHTML='<div class="dim">No entries match this filter.</div>';return}
  el.innerHTML=led.map(function(e){var d=e.delta||0;return '<div class="mrow"><span class="badge" style="'+(d>=0?'color:var(--online)':'color:#f87171')+'">'+(d>=0?'+':'')+d+'</span>'+
   '<div style="flex:1;min-width:0"><div style="font-weight:700">'+esc(e.mcName)+' <span class="dim" style="font-weight:400">→ '+(e.balanceAfter||0)+' '+esc(mstore.currency||'')+'</span></div>'+
   '<div class="dim" style="font-size:11px">'+esc(e.kind||'')+' · by '+esc(e.by||'')+(e.reason?' · '+esc(e.reason):'')+' · '+new Date(e.at).toLocaleString()+'</div></div></div>'}).join('')}
