@@ -468,7 +468,21 @@ export default {
     updateTo: '→ {{version}}',
     updateAvailable: 'update available',
     upToDate: 'Up to date',
-    updatedOk: 'Updated to {{name}}'
+    updatedOk: 'Updated to {{name}}',
+    details: 'Details',
+    detailLoading: 'Loading details…',
+    detailFailed: 'Could not load details from Modrinth.',
+    author: 'Author',
+    followers: 'followers',
+    license: 'License',
+    versionCount: '{{n}} version(s)',
+    source: 'Source',
+    issues: 'Issues',
+    wiki: 'Wiki',
+    compatibleWith: 'Compatible — {{version}} supports MC {{mc}}',
+    compatibleAny: 'Latest matching version: {{version}}',
+    noVersionForMc: 'No version for MC {{mc}}. Newest for your loader is {{version}} (MC {{versions}}).',
+    noVersionForLoader: 'No version for this server type ({{loaders}}).'
   },
   backups: {
     title: 'Backups',
