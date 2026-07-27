@@ -3533,7 +3533,12 @@ export async function runWebSmoke(): Promise<void> {
       // unfiltered query fills that budget with player joins and pushes the
       // backup out - and the no-backups finding then fires on a server that is
       // backed up nightly. This is why both surfaces share ANALYSIS_EVENT_*.
-      const noisy = 'analysis-noise-server'
+      // A UNIQUE id per run. Reusing one accumulated 401 events per run into the
+      // same store, and once MAX_EVENTS pruning kicked in it dropped the OLDEST
+      // by timestamp - which is the backup (2 h) rather than the joins (1 h).
+      // The fixture then quietly stopped containing the thing it asserts, and
+      // the test started failing on a code path that was fine.
+      const noisy = `analysis-noise-${Date.now()}`
       const nowE = Date.now()
       eventsMod.record(noisy, 'backup.created', { text: 'daily.zip', ts: nowE - 7200_000 })
       for (let i = 0; i < 400; i++) {
@@ -3552,6 +3557,9 @@ export async function runWebSmoke(): Promise<void> {
       if (!filtered.some((e) => e.type === 'backup.created')) {
         return fail('the shared analysis query lost backup.created behind player noise')
       }
+      // The fixture server is not in the registry, so this deletes its event
+      // file rather than leaving one behind per run.
+      eventsMod.pruneOrphans()
       console.log('WEB-SMOKE: analysis event query keeps backups visible under 400 joins')
 
       // ---- alert rules over the panel (#24) ----
@@ -3668,6 +3676,13 @@ export async function runWebSmoke(): Promise<void> {
       r = await get('/api/servers', rt)
       const visible = ((await r.json()) as { servers: { id: string }[] }).servers
       if (!visible.some((x) => x.id === id)) return fail('a role-only grant did not make the server visible')
+      // The scopes array in the listing is what the panel builds its UI from:
+      // authorised-but-invisible is as broken as unauthorised.
+      const roleScopes = (visible.find((x) => x.id === id) as unknown as { scopes: string[] }).scopes
+      if (!roleScopes?.includes('console')) {
+        return fail('role scopes did not reach the listing the panel renders from: ' + JSON.stringify(roleScopes))
+      }
+      if (roleScopes.includes('power')) return fail('the listing advertised a scope the role does not grant')
       r = await post(`/api/servers/${id}/command`, { command: 'say hi' }, rt)
       if (r.status === 403) return fail('a role granting console was refused')
       // ...and a scope the role does NOT carry is still refused.
