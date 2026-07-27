@@ -503,12 +503,18 @@ function renderLedger(){var el=document.getElementById('mLedger');var led=ledger
 // Falls back to the raw id: deleting a category must not rewrite past entries.
 function catName(id){var c=(mstore.categories||[]).filter(function(x){return x.id===id})[0];return c?c.name:id}
 function renderCategories(){var cats=mstore.categories||[];
+ var ids=cats.map(function(c){return c.id});
+ var opts=cats.map(function(c){return '<option value="'+esc(c.id)+'">'+esc(c.name)+'</option>'}).join('');
+ // A selection is only restored if it still EXISTS. Restoring a deleted id
+ // leaves the select with no matching option (value becomes ''), which the
+ // filter then reads as a real category and matches nothing - a silently blank
+ // ledger with nothing on screen explaining why.
  var sel=document.getElementById('mBalCat');var keep=sel.value;
- sel.innerHTML='<option value="">— none —</option>'+cats.map(function(c){return '<option value="'+esc(c.id)+'">'+esc(c.name)+'</option>'}).join('');
- sel.value=keep;
+ sel.innerHTML='<option value="">— none —</option>'+opts;
+ sel.value=(keep&&ids.indexOf(keep)>=0)?keep:'';
  var f=document.getElementById('mLedgerCat');var keepF=f.value;
- f.innerHTML='<option value="all">All categories</option><option value="none">Uncategorised</option>'+cats.map(function(c){return '<option value="'+esc(c.id)+'">'+esc(c.name)+'</option>'}).join('');
- f.value=keepF||'all'}
+ f.innerHTML='<option value="all">All categories</option><option value="none">Uncategorised</option>'+opts;
+ f.value=(keepF==='none'||(keepF&&ids.indexOf(keepF)>=0))?keepF:'all'}
 function saveCurrency(){var c=document.getElementById('mCur').value.trim()||'Coins';
  api('/api/servers/'+current.id+'/store/admin/currency',{method:'POST',body:JSON.stringify({currency:c})}).then(function(r){if(!r.ok){alert('Could not save currency');return}loadManage()})}
 function renderMProducts(){var el=document.getElementById('mProducts');var ps=mstore.products||[];
