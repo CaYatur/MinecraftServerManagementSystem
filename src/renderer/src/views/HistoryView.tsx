@@ -4,7 +4,12 @@ import { Activity, Cpu, MemoryStick, Users, Timer, RefreshCw } from 'lucide-reac
 import { useStore } from '../store'
 import { Chart, type ChartMarker, type ChartPoint } from '../components/Chart'
 import { Analysis } from '../components/Analysis'
-import { analyze } from '@shared/analysis'
+import {
+  analyze,
+  ANALYSIS_EVENT_LIMIT,
+  ANALYSIS_EVENT_TYPES,
+  ANALYSIS_METRIC_LIMIT
+} from '@shared/analysis'
 import type { MetricSeries, ServerEvent } from '@shared/types'
 import type { UptimeReport } from '@shared/uptime'
 
@@ -45,13 +50,13 @@ export function HistoryView(): JSX.Element {
     const from = to - RANGE_MS[range]
     setSpan({ from, to })
     const [s, u, ev] = await Promise.all([
-      window.msms.queryMetrics(id, { from, to, limit: 1200 }),
+      window.msms.queryMetrics(id, { from, to, limit: ANALYSIS_METRIC_LIMIT }),
       window.msms.getUptime(id, from, to),
       window.msms.queryEvents(id, {
         from,
         to,
-        types: ['server.crashed', 'server.error', 'server.ready', 'backup.created'],
-        limit: 200
+        types: ANALYSIS_EVENT_TYPES,
+        limit: ANALYSIS_EVENT_LIMIT
       })
     ])
     setSeries(s)

@@ -10,7 +10,12 @@ import { processManager } from '../core/processManager'
 import { getPlayers } from '../core/players'
 import * as metrics from '../core/metrics'
 import * as events from '../core/events'
-import { analyze } from '@shared/analysis'
+import {
+  analyze,
+  ANALYSIS_EVENT_LIMIT,
+  ANALYSIS_EVENT_TYPES,
+  ANALYSIS_METRIC_LIMIT
+} from '@shared/analysis'
 import * as audit from '../core/audit'
 import * as economy from '../store/economy'
 import * as site from './site'
@@ -377,13 +382,18 @@ async function handlePanel(req: IncomingMessage, res: ServerResponse): Promise<v
       const hours = Math.min(720, Math.max(1, Number(url.searchParams.get('hours')) || 24))
       const to = Date.now()
       const from = to - hours * 3600_000
-      const series = metrics.query(id, { from, to })
+      const series = metrics.query(id, { from, to, limit: ANALYSIS_METRIC_LIMIT })
       return sendJson(res, 200, {
         hours,
         findings: analyze({
           series,
           uptime: events.uptime(id, from, to),
-          events: events.query(id, { from, to }).events,
+          events: events.query(id, {
+            from,
+            to,
+            types: ANALYSIS_EVENT_TYPES,
+            limit: ANALYSIS_EVENT_LIMIT
+          }).events,
           server: { type: server.type, java: server.java },
           from,
           to

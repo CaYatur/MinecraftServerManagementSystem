@@ -14,6 +14,7 @@ import * as siteMod from './web/site'
 import { pickSiteLang } from './web/siteLang'
 import type { LedgerEntry, Product } from '@shared/web'
 import { categoryName, filterLedger, ledgerSummary } from '@shared/economy'
+import { ANALYSIS_EVENT_LIMIT, ANALYSIS_EVENT_TYPES } from '@shared/analysis'
 import {
   CRATE_ANIMATIONS,
   DEFAULT_CRATE_ANIMATION,
@@ -3447,6 +3448,32 @@ export async function runWebSmoke(): Promise<void> {
       r = await sget(`/api/servers/${id}/analysis`, ot)
       if (r.status !== 404) return fail('analysis leaked onto the site listener: ' + r.status)
       console.log('WEB-SMOKE: analysis endpoint OK (view-gated, window clamped, findings well-formed)')
+
+      // Regression: analyze() must see backup.created even on a chatty server.
+      // events.query returns the NEWEST matching events up to `limit`, so an
+      // unfiltered query fills that budget with player joins and pushes the
+      // backup out - and the no-backups finding then fires on a server that is
+      // backed up nightly. This is why both surfaces share ANALYSIS_EVENT_*.
+      const noisy = 'analysis-noise-server'
+      const nowE = Date.now()
+      eventsMod.record(noisy, 'backup.created', { text: 'daily.zip', ts: nowE - 7200_000 })
+      for (let i = 0; i < 400; i++) {
+        eventsMod.record(noisy, 'player.join', { text: 'P' + i, ts: nowE - 3600_000 + i })
+      }
+      const win = { from: nowE - 86400_000, to: nowE }
+      const unfiltered = eventsMod.query(noisy, win).events
+      if (unfiltered.some((e) => e.type === 'backup.created')) {
+        return fail('the noise fixture is not noisy enough to prove the regression')
+      }
+      const filtered = eventsMod.query(noisy, {
+        ...win,
+        types: ANALYSIS_EVENT_TYPES,
+        limit: ANALYSIS_EVENT_LIMIT
+      }).events
+      if (!filtered.some((e) => e.type === 'backup.created')) {
+        return fail('the shared analysis query lost backup.created behind player noise')
+      }
+      console.log('WEB-SMOKE: analysis event query keeps backups visible under 400 joins')
       webAuth.deleteUser(nosee.id)
       console.log('WEB-SMOKE: metrics endpoint OK (view-gated, 401/403/404, resolutions honoured)')
     } finally {
