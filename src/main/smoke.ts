@@ -13,7 +13,7 @@ import * as economy from './store/economy'
 import * as siteMod from './web/site'
 import { pickSiteLang } from './web/siteLang'
 import type { LedgerEntry, Product } from '@shared/web'
-import { filterLedger, ledgerSummary } from '@shared/economy'
+import { categoryName, filterLedger, ledgerSummary } from '@shared/economy'
 import { getProvider } from './core/versions'
 import { createServer } from './core/createServer'
 import { pickForgeRunJar } from './core/serverDetect'
@@ -3478,6 +3478,44 @@ export async function runWebSmoke(): Promise<void> {
     if (sum.removed !== 40) return fail('removed should be positive and exclude purchases: ' + sum.removed)
     if (sum.spent !== 25) return fail('spent should be the positive purchase total: ' + sum.spent)
     console.log('WEB-SMOKE: ledger filter + summary OK (actor searchable, purchases not double-counted)')
+
+    // Economy categories (#13): a category filter, and the 'none' bucket that
+    // finds purchases and everything recorded before categories existed.
+    const catLed: LedgerEntry[] = [
+      { id: 'a', mcName: 'Steve', delta: 10, balanceAfter: 10, reason: '', by: 'o', kind: 'grant', category: 'event', at: 3 },
+      { id: 'b', mcName: 'Alex', delta: 5, balanceAfter: 5, reason: '', by: 'o', kind: 'grant', category: 'reward', at: 2 },
+      { id: 'c', mcName: 'Steve', delta: -5, balanceAfter: 5, reason: '', by: 'purchase', kind: 'purchase', at: 1 }
+    ]
+    if (filterLedger(catLed, { category: 'event' }).map((e) => e.id).join() !== 'a') {
+      return fail('category filter did not select the right entry')
+    }
+    if (filterLedger(catLed, { category: 'all' }).length !== 3) return fail("category 'all' must not filter")
+    if (filterLedger(catLed, {}).length !== 3) return fail('an absent category must not filter')
+    // 'none' is how an operator finds what was never labelled.
+    if (filterLedger(catLed, { category: 'none' }).map((e) => e.id).join() !== 'c') {
+      return fail("category 'none' should return exactly the uncategorised entries")
+    }
+    if (filterLedger(catLed, { category: 'event', text: 'alex' }).length !== 0) {
+      return fail('category and text must both apply')
+    }
+    // An unknown category id is never recorded: a ledger entry is an audit
+    // record and must not claim a label nothing on the server defines.
+    const evSrv = 'cat-smoke-server'
+    economy.upsertCategory(evSrv, { id: 'bonus', name: 'Bonus' })
+    economy.addBalance(evSrv, 'Steve', 50, 'tester', 'ok', 'bonus')
+    economy.addBalance(evSrv, 'Steve', 50, 'tester', 'nope', 'not-a-real-category')
+    const recorded = economy.getLedger(evSrv)
+    if (recorded[1]?.category !== 'bonus') return fail('a real category should be recorded')
+    if (recorded[0]?.category !== undefined) return fail('an invented category must not be recorded')
+    // Deleting a category must NOT rewrite history.
+    economy.deleteCategory(evSrv, 'bonus')
+    if (economy.getLedger(evSrv)[1]?.category !== 'bonus') {
+      return fail('deleting a category rewrote a past ledger entry')
+    }
+    if (categoryName(economy.listCategories(evSrv), 'bonus') !== 'bonus') {
+      return fail('a deleted category should fall back to its raw id')
+    }
+    console.log('WEB-SMOKE: economy categories OK (validated on write, history not rewritten on delete)')
   } catch (e) {
     return fail('exception: ' + String(e))
   } finally {

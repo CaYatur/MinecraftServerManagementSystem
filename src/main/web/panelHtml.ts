@@ -268,6 +268,7 @@ h2{margin:8px 0;font-weight:800;letter-spacing:-.4px}
           <div style="flex:1;min-width:120px"><div class="dim" style="font-size:12px">Player</div><input id="mBalName" placeholder="Steve"/></div>
           <div style="width:120px"><div class="dim" style="font-size:12px">Amount</div><input id="mBalAmt" type="number" value="100"/></div>
           <div style="flex:1;min-width:120px"><div class="dim" style="font-size:12px">Reason</div><input id="mBalReason" placeholder="(optional)"/></div>
+          <div style="min-width:140px"><div class="dim" style="font-size:12px">Category</div><select id="mBalCat"></select></div>
         </div>
         <div class="row" style="margin-top:8px">
           <button class="btn primary" onclick="adjustBalance('add')">＋ Give</button>
@@ -288,6 +289,7 @@ h2{margin:8px 0;font-weight:800;letter-spacing:-.4px}
               <option value="set">Set to value</option>
               <option value="purchase">Purchases</option>
             </select>
+            <select id="mLedgerCat" onchange="renderLedger()"><option value="all">All categories</option></select>
           </div>
           <div id="mLedger" style="margin-top:10px;max-height:340px;overflow:auto"></div>
         </div>
@@ -456,7 +458,7 @@ function escAttr(t){return esc(t).replace(/"/g,'&quot;')}
 var mstore={currency:'Coins',products:[]}, pmDraft=null;
 function loadManage(){api('/api/servers/'+current.id+'/store/admin').then(function(r){
  if(!r.ok){document.getElementById('mProducts').innerHTML='<div class="dim">No access.</div>';return}
- mstore=r.body;document.getElementById('mCur').value=mstore.currency||'';renderMProducts();renderBalances();loadLedger()})}
+ mstore=r.body;document.getElementById('mCur').value=mstore.currency||'';renderMProducts();renderCategories();renderBalances();loadLedger()})}
 function renderBalances(){var el=document.getElementById('mBalances');var bals=mstore.balances||{};var names=Object.keys(bals);
  if(!names.length){el.innerHTML='<div class="dim">No balances yet.</div>';return}
  el.innerHTML=names.map(function(n){return '<div class="mrow"><span style="flex:1;min-width:0;font-weight:700">'+esc(n)+'</span>'+
@@ -465,7 +467,8 @@ function renderBalances(){var el=document.getElementById('mBalances');var bals=m
 function pickPlayer(n){document.getElementById('mBalName').value=n}
 function adjustBalance(mode){var name=document.getElementById('mBalName').value.trim();if(!name){alert('Enter a player name');return}
  var amt=Math.floor(Number(document.getElementById('mBalAmt').value)||0);var reason=document.getElementById('mBalReason').value;
- var body=mode==='set'?{mcName:name,amount:amt,reason:reason,mode:'set'}:{mcName:name,amount:mode==='remove'?-amt:amt,reason:reason,mode:'add'};
+ var cat=document.getElementById('mBalCat').value||undefined;
+ var body=mode==='set'?{mcName:name,amount:amt,reason:reason,category:cat,mode:'set'}:{mcName:name,amount:mode==='remove'?-amt:amt,reason:reason,category:cat,mode:'add'};
  api('/api/servers/'+current.id+'/store/admin/balance',{method:'POST',body:JSON.stringify(body)}).then(function(r){
   if(!r.ok){alert(r.body&&r.body.error==='invalid-mcname'?'Invalid Minecraft name (3-16 letters, digits, underscore)':('Error: '+(r.body&&r.body.error||r.status)));return}
   document.getElementById('mBalReason').value='';loadManage()})}
@@ -483,8 +486,10 @@ function loadLedger(){api('/api/servers/'+current.id+'/store/admin/ledger').then
 // Mirrors filterLedger/ledgerSummary in shared/economy.ts - the panel is plain
 // browser JS and cannot import the module, so keep the two in step by hand.
 function ledgerFiltered(){var q=(document.getElementById('mLedgerQ').value||'').trim().toLowerCase();
- var k=document.getElementById('mLedgerKind').value;
- return mledger.filter(function(e){if(k!=='all'&&e.kind!==k)return false;if(!q)return true;
+ var k=document.getElementById('mLedgerKind').value;var c=document.getElementById('mLedgerCat').value;
+ return mledger.filter(function(e){if(k!=='all'&&e.kind!==k)return false;
+  if(c==='none'){if(e.category!=null)return false}else if(c!=='all'&&e.category!==c)return false;
+  if(!q)return true;
   return (e.mcName||'').toLowerCase().indexOf(q)>=0||(e.reason||'').toLowerCase().indexOf(q)>=0||(e.by||'').toLowerCase().indexOf(q)>=0})}
 function renderLedger(){var el=document.getElementById('mLedger');var led=ledgerFiltered();
  var g=0,rm=0,sp=0;mledger.forEach(function(e){var d=e.delta||0;
@@ -494,7 +499,22 @@ function renderLedger(){var el=document.getElementById('mLedger');var led=ledger
  if(!led.length){el.innerHTML='<div class="dim">No entries match this filter.</div>';return}
  el.innerHTML=led.map(function(e){var d=e.delta||0;return '<div class="mrow"><span class="badge" style="'+(d>=0?'color:var(--online)':'color:#f87171')+'">'+(d>=0?'+':'')+d+'</span>'+
   '<div style="flex:1;min-width:0"><div style="font-weight:700">'+esc(e.mcName)+' <span class="dim" style="font-weight:400">→ '+(e.balanceAfter||0)+' '+esc(mstore.currency||'')+'</span></div>'+
-  '<div class="dim" style="font-size:11px">'+esc(e.kind||'')+' · by '+esc(e.by||'')+(e.reason?' · '+esc(e.reason):'')+' · '+new Date(e.at).toLocaleString()+'</div></div></div>'}).join('')}
+  '<div class="dim" style="font-size:11px">'+esc(e.kind||'')+' · by '+esc(e.by||'')+(e.category?' · '+esc(catName(e.category)):'')+(e.reason?' · '+esc(e.reason):'')+' · '+new Date(e.at).toLocaleString()+'</div></div></div>'}).join('')}
+// Falls back to the raw id: deleting a category must not rewrite past entries.
+function catName(id){var c=(mstore.categories||[]).filter(function(x){return x.id===id})[0];return c?c.name:id}
+function renderCategories(){var cats=mstore.categories||[];
+ var ids=cats.map(function(c){return c.id});
+ var opts=cats.map(function(c){return '<option value="'+esc(c.id)+'">'+esc(c.name)+'</option>'}).join('');
+ // A selection is only restored if it still EXISTS. Restoring a deleted id
+ // leaves the select with no matching option (value becomes ''), which the
+ // filter then reads as a real category and matches nothing - a silently blank
+ // ledger with nothing on screen explaining why.
+ var sel=document.getElementById('mBalCat');var keep=sel.value;
+ sel.innerHTML='<option value="">— none —</option>'+opts;
+ sel.value=(keep&&ids.indexOf(keep)>=0)?keep:'';
+ var f=document.getElementById('mLedgerCat');var keepF=f.value;
+ f.innerHTML='<option value="all">All categories</option><option value="none">Uncategorised</option>'+opts;
+ f.value=(keepF==='none'||(keepF&&ids.indexOf(keepF)>=0))?keepF:'all'}
 function saveCurrency(){var c=document.getElementById('mCur').value.trim()||'Coins';
  api('/api/servers/'+current.id+'/store/admin/currency',{method:'POST',body:JSON.stringify({currency:c})}).then(function(r){if(!r.ok){alert('Could not save currency');return}loadManage()})}
 function renderMProducts(){var el=document.getElementById('mProducts');var ps=mstore.products||[];

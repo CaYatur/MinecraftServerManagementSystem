@@ -97,6 +97,23 @@ export interface StoreConfig {
   products: Product[]
 }
 
+/**
+ * An economy category: what a balance change was *for*. Deliberately separate
+ * from the product catalogue (#13) - an economy runs on grants, refunds, event
+ * payouts and penalties that have no product behind them, and tying those to a
+ * store item would force fake products into the shop just to label a payout.
+ */
+export interface EconomyCategory {
+  id: string
+  name: string
+  /** Optional accent, e.g. '#4ade80'. */
+  color?: string
+}
+
+export interface EconomyConfig {
+  categories: EconomyCategory[]
+}
+
 /** Audit trail for every balance change (grants, removals, purchases). */
 export interface LedgerEntry {
   id: string
@@ -107,6 +124,8 @@ export interface LedgerEntry {
   /** Admin username that performed it, or 'purchase'. */
   by: string
   kind: 'grant' | 'remove' | 'set' | 'purchase'
+  /** Economy category id, when the admin picked one. Never set for purchases. */
+  category?: string
   at: number
 }
 

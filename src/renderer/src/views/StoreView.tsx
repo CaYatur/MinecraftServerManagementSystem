@@ -9,15 +9,22 @@ import {
   Gift,
   Coins,
   X,
+  Tag,
   ChevronDown,
   ChevronRight
 } from 'lucide-react'
 import { useStore } from '../store'
-import { filterLedger, ledgerSummary } from '@shared/economy'
+import { categoryName, filterLedger, ledgerSummary } from '@shared/economy'
 import type { LedgerKind } from '@shared/economy'
-import type { Product, CrateReward, StoreConfig, LedgerEntry } from '@shared/web'
+import type {
+  Product,
+  CrateReward,
+  StoreConfig,
+  LedgerEntry,
+  EconomyCategory
+} from '@shared/web'
 
-type StoreData = StoreConfig & { balances: Record<string, number> }
+type StoreData = StoreConfig & { balances: Record<string, number>; categories: EconomyCategory[] }
 const uid = (): string => Math.random().toString(36).slice(2)
 
 function emptyProduct(type: 'item' | 'crate'): Product {
@@ -37,14 +44,19 @@ export function StoreView(): JSX.Element {
   const [ledgerOpen, setLedgerOpen] = useState(false)
   const [ledgerQuery, setLedgerQuery] = useState('')
   const [ledgerKind, setLedgerKind] = useState<LedgerKind | 'all'>('all')
+  const [ledgerCat, setLedgerCat] = useState<string>('all')
+  const [section, setSection] = useState<'economy' | 'store'>('economy')
+  const [balCategory, setBalCategory] = useState('')
+  const [newCat, setNewCat] = useState('')
   const [edit, setEdit] = useState<Product | null>(null)
   const [cmdText, setCmdText] = useState('')
 
   const summary = useMemo(() => ledgerSummary(ledger), [ledger])
   const shownLedger = useMemo(
-    () => filterLedger(ledger, { text: ledgerQuery, kind: ledgerKind }),
-    [ledger, ledgerQuery, ledgerKind]
+    () => filterLedger(ledger, { text: ledgerQuery, kind: ledgerKind, category: ledgerCat }),
+    [ledger, ledgerQuery, ledgerKind, ledgerCat]
   )
+  const categories = data?.categories ?? []
 
   const load = async (): Promise<void> => {
     const d = await window.msms.getStore(id)
@@ -59,7 +71,9 @@ export function StoreView(): JSX.Element {
     // cannot see, because the section is collapsed again.
     setLedgerQuery('')
     setLedgerKind('all')
+    setLedgerCat('all')
     setLedgerOpen(false)
+    setBalCategory('')
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id])
 
@@ -73,8 +87,16 @@ export function StoreView(): JSX.Element {
     if (!name) return
     const amount = Number(balAmount)
     try {
-      if (mode === 'set') await window.msms.setStoreBalance(id, name, amount, balReason)
-      else await window.msms.addStoreBalance(id, name, mode === 'remove' ? -amount : amount, balReason)
+      const cat = balCategory || undefined
+      if (mode === 'set') await window.msms.setStoreBalance(id, name, amount, balReason, cat)
+      else
+        await window.msms.addStoreBalance(
+          id,
+          name,
+          mode === 'remove' ? -amount : amount,
+          balReason,
+          cat
+        )
       toast('success', 'store.delivered', { player: name, amount })
       setBalReason('')
       void load()
@@ -98,6 +120,20 @@ export function StoreView(): JSX.Element {
     toast('success', 'store.saved')
     void load()
   }
+  const addCategory = async (): Promise<void> => {
+    const name = newCat.trim()
+    if (!name) return
+    await window.msms.upsertEconomyCategory(id, { id: '', name })
+    setNewCat('')
+    void load()
+  }
+  const removeCategory = async (catId: string): Promise<void> => {
+    await window.msms.deleteEconomyCategory(id, catId)
+    // A ledger entry keeps the id it was recorded with; only the picker shrinks.
+    if (balCategory === catId) setBalCategory('')
+    if (ledgerCat === catId) setLedgerCat('all')
+    void load()
+  }
   const updReward = (i: number, patch: Partial<CrateReward>): void => {
     if (!edit) return
     const rewards = edit.rewards.map((r, idx) => (idx === i ? { ...r, ...patch } : r))
@@ -112,7 +148,24 @@ export function StoreView(): JSX.Element {
       </div>
       <p className="hint" style={{ marginTop: 0 }}>{t('store.desc')}</p>
 
-      <div className="panel">
+      {/* The economy (balances, categories, ledger) is its own thing - it runs
+          on grants, refunds and payouts that have no product behind them (#13). */}
+      <div className="tabs" style={{ border: 'none', padding: 0, marginBottom: 14 }}>
+        <button
+          className={`tab ${section === 'economy' ? 'active' : ''}`}
+          onClick={() => setSection('economy')}
+        >
+          {t('store.sectionEconomy')}
+        </button>
+        <button
+          className={`tab ${section === 'store' ? 'active' : ''}`}
+          onClick={() => setSection('store')}
+        >
+          {t('store.sectionStore')}
+        </button>
+      </div>
+
+      <div className="panel" style={{ display: section === 'store' ? undefined : 'none' }}>
         <div className="row wrap" style={{ gap: 12, alignItems: 'flex-end' }}>
           <div className="field" style={{ marginBottom: 0, minWidth: 180 }}>
             <label>{t('store.currency')}</label>
@@ -124,6 +177,7 @@ export function StoreView(): JSX.Element {
         </div>
       </div>
 
+      <div style={{ display: section === 'economy' ? undefined : 'none' }}>
       <div className="section-title">{t('store.loadBalance')}</div>
       <div className="panel">
         <div className="row wrap" style={{ gap: 10, alignItems: 'flex-end' }}>
@@ -138,6 +192,21 @@ export function StoreView(): JSX.Element {
           <div className="field" style={{ flex: 1, minWidth: 140, marginBottom: 0 }}>
             <label>{t('store.reason')}</label>
             <input className="input" value={balReason} onChange={(e) => setBalReason(e.target.value)} />
+          </div>
+          <div className="field" style={{ width: 160, marginBottom: 0 }}>
+            <label>{t('store.category')}</label>
+            <select
+              className="input"
+              value={balCategory}
+              onChange={(e) => setBalCategory(e.target.value)}
+            >
+              <option value="">{t('store.noCategory')}</option>
+              {categories.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
           </div>
         </div>
         <div className="row wrap" style={{ gap: 8, marginTop: 10 }}>
@@ -168,6 +237,51 @@ export function StoreView(): JSX.Element {
             </div>
           </>
         )}
+      </div>
+
+      {/* Categories are the economy's own vocabulary, not store products (#13). */}
+      <div className="section-title">
+        <Tag size={14} style={{ verticalAlign: -2, marginRight: 6 }} />
+        {t('store.categories')}
+      </div>
+      <div className="panel">
+        <p className="hint" style={{ marginTop: 0 }}>{t('store.categoriesHint')}</p>
+        <div className="row wrap" style={{ gap: 6, marginBottom: 10 }}>
+          {categories.length === 0 ? (
+            <span className="dim" style={{ fontSize: 12 }}>{t('store.noCategories')}</span>
+          ) : (
+            categories.map((c) => (
+              <span
+                key={c.id}
+                className="badge"
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
+              >
+                <span style={{ color: c.color }}>{c.name}</span>
+                <button
+                  className="btn ghost sm"
+                  style={{ padding: 0, lineHeight: 1 }}
+                  title={t('common.delete')}
+                  onClick={() => void removeCategory(c.id)}
+                >
+                  <X size={11} />
+                </button>
+              </span>
+            ))
+          )}
+        </div>
+        <div className="row" style={{ gap: 8 }}>
+          <input
+            className="input"
+            style={{ flex: 1, minWidth: 140 }}
+            placeholder={t('store.newCategory')}
+            value={newCat}
+            onChange={(e) => setNewCat(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && void addCategory()}
+          />
+          <button className="btn primary sm" onClick={() => void addCategory()} disabled={!newCat.trim()}>
+            <Plus size={13} /> {t('common.add')}
+          </button>
+        </div>
       </div>
 
       {/* Collapsed by default (#14): the ledger is a long audit list, not
@@ -220,6 +334,20 @@ export function StoreView(): JSX.Element {
                   <option value="set">{t('store.kindSet')}</option>
                   <option value="purchase">{t('store.kindPurchase')}</option>
                 </select>
+                <select
+                  className="input"
+                  style={{ width: 160 }}
+                  value={ledgerCat}
+                  onChange={(e) => setLedgerCat(e.target.value)}
+                >
+                  <option value="all">{t('store.catAll')}</option>
+                  <option value="none">{t('store.catNone')}</option>
+                  {categories.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
                 <span className="dim" style={{ fontSize: 11 }}>
                   {t('store.ledgerShowing', { shown: shownLedger.length, total: ledger.length })}
                 </span>
@@ -236,7 +364,9 @@ export function StoreView(): JSX.Element {
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div className="mod-name">{e.mcName} <span className="dim" style={{ fontWeight: 400 }}>→ {e.balanceAfter} {currency}</span></div>
                         <div className="dim" style={{ fontSize: 11 }}>
-                          {e.kind} · {t('store.by')} {e.by}{e.reason ? ` · ${e.reason}` : ''} · {new Date(e.at).toLocaleString()}
+                          {e.kind} · {t('store.by')} {e.by}
+                          {e.category ? ` · ${categoryName(categories, e.category)}` : ''}
+                          {e.reason ? ` · ${e.reason}` : ''} · {new Date(e.at).toLocaleString()}
                         </div>
                       </div>
                     </div>
@@ -248,6 +378,9 @@ export function StoreView(): JSX.Element {
         </div>
       )}
 
+      </div>
+
+      <div style={{ display: section === 'store' ? undefined : 'none' }}>
       <div className="row" style={{ justifyContent: 'space-between', marginTop: 22 }}>
         <div className="section-title" style={{ margin: 0 }}>{t('store.products')}</div>
         <div className="row" style={{ gap: 8 }}>
@@ -279,6 +412,7 @@ export function StoreView(): JSX.Element {
           ))}
         </div>
       )}
+      </div>
 
       {edit && (
         <div className="modal-backdrop" onClick={() => setEdit(null)}>

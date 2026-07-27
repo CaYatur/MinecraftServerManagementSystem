@@ -15,7 +15,7 @@ import * as economy from '../store/economy'
 import * as site from './site'
 import * as playerAuth from './playerAuth'
 import { getPublicSiteHtml } from './publicSiteHtml'
-import type { Product, SitePost } from '@shared/web'
+import type { EconomyCategory, Product, SitePost } from '@shared/web'
 import {
   initAuth,
   login,
@@ -486,7 +486,8 @@ async function handlePanel(req: IncomingMessage, res: ServerResponse): Promise<v
       if (!gate('store')) return
       return sendJson(res, 200, {
         ...economy.getStoreConfig(id),
-        balances: economy.listBalances(id)
+        balances: economy.listBalances(id),
+        categories: economy.listCategories(id)
       })
     }
     if (rest === 'admin/currency' && method === 'POST') {
@@ -512,23 +513,36 @@ async function handlePanel(req: IncomingMessage, res: ServerResponse): Promise<v
         mcName?: string
         amount?: number
         reason?: string
+        category?: string
         mode?: 'add' | 'set'
       }
       try {
         const balance =
           b.mode === 'set'
-            ? economy.setBalance(id, b.mcName ?? '', Number(b.amount) || 0, user.username, b.reason ?? '')
-            : economy.addBalance(id, b.mcName ?? '', Number(b.amount) || 0, user.username, b.reason ?? '')
+            ? economy.setBalance(id, b.mcName ?? '', Number(b.amount) || 0, user.username, b.reason ?? '', b.category)
+            : economy.addBalance(id, b.mcName ?? '', Number(b.amount) || 0, user.username, b.reason ?? '', b.category)
         return sendJson(res, 200, { ok: true, balance })
       } catch (e) {
         return sendJson(res, 400, { error: String((e as Error)?.message ?? e) })
       }
+    }
+    if (rest === 'admin/category' && method === 'POST') {
+      if (!gate('store')) return
+      const b = (await readBody(req).catch(() => ({}))) as EconomyCategory
+      return sendJson(res, 200, economy.upsertCategory(id, b))
+    }
+    if (rest === 'admin/category/delete' && method === 'POST') {
+      if (!gate('store')) return
+      const b = (await readBody(req).catch(() => ({}))) as { categoryId?: string }
+      economy.deleteCategory(id, b.categoryId ?? '')
+      return sendJson(res, 200, { ok: true })
     }
     if (rest === 'admin/ledger' && method === 'GET') {
       if (!gate('store')) return
       return sendJson(res, 200, {
         ledger: economy.getLedger(id, url.searchParams.get('mcName') ?? undefined),
         balances: economy.listBalances(id),
+        categories: economy.listCategories(id),
         currency: economy.publicStore(id).currency
       })
     }
