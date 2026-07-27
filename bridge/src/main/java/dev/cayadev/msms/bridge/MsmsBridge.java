@@ -1,6 +1,5 @@
 package dev.cayadev.msms.bridge;
 
-import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.World;
 import org.bukkit.entity.Player;
@@ -55,9 +54,14 @@ public final class MsmsBridge extends JavaPlugin implements Listener {
         StringBuilder b = new StringBuilder();
         b.append("{\"v\":").append(PROTOCOL).append(",\"t\":\"hello\"");
         Json.field(b, "plugin", getName());
-        Json.field(b, "pluginVersion", getPluginMeta().getVersion());
+        // getDescription() rather than getPluginMeta(), and getBukkitVersion()
+        // rather than getMinecraftVersion(): both of the shorter calls are
+        // Paper-only additions, and using them would make the plugin throw
+        // NoSuchMethodError on Spigot at the first heartbeat - on a server that
+        // is otherwise perfectly capable of running it.
+        Json.field(b, "pluginVersion", getDescription().getVersion());
         Json.field(b, "server", getServer().getName());
-        Json.field(b, "mc", getServer().getMinecraftVersion());
+        Json.field(b, "mc", minecraftVersion());
         b.append(",\"interval\":").append(intervalMs);
         b.append("}");
         emit(b.toString());
@@ -130,6 +134,16 @@ public final class MsmsBridge extends JavaPlugin implements Listener {
     }
 
     // ---- plumbing ----
+
+    /**
+     * `getBukkitVersion()` is `1.21.4-R0.1-SNAPSHOT`; the protocol wants the
+     * plain Minecraft version. Everything before the first `-`.
+     */
+    private String minecraftVersion() {
+        String v = getServer().getBukkitVersion();
+        int dash = v.indexOf('-');
+        return dash > 0 ? v.substring(0, dash) : v;
+    }
 
     private static String dimension(World w) {
         switch (w.getEnvironment()) {

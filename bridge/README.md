@@ -16,7 +16,9 @@ There is no Maven or Gradle here on purpose. The plugin is three small source fi
 
 ## Install
 
-Drop the jar into your server's `plugins/` folder and restart. Works on Paper and its forks (Purpur, Folia) and on any Bukkit-API server that provides `getTPS()`.
+Drop the jar into your server's `plugins/` folder and restart.
+
+Requires a server that provides `getTPS()` and `getAverageTickTime()` — **Paper and its forks** (Purpur, Folia), and **Spigot**. Everything else the plugin calls is plain Bukkit API: it deliberately avoids Paper-only conveniences like `getPluginMeta()` and `getMinecraftVersion()`, which would throw `NoSuchMethodError` on Spigot.
 
 `config.yml`:
 
@@ -47,6 +49,6 @@ Prints one of every message shape — built with the **same** `Json` helpers the
 ## Status and limits
 
 - **Not run against a live Minecraft server in development.** The jar compiles against the Paper 1.21.4 API and its output is verified byte-for-byte against the app's parser, but no one has watched it start inside a real server here. Treat the first run as a test.
-- `getAverageTickTime()` and `getTPS()` are Paper/Spigot extensions. A server that lacks them will not load the plugin.
+- `getAverageTickTime()` and `getTPS()` are Paper/Spigot extensions. A server that lacks them will not load the plugin. Everything else is plain Bukkit API, so Spigot is supported.
 - The heartbeat runs on the **main thread** — reading the player list and their locations is main-thread state. It is a handful of field reads every few seconds, but it is not free.
 - Events are currently only `player.death`. Joins and leaves are deliberately left to the console parser, which already handles them, so the two do not double-count.
