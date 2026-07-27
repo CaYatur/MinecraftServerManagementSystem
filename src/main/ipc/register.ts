@@ -412,6 +412,9 @@ export function registerIpc(): void {
     balances: economy.listBalances(id),
     categories: economy.listCategories(id)
   }))
+  H(IPC.storeCrateAnimation, (_e, id: string, animation: string) =>
+    economy.setCrateAnimation(id, animation)
+  )
   H(IPC.economyUpsertCategory, (_e, id: string, category: EconomyCategory) =>
     economy.upsertCategory(id, category)
   )

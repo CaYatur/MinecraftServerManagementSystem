@@ -15,6 +15,8 @@ import {
 } from 'lucide-react'
 import { useStore } from '../store'
 import { categoryName, filterLedger, ledgerSummary } from '@shared/economy'
+import { CRATE_ANIMATIONS, DEFAULT_CRATE_ANIMATION } from '@shared/crate'
+import type { CrateAnimation } from '@shared/crate'
 import type { LedgerKind } from '@shared/economy'
 import type {
   Product,
@@ -48,6 +50,7 @@ export function StoreView(): JSX.Element {
   const [section, setSection] = useState<'economy' | 'store'>('economy')
   const [balCategory, setBalCategory] = useState('')
   const [newCat, setNewCat] = useState('')
+  const [crateAnim, setCrateAnim] = useState<CrateAnimation>(DEFAULT_CRATE_ANIMATION)
   const [edit, setEdit] = useState<Product | null>(null)
   const [cmdText, setCmdText] = useState('')
 
@@ -62,6 +65,7 @@ export function StoreView(): JSX.Element {
     const d = await window.msms.getStore(id)
     setData(d)
     setCurrency(d.currency)
+    setCrateAnim(d.crateAnimation ?? DEFAULT_CRATE_ANIMATION)
     setLedger(await window.msms.getStoreLedger(id))
   }
   useEffect(() => {
@@ -120,6 +124,20 @@ export function StoreView(): JSX.Element {
     toast('success', 'store.saved')
     void load()
   }
+  const saveCrateAnimation = async (animation: CrateAnimation): Promise<void> => {
+    const previous = crateAnim
+    setCrateAnim(animation)
+    try {
+      // Trust what was actually stored, not what was asked for - the main side
+      // coerces an unknown value, and the picker must not claim otherwise.
+      const saved = await window.msms.setCrateAnimation(id, animation)
+      setCrateAnim(saved)
+      toast('success', 'store.saved')
+    } catch (e) {
+      setCrateAnim(previous)
+      toast('error', String((e as Error)?.message ?? e))
+    }
+  }
   const addCategory = async (): Promise<void> => {
     const name = newCat.trim()
     if (!name) return
@@ -174,6 +192,27 @@ export function StoreView(): JSX.Element {
           <button className="btn primary" onClick={saveCurrency}>
             <Check size={14} /> {t('common.save')}
           </button>
+        </div>
+
+        {/* Per-server, because the people who see it are the players buying
+            from this server's panel - not the operator at the desktop (#17). */}
+        <div className="field" style={{ marginTop: 14, marginBottom: 0, maxWidth: 420 }}>
+          <label>
+            <Gift size={13} style={{ verticalAlign: -2, marginRight: 5 }} />
+            {t('store.crateAnimation')}
+          </label>
+          <select
+            className="input"
+            value={crateAnim}
+            onChange={(e) => void saveCrateAnimation(e.target.value as CrateAnimation)}
+          >
+            {CRATE_ANIMATIONS.map((a) => (
+              <option key={a.id} value={a.id}>
+                {t(`store.anim_${a.id}`)}
+              </option>
+            ))}
+          </select>
+          <p className="hint" style={{ marginBottom: 0 }}>{t(`store.animDesc_${crateAnim}`)}</p>
         </div>
       </div>
 

@@ -5,6 +5,8 @@ import { processManager } from '../core/processManager'
 import * as rcon from '../core/rcon'
 import { log } from '../logger'
 import { DEFAULT_CATEGORIES } from '@shared/economy'
+import { DEFAULT_CRATE_ANIMATION, normalizeCrateAnimation } from '@shared/crate'
+import type { CrateAnimation } from '@shared/crate'
 import type {
   BuyResult,
   CrateReward,
@@ -19,6 +21,7 @@ import type {
 
 interface StoreState {
   currency: string
+  crateAnimation: CrateAnimation
   products: Product[]
   /** Economy categories - independent of `products` (#13). */
   categories: EconomyCategory[]
@@ -51,6 +54,7 @@ function getStore(serverId: string): StoreState {
   if (!stores[serverId]) {
     stores[serverId] = {
       currency: 'Coins',
+      crateAnimation: DEFAULT_CRATE_ANIMATION,
       products: [],
       categories: DEFAULT_CATEGORIES.map((c) => ({ ...c })),
       balances: {},
@@ -66,6 +70,9 @@ function getStore(serverId: string): StoreState {
   if (!Array.isArray(stores[serverId].categories)) {
     stores[serverId].categories = DEFAULT_CATEGORIES.map((c) => ({ ...c }))
   }
+  // ...and files that predate configurable crate animations. Normalised on read
+  // so a hand-edited json cannot leave the panel with an animation it cannot play.
+  stores[serverId].crateAnimation = normalizeCrateAnimation(stores[serverId].crateAnimation)
   return stores[serverId]
 }
 
@@ -196,7 +203,11 @@ function toPublic(p: Product): ProductPublic {
 }
 export function publicStore(serverId: string): StorePublic {
   const st = getStore(serverId)
-  return { currency: st.currency, products: st.products.map(toPublic) }
+  return {
+    currency: st.currency,
+    products: st.products.map(toPublic),
+    crateAnimation: st.crateAnimation
+  }
 }
 export function getBalance(serverId: string, mcName: string): number {
   return getStore(serverId).balances[mcName] ?? 0
@@ -208,11 +219,17 @@ export function getTxns(serverId: string, mcName: string): Txn[] {
 // ---- admin (trusted: desktop, or web users with 'store' scope) ----
 export function getStoreConfig(serverId: string): StoreConfig {
   const st = getStore(serverId)
-  return { currency: st.currency, products: st.products }
+  return { currency: st.currency, products: st.products, crateAnimation: st.crateAnimation }
 }
 export function setCurrency(serverId: string, currency: string): void {
   getStore(serverId).currency = currency.trim() || 'Coins'
   save()
+}
+export function setCrateAnimation(serverId: string, animation: unknown): CrateAnimation {
+  const st = getStore(serverId)
+  st.crateAnimation = normalizeCrateAnimation(animation)
+  save()
+  return st.crateAnimation
 }
 export function upsertProduct(serverId: string, product: Product): Product {
   const st = getStore(serverId)
