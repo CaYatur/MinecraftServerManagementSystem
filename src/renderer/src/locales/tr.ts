@@ -471,7 +471,22 @@ const tr: typeof en = {
     updateTo: '→ {{version}}',
     updateAvailable: 'güncelleme var',
     upToDate: 'Güncel',
-    updatedOk: '{{name}} sürümüne güncellendi'
+    updatedOk: '{{name}} sürümüne güncellendi',
+    details: 'Ayrıntılar',
+    detailLoading: 'Ayrıntılar yükleniyor…',
+    detailFailed: 'Modrinth ayrıntıları alınamadı.',
+    author: 'Geliştirici',
+    followers: 'takipçi',
+    license: 'Lisans',
+    versionCount: '{{n}} sürüm',
+    source: 'Kaynak kod',
+    issues: 'Hata takibi',
+    wiki: 'Wiki',
+    compatibleWith: 'Uyumlu — {{version}} sürümü MC {{mc}} destekliyor',
+    compatibleAny: 'Eşleşen en yeni sürüm: {{version}}',
+    noVersionForMc:
+      'MC {{mc}} için sürüm yok. Yükleyiciniz için en yenisi {{version}} (MC {{versions}}).',
+    noVersionForLoader: 'Bu sunucu türü için sürüm yok ({{loaders}}).'
   },
   backups: {
     title: 'Yedekler',

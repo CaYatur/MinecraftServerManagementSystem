@@ -15,9 +15,23 @@ import { httpJson, httpJsonPost, downloadFile } from './net'
 import * as events from './events'
 import { log } from '../logger'
 import { MODDED_TYPES, PLUGIN_TYPES } from '@shared/types'
-import { diffUpdates } from '@shared/mods'
+import {
+  diffUpdates,
+  folderForLoaders,
+  pickCompatibleVersion,
+  summariseVersion,
+  PLUGIN_LOADERS
+} from '@shared/mods'
 import type { ServerType } from '@shared/types'
-import type { InstalledMod, ModEntry, ModrinthHit, ModUpdateReport, MrVersion } from '@shared/mods'
+import type {
+  InstalledMod,
+  ModEntry,
+  ModrinthDetail,
+  ModrinthHit,
+  ModUpdateReport,
+  MrVersion,
+  MrVersionInfo
+} from '@shared/mods'
 
 type ModFolder = 'plugins' | 'mods'
 
@@ -152,7 +166,7 @@ export async function searchModrinth(id: string, query: string): Promise<Modrint
  * plugin family is safe; modded and proxy loaders do not cross-load and stay
  * single. `[]` means "do not filter by loader" (an unknown server type).
  */
-const PLUGIN_LOADER_FAMILY = ['paper', 'purpur', 'folia', 'spigot', 'bukkit']
+const PLUGIN_LOADER_FAMILY = PLUGIN_LOADERS
 
 export function loadersFor(type: ServerType): string[] {
   if (PLUGIN_TYPES.includes(type) && !MODDED_TYPES.includes(type)) return PLUGIN_LOADER_FAMILY
@@ -257,25 +271,111 @@ export async function applyUpdate(id: string, rel: string, versionId: string): P
   return newName
 }
 
-export async function installModrinth(id: string, projectId: string): Promise<string> {
+/** Where a jar goes when the version itself declares no loaders. */
+function fallbackFolder(type: ServerType): ModFolder {
+  return MODDED_TYPES.includes(type) ? 'mods' : 'plugins'
+}
+
+const MAX_BODY = 4000
+
+/**
+ * Full project detail for the browse tab (#47): metadata, links, and a
+ * compatibility verdict for THIS server.
+ *
+ * Versions are fetched unfiltered and matched locally so the UI can tell
+ * "nothing for your Minecraft version" apart from "nothing for your loader" —
+ * a server-side filtered query collapses both into an empty list. The loader
+ * set is `searchLoaders`, the same one browse results were filtered by, so a
+ * result that is listed can never claim a compatibility the install then
+ * refuses.
+ */
+export async function modrinthDetail(id: string, projectId: string): Promise<ModrinthDetail> {
   const server = getServer(id)
   if (!server) throw new Error('server-not-found')
-  const loader = MR_LOADER[server.type]
-  const q =
-    `${MR}/project/${projectId}/version` +
-    (loader ? `?loaders=%5B%22${loader}%22%5D` : '') +
-    (server.mcVersion && server.mcVersion !== 'unknown'
-      ? `${loader ? '&' : '?'}game_versions=%5B%22${server.mcVersion}%22%5D`
-      : '')
+  const key = encodeURIComponent(projectId)
+  const loaders = searchLoaders(server.type)
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const versions = await httpJson<any[]>(q)
-  const v = versions[0]
+  const [project, versions, members] = await Promise.all([
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    httpJson<any>(`${MR}/project/${key}`),
+    httpJson<MrVersionInfo[]>(`${MR}/project/${key}/version`),
+    // The author is a separate call; losing it must not lose the whole detail.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    httpJson<any[]>(`${MR}/project/${key}/members`).catch(() => [])
+  ])
+
+  const mcVersion =
+    server.mcVersion && server.mcVersion !== 'unknown' ? server.mcVersion : undefined
+  const compatible = pickCompatibleVersion(versions, { mcVersion, loaders })
+  // Context when nothing matches: does the project support this loader at all?
+  const latestForLoader = pickCompatibleVersion(versions, { loaders })
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const owner = members.find((m: any) => m.role === 'Owner') ?? members[0]
+  const body = typeof project.body === 'string' ? project.body : undefined
+
+  return {
+    projectId: project.id ?? projectId,
+    slug: project.slug ?? projectId,
+    title: project.title ?? projectId,
+    description: project.description ?? '',
+    ...(body ? { body: body.length > MAX_BODY ? body.slice(0, MAX_BODY) + '…' : body } : {}),
+    ...(owner?.user?.username ? { author: owner.user.username } : {}),
+    downloads: project.downloads ?? 0,
+    ...(typeof project.followers === 'number' ? { followers: project.followers } : {}),
+    ...(project.license?.name || project.license?.id
+      ? { license: project.license.name || project.license.id }
+      : {}),
+    categories: Array.isArray(project.categories) ? project.categories : [],
+    ...(project.icon_url ? { iconUrl: project.icon_url } : {}),
+    links: {
+      project: `https://modrinth.com/project/${project.slug ?? projectId}`,
+      ...(project.source_url ? { source: project.source_url } : {}),
+      ...(project.issues_url ? { issues: project.issues_url } : {}),
+      ...(project.wiki_url ? { wiki: project.wiki_url } : {}),
+      ...(project.discord_url ? { discord: project.discord_url } : {})
+    },
+    ...(mcVersion ? { mcVersion } : {}),
+    loaders,
+    ...(compatible ? { compatible: summariseVersion(compatible) } : {}),
+    ...(latestForLoader ? { latestForLoader: summariseVersion(latestForLoader) } : {}),
+    versionCount: versions.length
+  }
+}
+
+/**
+ * Install a project. `versionId` (from the detail view) is validated against
+ * that project's own version list before use, so the renderer can pick a
+ * version but never point the download at an arbitrary file.
+ *
+ * The target folder comes from the chosen version's loaders, not the server
+ * type: a hybrid (mohist/arclight) runs Bukkit plugins AND Forge mods, and
+ * deciding by type alone dropped every plugin into `mods/`.
+ */
+export async function installModrinth(
+  id: string,
+  projectId: string,
+  versionId?: string
+): Promise<string> {
+  const server = getServer(id)
+  if (!server) throw new Error('server-not-found')
+  const versions = await httpJson<MrVersionInfo[]>(
+    `${MR}/project/${encodeURIComponent(projectId)}/version`
+  )
+  const v = versionId
+    ? versions.find((x) => x.id === versionId)
+    : pickCompatibleVersion(versions, {
+        mcVersion:
+          server.mcVersion && server.mcVersion !== 'unknown' ? server.mcVersion : undefined,
+        loaders: searchLoaders(server.type)
+      })
   if (!v) throw new Error('no-compatible-version')
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const file = v.files.find((f: any) => f.primary) ?? v.files[0]
-  const folder: ModFolder = MODDED_TYPES.includes(server.type) ? 'mods' : 'plugins'
+  const file = v.files.find((f) => f.primary) ?? v.files[0]
+  if (!file?.url) throw new Error('no-file-in-version')
+  const folder = folderForLoaders(v.loaders, fallbackFolder(server.type))
   const dir = join(server.path, folder)
   mkdirSync(dir, { recursive: true })
   await downloadFile(file.url, join(dir, file.filename), { sha1: file.hashes?.sha1 })
+  log.info(`Mod installed: ${file.filename} (${v.version_number}) -> ${folder}/ for ${id}`)
   return file.filename
 }

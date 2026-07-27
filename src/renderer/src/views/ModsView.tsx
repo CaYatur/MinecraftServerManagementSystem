@@ -11,11 +11,15 @@ import {
   Package,
   ArrowUpCircle,
   CheckCircle2,
-  Loader2
+  Loader2,
+  ChevronDown,
+  ChevronUp,
+  AlertTriangle,
+  ExternalLink
 } from 'lucide-react'
 import { useStore } from '../store'
 import { formatBytes } from '../components/ui'
-import type { ModEntry, ModrinthHit, ModUpdate } from '@shared/mods'
+import type { ModEntry, ModrinthDetail, ModrinthHit, ModUpdate } from '@shared/mods'
 
 export function ModsView(): JSX.Element {
   const { t } = useTranslation()
@@ -30,6 +34,9 @@ export function ModsView(): JSX.Element {
   const [updates, setUpdates] = useState<Record<string, ModUpdate>>({})
   const [checkState, setCheckState] = useState<'idle' | 'checking' | 'ok' | 'failed'>('idle')
   const [applying, setApplying] = useState<string | null>(null)
+  const [openId, setOpenId] = useState<string | null>(null)
+  const [detail, setDetail] = useState<ModrinthDetail | null>(null)
+  const [detailState, setDetailState] = useState<'idle' | 'loading' | 'failed'>('idle')
 
   const load = useCallback(async (): Promise<void> => {
     try {
@@ -44,6 +51,12 @@ export function ModsView(): JSX.Element {
     // A different server's update results must not linger.
     setUpdates({})
     setCheckState('idle')
+    // Browse results are filtered by the previous server's loaders, and its
+    // detail carries that server's compatibility verdict - both are wrong here.
+    setResults(null)
+    setOpenId(null)
+    setDetail(null)
+    setDetailState('idle')
   }, [id, load])
 
   const checkUpdates = async (): Promise<void> => {
@@ -94,10 +107,18 @@ export function ModsView(): JSX.Element {
     }
   }
 
+  const closeDetail = (): void => {
+    setOpenId(null)
+    setDetail(null)
+    setDetailState('idle')
+  }
+
   const search = async (): Promise<void> => {
     if (!query.trim()) return
     setSearching(true)
     setResults(null)
+    // A previous project's detail must not survive into new results.
+    closeDetail()
     try {
       setResults(await window.msms.searchMods(id, query.trim()))
     } catch {
@@ -106,10 +127,37 @@ export function ModsView(): JSX.Element {
     setSearching(false)
   }
 
-  const install = async (hit: ModrinthHit): Promise<void> => {
+  const toggleDetail = async (hit: ModrinthHit): Promise<void> => {
+    if (openId === hit.projectId) {
+      closeDetail()
+      return
+    }
+    setOpenId(hit.projectId)
+    setDetail(null)
+    setDetailState('loading')
+    try {
+      const d = await window.msms.modDetail(id, hit.projectId)
+      // The user may have collapsed this card (or opened another) while the
+      // request was in flight - a late reply must not reopen it.
+      setOpenId((cur) => {
+        if (cur === hit.projectId) {
+          setDetail(d)
+          setDetailState('idle')
+        }
+        return cur
+      })
+    } catch {
+      setOpenId((cur) => {
+        if (cur === hit.projectId) setDetailState('failed')
+        return cur
+      })
+    }
+  }
+
+  const install = async (hit: ModrinthHit, versionId?: string): Promise<void> => {
     setInstalling(hit.projectId)
     try {
-      const name = await window.msms.installMod(id, hit.projectId)
+      const name = await window.msms.installMod(id, hit.projectId, versionId)
       toast('success', 'mods.installedOk', { name })
       void load()
     } catch (e) {
@@ -238,7 +286,10 @@ export function ModsView(): JSX.Element {
             <p className="dim">{t('mods.noResults')}</p>
           ) : (
             <div className="cards" style={{ gridTemplateColumns: '1fr' }}>
-              {results.map((h) => (
+              {results.map((h) => {
+                const open = openId === h.projectId
+                const d = open && detail ? detail : null
+                return (
                 <div key={h.projectId} className="panel" style={{ padding: 12 }}>
                   <div className="row" style={{ alignItems: 'flex-start', gap: 12 }}>
                     {h.iconUrl ? (
@@ -255,17 +306,158 @@ export function ModsView(): JSX.Element {
                         {h.downloads.toLocaleString()} {t('mods.downloads')}
                       </div>
                     </div>
-                    <button
-                      className="btn primary sm"
-                      disabled={installing === h.projectId}
-                      onClick={() => install(h)}
-                    >
-                      <Download size={13} />
-                      {installing === h.projectId ? t('mods.installing') : t('mods.install')}
-                    </button>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      <button
+                        className="btn primary sm"
+                        disabled={installing === h.projectId}
+                        onClick={() => install(h, d?.compatible?.id)}
+                      >
+                        <Download size={13} />
+                        {installing === h.projectId ? t('mods.installing') : t('mods.install')}
+                      </button>
+                      <button className="btn sm" onClick={() => void toggleDetail(h)}>
+                        {open ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+                        {t('mods.details')}
+                      </button>
+                    </div>
                   </div>
+
+                  {open && (
+                    <div style={{ marginTop: 12, borderTop: '1px solid var(--border)', paddingTop: 10 }}>
+                      {detailState === 'loading' ? (
+                        <p className="dim" style={{ margin: 0, fontSize: 12 }}>
+                          <Loader2 size={13} className="spin" style={{ verticalAlign: -2 }} />{' '}
+                          {t('mods.detailLoading')}
+                        </p>
+                      ) : detailState === 'failed' ? (
+                        <p className="dim" style={{ margin: 0, fontSize: 12, color: 'var(--warning)' }}>
+                          {t('mods.detailFailed')}
+                        </p>
+                      ) : d ? (
+                        <>
+                          {/* Compatibility verdict for THIS server. */}
+                          <div style={{ fontSize: 12, marginBottom: 8 }}>
+                            {d.compatible ? (
+                              <span style={{ color: 'var(--online)' }}>
+                                <CheckCircle2 size={13} style={{ verticalAlign: -2 }} />{' '}
+                                {d.mcVersion
+                                  ? t('mods.compatibleWith', {
+                                      version: d.compatible.versionNumber,
+                                      mc: d.mcVersion
+                                    })
+                                  : t('mods.compatibleAny', { version: d.compatible.versionNumber })}
+                                {d.compatible.loaders.length > 0 && (
+                                  <span className="dim"> · {d.compatible.loaders.join(', ')}</span>
+                                )}
+                              </span>
+                            ) : d.latestForLoader ? (
+                              <span style={{ color: 'var(--warning)' }}>
+                                <AlertTriangle size={13} style={{ verticalAlign: -2 }} />{' '}
+                                {t('mods.noVersionForMc', {
+                                  mc: d.mcVersion ?? '?',
+                                  version: d.latestForLoader.versionNumber,
+                                  versions:
+                                    d.latestForLoader.gameVersions.slice(0, 5).join(', ') || '?'
+                                })}
+                              </span>
+                            ) : (
+                              <span style={{ color: 'var(--warning)' }}>
+                                <AlertTriangle size={13} style={{ verticalAlign: -2 }} />{' '}
+                                {t('mods.noVersionForLoader', {
+                                  loaders: d.loaders.join(', ') || '?'
+                                })}
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="dim" style={{ fontSize: 11, marginBottom: 8 }}>
+                            {d.author && (
+                              <>
+                                {t('mods.author')}: {d.author}
+                                {' · '}
+                              </>
+                            )}
+                            {d.downloads.toLocaleString()} {t('mods.downloads')}
+                            {typeof d.followers === 'number' && (
+                              <>
+                                {' · '}
+                                {d.followers.toLocaleString()} {t('mods.followers')}
+                              </>
+                            )}
+                            {d.license && (
+                              <>
+                                {' · '}
+                                {t('mods.license')}: {d.license}
+                              </>
+                            )}
+                            {' · '}
+                            {t('mods.versionCount', { n: d.versionCount })}
+                          </div>
+
+                          {d.categories.length > 0 && (
+                            <div className="row wrap" style={{ gap: 4, marginBottom: 8 }}>
+                              {d.categories.map((c) => (
+                                <span key={c} className="badge">
+                                  {c}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+
+                          {d.body && (
+                            <div
+                              className="dim"
+                              style={{
+                                fontSize: 12,
+                                whiteSpace: 'pre-wrap',
+                                maxHeight: 220,
+                                overflowY: 'auto',
+                                marginBottom: 8
+                              }}
+                            >
+                              {d.body}
+                            </div>
+                          )}
+
+                          <div className="row wrap" style={{ gap: 6 }}>
+                            <button
+                              className="btn ghost sm"
+                              onClick={() => window.msms.openExternal(d.links.project)}
+                            >
+                              <ExternalLink size={12} /> Modrinth
+                            </button>
+                            {d.links.source && (
+                              <button
+                                className="btn ghost sm"
+                                onClick={() => window.msms.openExternal(d.links.source!)}
+                              >
+                                <ExternalLink size={12} /> {t('mods.source')}
+                              </button>
+                            )}
+                            {d.links.issues && (
+                              <button
+                                className="btn ghost sm"
+                                onClick={() => window.msms.openExternal(d.links.issues!)}
+                              >
+                                <ExternalLink size={12} /> {t('mods.issues')}
+                              </button>
+                            )}
+                            {d.links.wiki && (
+                              <button
+                                className="btn ghost sm"
+                                onClick={() => window.msms.openExternal(d.links.wiki!)}
+                              >
+                                <ExternalLink size={12} /> {t('mods.wiki')}
+                              </button>
+                            )}
+                          </div>
+                        </>
+                      ) : null}
+                    </div>
+                  )}
                 </div>
-              ))}
+                )
+              })}
             </div>
           )}
         </>

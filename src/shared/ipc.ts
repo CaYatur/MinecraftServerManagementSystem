@@ -40,7 +40,7 @@ import type { JoinAggregate, JoinQuery } from './joins'
 import type { JavaInstallProgress } from './javaProvision'
 import type { AlertRule, NewAlertRule } from './alerts'
 import type { McVersion, BuildInfo, CreateServerOptions, CreateProgress } from './versions'
-import type { ModEntry, ModrinthHit, ModUpdateReport } from './mods'
+import type { ModEntry, ModrinthDetail, ModrinthHit, ModUpdateReport } from './mods'
 import type {
   WebStatus,
   WebUserView,
@@ -118,6 +118,7 @@ export const IPC = {
   modDelete: 'mods:delete',
   modAdd: 'mods:add',
   modSearch: 'mods:search',
+  modDetail: 'mods:detail',
   modInstall: 'mods:install',
   modCheckUpdates: 'mods:check-updates',
   modApplyUpdate: 'mods:apply-update',
@@ -292,7 +293,8 @@ export interface MsmsApi {
   deleteMod(id: string, rel: string): Promise<void>
   addMod(id: string, folder: 'plugins' | 'mods'): Promise<string | null>
   searchMods(id: string, query: string): Promise<ModrinthHit[]>
-  installMod(id: string, projectId: string): Promise<string>
+  modDetail(id: string, projectId: string): Promise<ModrinthDetail>
+  installMod(id: string, projectId: string, versionId?: string): Promise<string>
   checkModUpdates(id: string): Promise<ModUpdateReport>
   applyModUpdate(id: string, path: string, versionId: string): Promise<string>
 

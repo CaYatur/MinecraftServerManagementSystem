@@ -16,6 +16,145 @@ export interface ModrinthHit {
   iconUrl?: string
 }
 
+/**
+ * Modrinth loaders that all run the same Bukkit-family plugin jar. Lives here
+ * (not in core) because both the update check and the pure folder decision
+ * need it, and they must not drift apart.
+ */
+export const PLUGIN_LOADERS = ['paper', 'purpur', 'folia', 'spigot', 'bukkit']
+
+// ---- project detail (#47) ----
+
+/** A Modrinth version enriched with the fields the compatibility check reads. */
+export interface MrVersionInfo extends MrVersion {
+  name?: string
+  game_versions?: string[]
+  loaders?: string[]
+  version_type?: string
+  date_published?: string
+  downloads?: number
+}
+
+/** One version reduced to what the detail UI shows. */
+export interface ModVersionSummary {
+  id: string
+  versionNumber: string
+  name?: string
+  versionType?: string
+  gameVersions: string[]
+  loaders: string[]
+  datePublished?: string
+  filename?: string
+}
+
+export interface ModrinthDetail {
+  projectId: string
+  slug: string
+  title: string
+  description: string
+  /** Long description (markdown source), truncated main-side. */
+  body?: string
+  author?: string
+  downloads: number
+  followers?: number
+  license?: string
+  categories: string[]
+  iconUrl?: string
+  links: {
+    project: string
+    source?: string
+    issues?: string
+    wiki?: string
+    discord?: string
+  }
+  /** The server this compatibility verdict was computed against. */
+  mcVersion?: string
+  loaders: string[]
+  /** Best version matching this server's MC version + loaders, when one exists. */
+  compatible?: ModVersionSummary
+  /** Newest version for these loaders regardless of MC version — context when nothing matches. */
+  latestForLoader?: ModVersionSummary
+  /** Total versions the project publishes (all loaders). */
+  versionCount: number
+}
+
+function matchesLoaders(v: MrVersionInfo, loaders: string[]): boolean {
+  // No filter requested (unknown server type), or a version that declares no
+  // loaders at all: do not exclude it — claiming "incompatible" on missing
+  // metadata is worse than showing it and letting the install decide.
+  if (!loaders.length) return true
+  if (!v.loaders || v.loaders.length === 0) return true
+  return v.loaders.some((l) => loaders.includes(l))
+}
+
+function matchesGameVersion(v: MrVersionInfo, mcVersion?: string): boolean {
+  if (!mcVersion || mcVersion === 'unknown') return true
+  if (!v.game_versions || v.game_versions.length === 0) return true
+  return v.game_versions.includes(mcVersion)
+}
+
+/** Newest first; a version with no date keeps its incoming (API) order. */
+function byNewest(a: MrVersionInfo, b: MrVersionInfo): number {
+  const ta = a.date_published ? Date.parse(a.date_published) : NaN
+  const tb = b.date_published ? Date.parse(b.date_published) : NaN
+  if (Number.isNaN(ta) && Number.isNaN(tb)) return 0
+  if (Number.isNaN(ta)) return 1
+  if (Number.isNaN(tb)) return -1
+  return tb - ta
+}
+
+/**
+ * Pure: pick the best version of a project for a given server.
+ *
+ * Same doctrine as `diffUpdates` — a `version_number` is arbitrary text and is
+ * NEVER compared as if it sorted. Recency comes from `date_published`, and a
+ * stable `release` is preferred over `beta`/`alpha` even when the pre-release
+ * is newer, because that is what an operator installing on a live server wants.
+ *
+ * Passing `loaders: []` means "do not filter by loader".
+ */
+export function pickCompatibleVersion(
+  versions: MrVersionInfo[],
+  opts: { mcVersion?: string; loaders?: string[] }
+): MrVersionInfo | undefined {
+  const loaders = opts.loaders ?? []
+  const usable = versions.filter(
+    (v) => matchesLoaders(v, loaders) && matchesGameVersion(v, opts.mcVersion)
+  )
+  if (!usable.length) return undefined
+  const sorted = [...usable].sort(byNewest)
+  return sorted.find((v) => v.version_type === 'release') ?? sorted[0]
+}
+
+/**
+ * Pure: which folder a version's jar belongs in. A hybrid server (mohist,
+ * arclight) runs BOTH Bukkit plugins and Forge mods, so the server type alone
+ * cannot decide — the version's own loaders do. `fallback` covers a version
+ * that declares no loaders.
+ */
+export function folderForLoaders(
+  loaders: string[] | undefined,
+  fallback: 'plugins' | 'mods'
+): 'plugins' | 'mods' {
+  if (!loaders || loaders.length === 0) return fallback
+  return loaders.some((l) => PLUGIN_LOADERS.includes(l)) ? 'plugins' : 'mods'
+}
+
+/** Shrink a version to what the renderer needs. */
+export function summariseVersion(v: MrVersionInfo): ModVersionSummary {
+  const pf = v.files.find((f) => f.primary) ?? v.files[0]
+  return {
+    id: v.id,
+    versionNumber: v.version_number,
+    ...(v.name ? { name: v.name } : {}),
+    ...(v.version_type ? { versionType: v.version_type } : {}),
+    gameVersions: v.game_versions ?? [],
+    loaders: v.loaders ?? [],
+    ...(v.date_published ? { datePublished: v.date_published } : {}),
+    ...(pf?.filename ? { filename: pf.filename } : {})
+  }
+}
+
 // ---- update checking (Modrinth version_files/update) ----
 
 /**

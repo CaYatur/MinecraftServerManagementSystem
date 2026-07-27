@@ -71,7 +71,9 @@ const api: MsmsApi = {
   deleteMod: (id, rel) => ipcRenderer.invoke(IPC.modDelete, id, rel),
   addMod: (id, folder) => ipcRenderer.invoke(IPC.modAdd, id, folder),
   searchMods: (id, query) => ipcRenderer.invoke(IPC.modSearch, id, query),
-  installMod: (id, projectId) => ipcRenderer.invoke(IPC.modInstall, id, projectId),
+  modDetail: (id, projectId) => ipcRenderer.invoke(IPC.modDetail, id, projectId),
+  installMod: (id, projectId, versionId) =>
+    ipcRenderer.invoke(IPC.modInstall, id, projectId, versionId),
   checkModUpdates: (id) => ipcRenderer.invoke(IPC.modCheckUpdates, id),
   applyModUpdate: (id, path, versionId) => ipcRenderer.invoke(IPC.modApplyUpdate, id, path, versionId),
 

@@ -264,7 +264,10 @@ export function registerIpc(): void {
     return res.filePaths[0].split(/[\\/]/).pop() ?? null
   })
   H(IPC.modSearch, (_e, id: string, query: string) => mods.searchModrinth(id, query))
-  H(IPC.modInstall, (_e, id: string, projectId: string) => mods.installModrinth(id, projectId))
+  H(IPC.modDetail, (_e, id: string, projectId: string) => mods.modrinthDetail(id, projectId))
+  H(IPC.modInstall, (_e, id: string, projectId: string, versionId?: string) =>
+    mods.installModrinth(id, projectId, versionId)
+  )
   H(IPC.modCheckUpdates, (_e, id: string) => mods.checkUpdates(id))
   H(IPC.modApplyUpdate, (_e, id: string, path: string, versionId: string) =>
     mods.applyUpdate(id, path, versionId)

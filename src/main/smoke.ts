@@ -40,8 +40,8 @@ import {
   isZipPackage,
   type AdoptiumAsset
 } from '@shared/javaProvision'
-import { diffUpdates } from '@shared/mods'
-import type { MrVersion } from '@shared/mods'
+import { diffUpdates, folderForLoaders, pickCompatibleVersion } from '@shared/mods'
+import type { MrVersion, MrVersionInfo } from '@shared/mods'
 import { computeUptime, clipSessions } from '@shared/uptime'
 import { evaluateRule, normalizeRule, IDLE, type AlertRule, type AlertSample } from '@shared/alerts'
 import { analyze, type Finding } from '@shared/analysis'
@@ -594,6 +594,82 @@ export async function runModUpdateSmoke(): Promise<void> {
     }
     if (sl('vanilla').length !== 0) return fail('vanilla browse should not filter by loader')
     console.log('MODUPDATE-SMOKE: browse-search loaders OK (plugin family, modded single, hybrid unions both)')
+
+    // Compatibility pick (#47 detail view). Same doctrine as the diff: recency
+    // comes from date_published, NEVER from the version string, and a stable
+    // release outranks a newer pre-release.
+    const V = (
+      id: string,
+      num: string,
+      loaders: string[],
+      games: string[],
+      type: string,
+      date: string
+    ): MrVersionInfo => ({
+      id,
+      project_id: 'p',
+      version_number: num,
+      version_type: type,
+      loaders,
+      game_versions: games,
+      date_published: date,
+      files: [{ primary: true, filename: `${id}.jar`, hashes: { sha1: id } }]
+    })
+    const pool: MrVersionInfo[] = [
+      V('a', 'v9.9.9', ['fabric'], ['1.20.1'], 'release', '2026-01-01T00:00:00Z'),
+      V('b', 'v1.0.0', ['paper', 'spigot'], ['1.20.1'], 'release', '2025-06-01T00:00:00Z'),
+      V('c', 'v2.0.0', ['paper'], ['1.20.1'], 'beta', '2025-12-01T00:00:00Z'),
+      V('d', 'v3.0.0', ['paper'], ['1.21.4'], 'release', '2026-02-01T00:00:00Z')
+    ]
+
+    // A Paper 1.20.1 server must not get the Fabric build even though it is the
+    // newest of all, and must prefer the stable release over the newer beta.
+    const paperPick = pickCompatibleVersion(pool, {
+      mcVersion: '1.20.1',
+      loaders: modsMod.searchLoaders('paper')
+    })
+    if (paperPick?.id !== 'b') {
+      return fail('paper 1.20.1 should pick the stable paper/spigot build, got ' + paperPick?.id)
+    }
+    // Nothing for this MC version -> undefined, but the loader still has builds.
+    const noMc = pickCompatibleVersion(pool, {
+      mcVersion: '1.7.10',
+      loaders: modsMod.searchLoaders('paper')
+    })
+    if (noMc) return fail('an unsupported MC version must not report a compatible build')
+    const anyMc = pickCompatibleVersion(pool, { loaders: modsMod.searchLoaders('paper') })
+    if (anyMc?.id !== 'd') return fail('latest-for-loader should be the newest paper release')
+    // A loader with no builds at all -> undefined (not a silent wrong pick).
+    if (pickCompatibleVersion(pool, { loaders: ['neoforge'] })) {
+      return fail('a loader with no builds must not report a compatible build')
+    }
+    // No loader filter (unknown server type) = do not exclude anything.
+    if (!pickCompatibleVersion(pool, { loaders: [] })) {
+      return fail('an unfiltered pick should still find something')
+    }
+    // Version STRINGS must not decide: 'v1.0.0' beat 'v9.9.9' above purely on
+    // loader match, and here a lexically tiny number wins on date.
+    const dateWins = pickCompatibleVersion(
+      [
+        V('old', 'v10.0.0', ['paper'], ['1.20.1'], 'release', '2024-01-01T00:00:00Z'),
+        V('new', 'v2.0.0', ['paper'], ['1.20.1'], 'release', '2026-01-01T00:00:00Z')
+      ],
+      { mcVersion: '1.20.1', loaders: ['paper'] }
+    )
+    if (dateWins?.id !== 'new') return fail('recency must come from the date, not the version text')
+    console.log('MODUPDATE-SMOKE: compatibility pick OK (loader + MC filter, release > newer beta, date not version text)')
+
+    // Hybrid install folder: mohist runs Bukkit plugins AND Forge mods, so the
+    // version's own loaders decide the folder - the server type cannot.
+    if (folderForLoaders(['forge'], 'plugins') !== 'mods') return fail('a forge build must go to mods/')
+    if (folderForLoaders(['paper', 'spigot'], 'mods') !== 'plugins') {
+      return fail('a bukkit-family build must go to plugins/')
+    }
+    if (folderForLoaders([], 'mods') !== 'mods') return fail('no loaders should use the fallback')
+    if (folderForLoaders(undefined, 'plugins') !== 'plugins') {
+      return fail('missing loaders should use the fallback')
+    }
+    console.log('MODUPDATE-SMOKE: install folder decided by version loaders (hybrid-safe)')
 
     console.log('MODUPDATE-SMOKE: PASS')
     app.exit(0)
