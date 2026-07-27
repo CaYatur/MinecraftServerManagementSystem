@@ -131,6 +131,11 @@ A malformed bridge line never throws and never interrupts the console stream.
 
 ## Status
 
-`shared/bridge.ts` (app side) is implemented and covered by `MSMS_SMOKE_BRIDGE=1`, which replays real log4j2-prefixed lines, malformed payloads, and the fresh/stale/fallback reconciliation.
+Both halves now exist.
 
-**The Java plugin that emits these messages does not exist yet** — tracked in #19, #20 and #21. Until it ships, nothing on a real server produces these lines, and the app simply never sees a bridge.
+- **App side** — `shared/bridge.ts`, covered by `MSMS_SMOKE_BRIDGE=1`, which replays real log4j2-prefixed lines, malformed payloads, and the fresh/stale/fallback reconciliation.
+- **Plugin side** — [`bridge/`](../bridge/README.md), built with `node bridge/build.mjs` (JDK 21, no Maven).
+
+Conformance between them is checked without a Minecraft server: `node bridge/build.mjs --selftest` prints one of every message shape through the plugin's own JSON writer, and those exact lines are parsed back with `parseBridgeLine`.
+
+**Not yet run inside a live server.** The plugin compiles against the Paper 1.21.4 API and its output parses correctly, but it has not been observed starting on a real Paper instance — treat the first run as a test.

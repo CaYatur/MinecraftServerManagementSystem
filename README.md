@@ -449,9 +449,11 @@ That transport choice is the point: no extra port, no socket, no firewall rule, 
 
 The app side is implemented: protocol v1 parsing, and a freshness rule that falls back to RCON the moment the bridge goes quiet — so a crashed plugin cannot leave a frozen TPS on screen.
 
-⚠️ **The Java plugin itself does not exist yet**, so nothing currently emits these lines on a real server. Tracked in #19–#21.
+The plugin itself lives in [`bridge/`](bridge/README.md) and builds with a JDK and Node alone — `node bridge/build.mjs` — no Maven or Gradle. Its output is verified against the app's own parser without needing a Minecraft server.
 
-📖 **[Protocol documentation → `docs/bridge-protocol.md`](docs/bridge-protocol.md)**
+⚠️ It has **not yet been run inside a live server**, so treat the first run as a test.
+
+📖 **[Protocol documentation → `docs/bridge-protocol.md`](docs/bridge-protocol.md)** · **[Plugin README → `bridge/README.md`](bridge/README.md)**
 
 ---
 
