@@ -469,10 +469,17 @@ function adjustBalance(mode){var name=document.getElementById('mBalName').value.
  api('/api/servers/'+current.id+'/store/admin/balance',{method:'POST',body:JSON.stringify(body)}).then(function(r){
   if(!r.ok){alert(r.body&&r.body.error==='invalid-mcname'?'Invalid Minecraft name (3-16 letters, digits, underscore)':('Error: '+(r.body&&r.body.error||r.status)));return}
   document.getElementById('mBalReason').value='';loadManage()})}
-var mledger=[];
+var mledger=[];var mledgerFor='';
 function toggleLedger(){var b=document.getElementById('mLedgerBody');var open=b.style.display==='none';
  b.style.display=open?'block':'none';document.getElementById('mLedgerCaret').textContent=open?'▾':'▸'}
-function loadLedger(){api('/api/servers/'+current.id+'/store/admin/ledger').then(function(r){if(r.ok){mledger=r.body.ledger||[];renderLedger()}})}
+// Reset the filter only when the ledger belongs to a DIFFERENT server - a
+// filter must survive a refresh (and loadManage runs after every adjustment),
+// but must not silently hide another server's entries.
+function resetLedgerFilter(){document.getElementById('mLedgerQ').value='';document.getElementById('mLedgerKind').value='all';
+ document.getElementById('mLedgerBody').style.display='none';document.getElementById('mLedgerCaret').textContent='▸'}
+function loadLedger(){api('/api/servers/'+current.id+'/store/admin/ledger').then(function(r){if(r.ok){
+ if(mledgerFor!==current.id){mledgerFor=current.id;resetLedgerFilter()}
+ mledger=r.body.ledger||[];renderLedger()}})}
 // Mirrors filterLedger/ledgerSummary in shared/economy.ts - the panel is plain
 // browser JS and cannot import the module, so keep the two in step by hand.
 function ledgerFiltered(){var q=(document.getElementById('mLedgerQ').value||'').trim().toLowerCase();
@@ -482,7 +489,7 @@ function ledgerFiltered(){var q=(document.getElementById('mLedgerQ').value||'').
 function renderLedger(){var el=document.getElementById('mLedger');var led=ledgerFiltered();
  var g=0,rm=0,sp=0;mledger.forEach(function(e){var d=e.delta||0;
   if(e.kind==='purchase')sp+=Math.abs(d);else if(d>=0)g+=d;else rm+=-d});
- document.getElementById('mLedgerSum').textContent=' '+mledger.length+' entries · +'+g+' granted · −'+rm+' removed · '+sp+' spent';
+ document.getElementById('mLedgerSum').textContent=mledger.length?(' '+mledger.length+' entries · +'+g+' granted · −'+rm+' removed · '+sp+' spent'):'';
  if(!mledger.length){el.innerHTML='<div class="dim">No balance changes recorded yet.</div>';return}
  if(!led.length){el.innerHTML='<div class="dim">No entries match this filter.</div>';return}
  el.innerHTML=led.map(function(e){var d=e.delta||0;return '<div class="mrow"><span class="badge" style="'+(d>=0?'color:var(--online)':'color:#f87171')+'">'+(d>=0?'+':'')+d+'</span>'+

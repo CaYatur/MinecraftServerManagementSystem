@@ -54,6 +54,12 @@ export function StoreView(): JSX.Element {
   }
   useEffect(() => {
     void load()
+    // The filter belongs to the ledger being looked at. Carrying it to another
+    // server silently hides that server's entries behind a search the user
+    // cannot see, because the section is collapsed again.
+    setLedgerQuery('')
+    setLedgerKind('all')
+    setLedgerOpen(false)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id])
 
@@ -177,14 +183,16 @@ export function StoreView(): JSX.Element {
           {ledgerOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
         </button>
         {t('store.ledger')}
-        <span className="dim" style={{ fontWeight: 400, fontSize: 12, marginLeft: 8 }}>
-          {t('store.ledgerSummary', {
-            n: summary.count,
-            granted: summary.granted,
-            removed: summary.removed,
-            spent: summary.spent
-          })}
-        </span>
+        {summary.count > 0 && (
+          <span className="dim" style={{ fontWeight: 400, fontSize: 12, marginLeft: 8 }}>
+            {t('store.ledgerSummary', {
+              n: summary.count,
+              granted: summary.granted,
+              removed: summary.removed,
+              spent: summary.spent
+            })}
+          </span>
+        )}
       </div>
       {ledgerOpen && (
         <div className="panel" style={{ padding: 0 }}>
