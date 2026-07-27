@@ -263,6 +263,7 @@ h2{margin:8px 0;font-weight:800;letter-spacing:-.4px}
       <button class="tab" id="tabStats" onclick="showTab('stats')">Performance</button>
       <button class="tab" id="tabTimeline" onclick="showTab('timeline')">Timeline</button>
       <button class="tab" id="tabStore" onclick="showTab('store')">Store</button>
+      <button class="tab hidden" id="tabAlertsBtn" onclick="showTab('alerts')">Alerts</button>
       <button class="tab hidden" id="tabManageBtn" onclick="showTab('manage')">Manage</button>
     </div>
     <div id="panelConsole">
@@ -271,6 +272,42 @@ h2{margin:8px 0;font-weight:800;letter-spacing:-.4px}
         <input id="dCmd" placeholder="Command…" style="flex:1" onkeydown="if(event.key==='Enter')sendCmd()"/>
         <button class="btn primary" onclick="sendCmd()">Send</button>
       </div>
+    </div>
+    <div id="panelAlerts" class="hidden">
+      <div class="card">
+        <div class="row"><b>New alert rule</b><div class="spacer"></div><button class="btn sm" onclick="loadAlerts()" title="Refresh">RELOAD</button></div>
+        <input type="hidden" id="arId"/>
+        <div class="row" style="margin-top:8px">
+          <input id="arName" placeholder="Rule name" style="flex:1;min-width:120px"/>
+          <select id="arMetric"><option value="tps">TPS</option><option value="cpu">CPU %</option><option value="ram">RAM MB</option><option value="players">Players</option></select>
+          <select id="arCmp"><option value="below">below</option><option value="above">above</option></select>
+          <input id="arThreshold" type="number" value="15" style="width:90px"/>
+        </div>
+        <div class="row" style="margin-top:8px">
+          <div><div class="dim" style="font-size:12px">Hold for (s)</div><input id="arFor" type="number" value="60" style="width:100px"/></div>
+          <div><div class="dim" style="font-size:12px">Cooldown (s)</div><input id="arCool" type="number" value="900" style="width:100px"/></div>
+          <div><div class="dim" style="font-size:12px">Grace (s)</div><input id="arGrace" type="number" value="120" style="width:100px"/></div>
+          <div style="flex:1;min-width:120px"><div class="dim" style="font-size:12px">Action when it fires</div>
+            <select id="arAction" onchange="arActionChanged()" style="width:100%">
+              <option value="">Record only</option>
+              <option value="restart">Restart server</option>
+              <option value="stop">Stop server</option>
+              <option value="start">Start server</option>
+              <option value="backup">Take a backup</option>
+              <option value="command">Run a command</option>
+              <option value="broadcast">Broadcast a message</option>
+            </select>
+          </div>
+        </div>
+        <div class="row" style="margin-top:8px"><input id="arPayload" placeholder="Command or message" style="flex:1"/></div>
+        <div class="dim" id="arScopeHint" style="font-size:12px;margin-top:6px"></div>
+        <div class="row" style="margin-top:8px">
+          <button class="btn primary" onclick="saveAlert()">Save rule</button>
+          <button class="btn sm" onclick="resetAlertForm()">Clear</button>
+          <span class="dim" id="arHint" style="font-size:12px"></span>
+        </div>
+      </div>
+      <div id="alertList"></div>
     </div>
     <div id="panelStats" class="hidden">
       <div class="row" style="margin-bottom:4px">
@@ -383,15 +420,87 @@ function renderDetail(){show('detail');var s=current;document.getElementById('dN
  if(has('power')){c.innerHTML=[['start','▶ Start'],['stop','■ Stop'],['restart','↻ Restart'],['kill','⚡ Kill']].map(function(a){
    return '<button class="btn sm'+(a[0]==='start'?' primary':a[0]==='kill'?' danger':'')+'" onclick="power(\\''+a[0]+'\\')">'+a[1]+'</button>'}).join('')}
  document.getElementById('dCmdRow').style.display=has('console')?'flex':'none';
- document.getElementById('tabManageBtn').classList.toggle('hidden',!has('store'));showTab('console')}
+ document.getElementById('tabManageBtn').classList.toggle('hidden',!has('store'));
+ document.getElementById('tabAlertsBtn').classList.toggle('hidden',!has('settings'));showTab('console')}
 function showTab(tab){activeTab=tab;
- [['console','panelConsole','tabConsole'],['stats','panelStats','tabStats'],['timeline','panelTimeline','tabTimeline'],['store','panelStore','tabStore'],['manage','panelManage','tabManageBtn']]
+ [['console','panelConsole','tabConsole'],['stats','panelStats','tabStats'],['timeline','panelTimeline','tabTimeline'],['store','panelStore','tabStore'],['alerts','panelAlerts','tabAlertsBtn'],['manage','panelManage','tabManageBtn']]
   .forEach(function(t){document.getElementById(t[1]).classList.toggle('hidden',tab!==t[0]);
    document.getElementById(t[2]).classList.toggle('on',tab===t[0])});
  if(tab==='store')loadStore();
  if(tab==='manage')loadManage();
  if(tab==='stats')loadStats();
- if(tab==='timeline')loadEvents()}
+ if(tab==='timeline')loadEvents();
+ if(tab==='alerts')loadAlerts()}
+
+/* ---- alert rules (#24) ---- */
+// Mirrors extraScopesForAction() in shared/alerts.ts. This is a HINT only - the
+// server enforces it. A rule that acts when it fires needs that action's own
+// scope on top of 'settings', or 'settings' would quietly become "run any
+// console command, unattended, forever".
+var ACTION_SCOPE={command:'console',broadcast:'console',start:'power',stop:'power',restart:'power',backup:'backups'};
+var ALERT_UNIT={tps:'TPS',cpu:'% CPU',ram:'MB RAM',players:'players'};
+var alertCache={};
+function arActionChanged(){var a=document.getElementById('arAction').value;
+ var need=ACTION_SCOPE[a];var hint=document.getElementById('arScopeHint');
+ document.getElementById('arPayload').style.display=(a==='command'||a==='broadcast')?'':'none';
+ if(!need){hint.textContent='';return}
+ hint.textContent=has(need)?('This action also uses your "'+need+'" permission.')
+  :('You do not have the "'+need+'" permission, so this action will be refused.')}
+function resetAlertForm(){document.getElementById('arId').value='';document.getElementById('arName').value='';
+ document.getElementById('arThreshold').value='15';document.getElementById('arFor').value='60';
+ document.getElementById('arCool').value='900';document.getElementById('arGrace').value='120';
+ document.getElementById('arAction').value='';document.getElementById('arPayload').value='';
+ document.getElementById('arMetric').value='tps';document.getElementById('arCmp').value='below';
+ document.getElementById('arHint').textContent='';arActionChanged()}
+function loadAlerts(){api('/api/servers/'+current.id+'/alerts').then(function(r){
+ if(!r.ok){document.getElementById('alertList').innerHTML='<div class="card dim">No access to alert rules.</div>';return}
+ renderAlerts((r.body&&r.body.rules)||[])})}
+function renderAlerts(rules){var el=document.getElementById('alertList');
+ alertCache={};rules.forEach(function(x){alertCache[x.id]=x});
+ if(!rules.length){el.innerHTML='<div class="card dim">No alert rules yet.</div>';return}
+ el.innerHTML='<div class="card">'+rules.map(function(x){
+  var unit=ALERT_UNIT[x.metric]||x.metric;
+  var when=esc(x.metric)+' '+esc(x.comparison)+' '+x.threshold+' '+esc(unit)+' for '+x.forSeconds+'s';
+  var act=x.action?('-> '+esc(x.action)+(x.payload?' ('+esc(x.payload)+')':'')):'-> record only';
+  return '<div class="mrow"><span class="badge">'+(x.enabled?'on':'off')+'</span>'+
+   '<div style="flex:1;min-width:0"><div style="font-weight:700">'+esc(x.name)+'</div>'+
+   '<div class="dim" style="font-size:11px">'+when+' - '+act+(x.fireCount?' - fired '+x.fireCount+'x':'')+'</div></div>'+
+   '<button class="btn sm" onclick="toggleAlert(\\''+x.id+'\\')">'+(x.enabled?'Disable':'Enable')+'</button>'+
+   '<button class="btn sm" onclick="editAlert(\\''+x.id+'\\')">Edit</button>'+
+   '<button class="btn sm danger" onclick="deleteAlert(\\''+x.id+'\\')">Delete</button></div>'}).join('')+'</div>'}
+function editAlert(rid){var x=alertCache[rid];if(!x)return;
+ document.getElementById('arId').value=x.id;document.getElementById('arName').value=x.name||'';
+ document.getElementById('arMetric').value=x.metric;document.getElementById('arCmp').value=x.comparison;
+ document.getElementById('arThreshold').value=x.threshold;document.getElementById('arFor').value=x.forSeconds;
+ document.getElementById('arCool').value=x.cooldownSeconds;document.getElementById('arGrace').value=x.graceSeconds;
+ document.getElementById('arAction').value=x.action||'';document.getElementById('arPayload').value=x.payload||'';
+ arActionChanged();window.scrollTo(0,0)}
+function alertBody(){var a=document.getElementById('arAction').value;
+ var b={name:document.getElementById('arName').value.trim(),
+  metric:document.getElementById('arMetric').value,comparison:document.getElementById('arCmp').value,
+  threshold:Number(document.getElementById('arThreshold').value)||0,
+  forSeconds:Number(document.getElementById('arFor').value)||0,
+  cooldownSeconds:Number(document.getElementById('arCool').value)||900,
+  graceSeconds:Number(document.getElementById('arGrace').value)||0};
+ if(a){b.action=a;if(a==='command'||a==='broadcast')b.payload=document.getElementById('arPayload').value}
+ var rid=document.getElementById('arId').value;if(rid)b.id=rid;
+ return b}
+function saveAlert(){var b=alertBody();
+ if(!b.name){document.getElementById('arHint').textContent='Give the rule a name.';return}
+ api('/api/servers/'+current.id+'/alerts',{method:'POST',body:JSON.stringify(b)}).then(function(r){
+  if(!r.ok){document.getElementById('arHint').textContent=r.status===403
+   ?'Refused: this action needs a permission you do not have.'
+   :('Could not save: '+((r.body&&r.body.error)||r.status));return}
+  resetAlertForm();loadAlerts()})}
+function toggleAlert(rid){var x=alertCache[rid];if(!x)return;
+ var b={id:x.id,name:x.name,metric:x.metric,comparison:x.comparison,threshold:x.threshold,
+  forSeconds:x.forSeconds,cooldownSeconds:x.cooldownSeconds,graceSeconds:x.graceSeconds,enabled:!x.enabled};
+ if(x.action){b.action=x.action;if(x.payload)b.payload=x.payload}
+ api('/api/servers/'+current.id+'/alerts',{method:'POST',body:JSON.stringify(b)}).then(function(r){
+  if(!r.ok){alert('Could not change the rule: '+((r.body&&r.body.error)||r.status));return}loadAlerts()})}
+function deleteAlert(rid){if(!confirm('Delete this alert rule?'))return;
+ api('/api/servers/'+current.id+'/alerts?ruleId='+encodeURIComponent(rid),{method:'DELETE'}).then(function(r){
+  if(!r.ok){alert('Could not delete the rule');return}loadAlerts()})}
 
 /* ---- performance (metrics + uptime) ---- */
 function setRange(ms,btn){statsRange=ms;

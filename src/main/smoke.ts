@@ -2970,6 +2970,11 @@ export async function runWebSmoke(): Promise<void> {
     })
   const get = (p: string, tok?: string): Promise<Response> =>
     fetch(base + p, { headers: tok ? { Authorization: 'Bearer ' + tok } : {} })
+  const del = (p: string, tok?: string): Promise<Response> =>
+    fetch(base + p, {
+      method: 'DELETE',
+      headers: tok ? { Authorization: 'Bearer ' + tok } : {}
+    })
   // public website listener (separate port)
   const spost = (p: string, body: unknown, tok?: string): Promise<Response> =>
     fetch(siteBase + p, {
@@ -3413,6 +3418,12 @@ export async function runWebSmoke(): Promise<void> {
         return fail('explicit resolution ignored')
       }
       // a user with no scopes on this server must be refused
+      // Same defence as setr_t below: an assertion failing after this point
+      // skips the cleanup, and the leftover then breaks every later run with
+      // username-taken - which masks the real failure.
+      for (const u of webAuth.listUsers()) {
+        if (u.username === 'nosee_t') webAuth.deleteUser(u.id)
+      }
       const nosee = webAuth.createUser('nosee_t', 'noseepass', 'user', {})
       r = await post('/api/login', { username: 'nosee_t', password: 'noseepass' })
       const nt = ((await r.json()) as { token: string }).token
@@ -3474,6 +3485,85 @@ export async function runWebSmoke(): Promise<void> {
         return fail('the shared analysis query lost backup.created behind player noise')
       }
       console.log('WEB-SMOKE: analysis event query keeps backups visible under 400 joins')
+
+      // ---- alert rules over the panel (#24) ----
+      // The escalation guard is the point: a rule with action 'command' is a
+      // stored console command that runs unattended, so 'settings' alone must
+      // not be enough to create one.
+      // A failed assertion below skips the cleanup at the end, so an earlier
+      // failed run would otherwise poison every later one with username-taken.
+      for (const u of webAuth.listUsers()) {
+        if (u.username === 'setr_t') webAuth.deleteUser(u.id)
+      }
+      const setr = webAuth.createUser('setr_t', 'setrpass', 'user', { [id]: ['view', 'settings'] })
+      r = await post('/api/login', { username: 'setr_t', password: 'setrpass' })
+      const st = ((await r.json()) as { token: string }).token
+
+      r = await get(`/api/servers/${id}/alerts`, st)
+      if (r.status !== 200) return fail('alerts list with settings expected 200, got ' + r.status)
+      r = await get(`/api/servers/${id}/alerts`, nt)
+      if (r.status !== 403) return fail('alerts list without settings expected 403, got ' + r.status)
+
+      // plain alert (no action) - settings is enough
+      r = await post(`/api/servers/${id}/alerts`, { name: 'LowTPS', metric: 'tps', comparison: 'below', threshold: 15 }, st)
+      if (r.status !== 200) return fail('plain rule with settings expected 200, got ' + r.status)
+      const madeRule = (await r.json()) as { id: string; serverId: string; name: string }
+      if (madeRule.serverId !== id) return fail('rule did not take its serverId from the URL')
+
+      // command action - settings alone must NOT be enough
+      r = await post(`/api/servers/${id}/alerts`, { name: 'Evil', metric: 'tps', comparison: 'below', threshold: 5, action: 'command', payload: 'op attacker' }, st)
+      if (r.status !== 403) return fail('command rule with only settings expected 403, got ' + r.status)
+      // ...nor may an existing harmless rule be EDITED into one
+      r = await post(`/api/servers/${id}/alerts`, { id: madeRule.id, name: 'LowTPS', metric: 'tps', comparison: 'below', threshold: 15, action: 'command', payload: 'op attacker' }, st)
+      if (r.status !== 403) return fail('editing a rule into a command needs console, got ' + r.status)
+      if (alertsMod.listRules(id).some((x) => x.action === 'command')) {
+        return fail('a command rule was stored despite the 403')
+      }
+      // power / backup actions demand their own scopes too
+      r = await post(`/api/servers/${id}/alerts`, { name: 'Idle', metric: 'players', comparison: 'below', threshold: 1, action: 'stop' }, st)
+      if (r.status !== 403) return fail('stop action needs power, got ' + r.status)
+      r = await post(`/api/servers/${id}/alerts`, { name: 'Bk', metric: 'tps', comparison: 'below', threshold: 5, action: 'backup' }, st)
+      if (r.status !== 403) return fail('backup action needs backups scope, got ' + r.status)
+      // the owner holds everything, so the same command rule is allowed
+      r = await post(`/api/servers/${id}/alerts`, { name: 'OwnerCmd', metric: 'tps', comparison: 'below', threshold: 5, action: 'command', payload: 'say lag' }, ot)
+      if (r.status !== 200) return fail('owner should be able to create a command rule, got ' + r.status)
+      const ownerRule = (await r.json()) as { id: string }
+
+      // A settings-only admin MUST be able to switch off a dangerous rule they
+      // cannot create - otherwise the guard makes a runaway rule unstoppable by
+      // the person most likely to be looking at it.
+      r = await post(`/api/servers/${id}/alerts`, { id: ownerRule.id, name: 'OwnerCmd', metric: 'tps', comparison: 'below', threshold: 5, action: 'command', payload: 'say lag', enabled: false }, st)
+      if (r.status !== 200) return fail('settings should be able to DISABLE a command rule, got ' + r.status)
+      if (alertsMod.listRules(id).find((x) => x.id === ownerRule.id)?.enabled !== false) {
+        return fail('the rule was not actually disabled')
+      }
+      // ...but must not be able to switch it back on.
+      r = await post(`/api/servers/${id}/alerts`, { id: ownerRule.id, name: 'OwnerCmd', metric: 'tps', comparison: 'below', threshold: 5, action: 'command', payload: 'say lag', enabled: true }, st)
+      if (r.status !== 403) return fail('settings must not re-enable a command rule, got ' + r.status)
+      if (alertsMod.listRules(id).find((x) => x.id === ownerRule.id)?.enabled !== false) {
+        return fail('a refused re-enable still changed the rule')
+      }
+
+      // a rule cannot be aimed at another server by body
+      r = await post(`/api/servers/${id}/alerts`, { name: 'Cross', metric: 'tps', comparison: 'below', threshold: 9, serverId: 'some-other-server' }, st)
+      if (r.status !== 200) return fail('cross-server rule create failed unexpectedly: ' + r.status)
+      if (((await r.json()) as { serverId: string }).serverId !== id) {
+        return fail('a body serverId overrode the URL server')
+      }
+      // Deleting an unknown rule must 404 FROM THE HANDLER. Asserting the error
+      // body matters: an unmatched route also 404s, so a status-only check
+      // passes even when the endpoint does not exist at all - which is exactly
+      // how the first version of this test passed against a dead route.
+      r = await del(`/api/servers/${id}/alerts?ruleId=no-such-rule`, st)
+      if (r.status !== 404) return fail('deleting an unknown rule expected 404, got ' + r.status)
+      if (((await r.json()) as { error: string }).error !== 'rule-not-found') {
+        return fail('the 404 came from the router, not the alerts handler')
+      }
+      r = await del(`/api/servers/${id}/alerts?ruleId=${ownerRule.id}`, st)
+      if (r.status !== 200) return fail('delete expected 200, got ' + r.status)
+      if (alertsMod.listRules(id).some((x) => x.id === ownerRule.id)) return fail('rule not deleted')
+      webAuth.deleteUser(setr.id)
+      console.log('WEB-SMOKE: alert rules OK (action scope escalation blocked, serverId forced from URL)')
       webAuth.deleteUser(nosee.id)
       console.log('WEB-SMOKE: metrics endpoint OK (view-gated, 401/403/404, resolutions honoured)')
     } finally {

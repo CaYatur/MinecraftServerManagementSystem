@@ -10,6 +10,9 @@ import { processManager } from '../core/processManager'
 import { getPlayers } from '../core/players'
 import * as metrics from '../core/metrics'
 import * as events from '../core/events'
+import * as alerts from '../core/alerts'
+import { extraScopesForAction } from '@shared/alerts'
+import type { NewAlertRule } from '@shared/alerts'
 import {
   analyze,
   ANALYSIS_EVENT_LIMIT,
@@ -399,6 +402,78 @@ async function handlePanel(req: IncomingMessage, res: ServerResponse): Promise<v
           to
         })
       })
+    }
+    // ---- alert rules (#24) ----
+    // Base gate is 'settings'. A rule that DOES something when it fires also
+    // demands that action's own scope - a stored auto-running console command
+    // must not be creatable by someone who only holds 'settings'.
+    if (sub === 'alerts' && method === 'GET') {
+      if (!gate('settings')) return
+      return sendJson(res, 200, { rules: alerts.listRules(id) })
+    }
+    if (sub === 'alerts' && method === 'POST') {
+      if (!gate('settings')) return
+      const b = (await readBody(req).catch(() => ({}))) as Partial<NewAlertRule> & { id?: string }
+      // A DISABLED rule cannot execute anything, so it needs no action scope.
+      // This is not a loophole, it is the safety valve: without it, a
+      // settings-only admin who finds a runaway 'restart the server' rule would
+      // be unable to switch it off, because turning it off would demand the
+      // very permission they lack. Turning it back ON is still gated.
+      const willRun = b.enabled !== false
+      for (const need of willRun ? extraScopesForAction(b.action) : []) {
+        if (!gate(need)) return
+      }
+      // serverId comes from the URL, never the body: otherwise 'settings' on
+      // one server would let you write rules that act on another.
+      const input = { ...b, serverId: id } as NewAlertRule
+      if (!input.name || !input.metric) return sendJson(res, 400, { error: 'bad-rule' })
+      try {
+        let saved
+        if (b.id) {
+          const existing = alerts.listRules(id).find((r) => r.id === b.id)
+          if (!existing) return sendJson(res, 404, { error: 'rule-not-found' })
+          // Editing an existing rule INTO an action needs that action's scope
+          // too - already checked above against the incoming body.
+          saved = alerts.updateRule(b.id, { ...input, serverId: id })
+        } else {
+          saved = alerts.createRule(input)
+        }
+        // A rule that can run a command unattended is worth a trail entry -
+        // the rule outlives the session that created it.
+        audit.record({
+          source: 'webpanel',
+          action: b.id ? 'alert.update' : 'alert.create',
+          actor: user.username,
+          ok: true,
+          ip,
+          serverId: id,
+          target: saved.name,
+          detail: saved.action ? `${saved.metric} ${saved.comparison} ${saved.threshold} -> ${saved.action}` : `${saved.metric} ${saved.comparison} ${saved.threshold}`
+        })
+        return sendJson(res, 200, saved)
+      } catch (e) {
+        return sendJson(res, 400, { error: String((e as Error)?.message ?? e) })
+      }
+    }
+    // DELETE, not POST /alerts/delete: the server-route regex above matches a
+    // SINGLE path segment (`(?:\/(\w+))?`), so a nested path silently falls
+    // through to the generic 404 instead of reaching this handler.
+    if (sub === 'alerts' && method === 'DELETE') {
+      if (!gate('settings')) return
+      const ruleId = url.searchParams.get('ruleId') ?? ''
+      const existing = alerts.listRules(id).find((r) => r.id === ruleId)
+      if (!existing) return sendJson(res, 404, { error: 'rule-not-found' })
+      alerts.deleteRule(existing.id)
+      audit.record({
+        source: 'webpanel',
+        action: 'alert.delete',
+        actor: user.username,
+        ok: true,
+        ip,
+        serverId: id,
+        target: existing.name
+      })
+      return sendJson(res, 200, { ok: true })
     }
     if (sub === 'power' && method === 'POST') {
       if (!gate('power')) return
