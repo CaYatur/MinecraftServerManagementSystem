@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   RefreshCw,
@@ -54,6 +54,7 @@ export function ModsView(): JSX.Element {
     // Browse results are filtered by the previous server's loaders, and its
     // detail carries that server's compatibility verdict - both are wrong here.
     setResults(null)
+    detailReq.current++
     setOpenId(null)
     setDetail(null)
     setDetailState('idle')
@@ -107,7 +108,14 @@ export function ModsView(): JSX.Element {
     }
   }
 
+  // Detail requests are raced by the user (open A, collapse, re-open A). A
+  // sequence number is the only thing that identifies "the request I still
+  // want" - the project id does not, because the same card can be re-opened
+  // while its first reply is still in flight.
+  const detailReq = useRef(0)
+
   const closeDetail = (): void => {
+    detailReq.current++
     setOpenId(null)
     setDetail(null)
     setDetailState('idle')
@@ -132,25 +140,18 @@ export function ModsView(): JSX.Element {
       closeDetail()
       return
     }
+    const seq = ++detailReq.current
     setOpenId(hit.projectId)
     setDetail(null)
     setDetailState('loading')
     try {
       const d = await window.msms.modDetail(id, hit.projectId)
-      // The user may have collapsed this card (or opened another) while the
-      // request was in flight - a late reply must not reopen it.
-      setOpenId((cur) => {
-        if (cur === hit.projectId) {
-          setDetail(d)
-          setDetailState('idle')
-        }
-        return cur
-      })
+      if (detailReq.current !== seq) return
+      setDetail(d)
+      setDetailState('idle')
     } catch {
-      setOpenId((cur) => {
-        if (cur === hit.projectId) setDetailState('failed')
-        return cur
-      })
+      if (detailReq.current !== seq) return
+      setDetailState('failed')
     }
   }
 
@@ -340,7 +341,12 @@ export function ModsView(): JSX.Element {
                             {d.compatible ? (
                               <span style={{ color: 'var(--online)' }}>
                                 <CheckCircle2 size={13} style={{ verticalAlign: -2 }} />{' '}
-                                {d.mcVersion
+                                {/* Only claim the MC version when the build
+                                    actually lists it. pickCompatibleVersion is
+                                    deliberately lenient about a version with no
+                                    game_versions at all, and that leniency must
+                                    not turn into a definite "supports MC x.y". */}
+                                {d.mcVersion && d.compatible.gameVersions.includes(d.mcVersion)
                                   ? t('mods.compatibleWith', {
                                       version: d.compatible.versionNumber,
                                       mc: d.mcVersion
