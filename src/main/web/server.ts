@@ -31,10 +31,12 @@ import {
   logout,
   resolveSession,
   can,
+  scopesFor,
   visibleServerIds,
   type AuthUser
 } from './auth'
 import { getPanelHtml } from './panelHtml'
+import { SCOPES } from '@shared/web'
 import type { Scope, WebStatus, WebConfig } from '@shared/web'
 
 let server: Server | null = null
@@ -132,9 +134,11 @@ function serverSummary(user: AuthUser, id: string): Record<string, unknown> | nu
   const s = getServer(id)
   if (!s) return null
   const st = processManager.getStatus(id)
-  const scopes: Scope[] = user.role === 'owner'
-    ? (['view', 'console', 'power', 'players', 'files', 'backups', 'settings', 'store'] as Scope[])
-    : user.perms[id] ?? []
+  // scopesFor, not user.perms: this array is what the panel builds its UI from,
+  // so reading only the DIRECT scopes would show a role-granted user the server
+  // with every tab and control hidden - authorised by the API, locked out by
+  // the interface.
+  const scopes: Scope[] = user.role === 'owner' ? [...SCOPES] : scopesFor(user, id)
   // Live bits the panel shows in the list without a second request.
   const rt = processManager.getRuntime(id)
   return {
