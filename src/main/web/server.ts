@@ -414,7 +414,13 @@ async function handlePanel(req: IncomingMessage, res: ServerResponse): Promise<v
     if (sub === 'alerts' && method === 'POST') {
       if (!gate('settings')) return
       const b = (await readBody(req).catch(() => ({}))) as Partial<NewAlertRule> & { id?: string }
-      for (const need of extraScopesForAction(b.action)) {
+      // A DISABLED rule cannot execute anything, so it needs no action scope.
+      // This is not a loophole, it is the safety valve: without it, a
+      // settings-only admin who finds a runaway 'restart the server' rule would
+      // be unable to switch it off, because turning it off would demand the
+      // very permission they lack. Turning it back ON is still gated.
+      const willRun = b.enabled !== false
+      for (const need of willRun ? extraScopesForAction(b.action) : []) {
         if (!gate(need)) return
       }
       // serverId comes from the URL, never the body: otherwise 'settings' on

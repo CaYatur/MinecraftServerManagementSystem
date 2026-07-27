@@ -3529,6 +3529,21 @@ export async function runWebSmoke(): Promise<void> {
       if (r.status !== 200) return fail('owner should be able to create a command rule, got ' + r.status)
       const ownerRule = (await r.json()) as { id: string }
 
+      // A settings-only admin MUST be able to switch off a dangerous rule they
+      // cannot create - otherwise the guard makes a runaway rule unstoppable by
+      // the person most likely to be looking at it.
+      r = await post(`/api/servers/${id}/alerts`, { id: ownerRule.id, name: 'OwnerCmd', metric: 'tps', comparison: 'below', threshold: 5, action: 'command', payload: 'say lag', enabled: false }, st)
+      if (r.status !== 200) return fail('settings should be able to DISABLE a command rule, got ' + r.status)
+      if (alertsMod.listRules(id).find((x) => x.id === ownerRule.id)?.enabled !== false) {
+        return fail('the rule was not actually disabled')
+      }
+      // ...but must not be able to switch it back on.
+      r = await post(`/api/servers/${id}/alerts`, { id: ownerRule.id, name: 'OwnerCmd', metric: 'tps', comparison: 'below', threshold: 5, action: 'command', payload: 'say lag', enabled: true }, st)
+      if (r.status !== 403) return fail('settings must not re-enable a command rule, got ' + r.status)
+      if (alertsMod.listRules(id).find((x) => x.id === ownerRule.id)?.enabled !== false) {
+        return fail('a refused re-enable still changed the rule')
+      }
+
       // a rule cannot be aimed at another server by body
       r = await post(`/api/servers/${id}/alerts`, { name: 'Cross', metric: 'tps', comparison: 'below', threshold: 9, serverId: 'some-other-server' }, st)
       if (r.status !== 200) return fail('cross-server rule create failed unexpectedly: ' + r.status)
