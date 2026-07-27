@@ -140,6 +140,55 @@ export function folderForLoaders(
   return loaders.some((l) => PLUGIN_LOADERS.includes(l)) ? 'plugins' : 'mods'
 }
 
+// ---- update file-swap (#29) ----
+
+export interface ModSwapPlan {
+  folder: 'plugins' | 'mods'
+  /** What the downloaded jar must be called on disk. */
+  newName: string
+  /**
+   * The old jar to delete afterwards, relative to the server root, or `null`
+   * when the download already replaced it in place.
+   */
+  removeRel: string | null
+}
+
+/** basename without node:path - this module is shared with the renderer. */
+function baseName(rel: string): string {
+  const i = rel.lastIndexOf('/')
+  return i < 0 ? rel : rel.slice(i + 1)
+}
+
+/**
+ * Pure: decide what an update writes and what it removes.
+ *
+ * Extracted from `applyUpdate` so the decision is testable (#29) rather than
+ * only reachable by actually downloading a jar.
+ *
+ * `caseInsensitive` is not a nicety. On Windows and macOS `LuckPerms.jar` and
+ * `luckperms.jar` are the SAME file, so a version that only changes the
+ * filename's case has already been overwritten by the download - and deleting
+ * "the old one" would delete the jar that was just installed, leaving the
+ * server with no plugin at all. A plain string comparison gets this wrong in
+ * exactly the case where the damage is silent.
+ */
+export function planModSwap(
+  oldRel: string,
+  newFilename: string,
+  opts: { caseInsensitive: boolean }
+): ModSwapPlan {
+  const folder: 'plugins' | 'mods' = oldRel.startsWith('mods/') ? 'mods' : 'plugins'
+  const wasDisabled = /\.disabled$/i.test(oldRel)
+  // A disabled jar stays disabled: an update must never silently switch a
+  // plugin the operator turned off back on.
+  const newName = wasDisabled ? newFilename + '.disabled' : newFilename
+  const oldBase = baseName(oldRel)
+  const same = opts.caseInsensitive
+    ? oldBase.toLowerCase() === newName.toLowerCase()
+    : oldBase === newName
+  return { folder, newName, removeRel: same ? null : `${folder}/${oldBase}` }
+}
+
 /** Shrink a version to what the renderer needs. */
 export function summariseVersion(v: MrVersionInfo): ModVersionSummary {
   const pf = v.files.find((f) => f.primary) ?? v.files[0]
