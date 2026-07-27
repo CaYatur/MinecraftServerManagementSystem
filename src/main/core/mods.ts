@@ -20,6 +20,7 @@ import {
   folderForLoaders,
   pickCompatibleVersion,
   planModSwap,
+  safeJarName,
   summariseVersion,
   PLUGIN_LOADERS
 } from '@shared/mods'
@@ -383,7 +384,10 @@ export async function installModrinth(
   const folder = folderForLoaders(v.loaders, fallbackFolder(server.type))
   const dir = join(server.path, folder)
   mkdirSync(dir, { recursive: true })
-  await downloadFile(file.url, join(dir, file.filename), { sha1: file.hashes?.sha1 })
-  log.info(`Mod installed: ${file.filename} (${v.version_number}) -> ${folder}/ for ${id}`)
-  return file.filename
+  // The API supplies this name; it must not be able to steer the write out of
+  // the server folder.
+  const name = safeJarName(file.filename)
+  await downloadFile(file.url, join(dir, name), { sha1: file.hashes?.sha1 })
+  log.info(`Mod installed: ${name} (${v.version_number}) -> ${folder}/ for ${id}`)
+  return name
 }

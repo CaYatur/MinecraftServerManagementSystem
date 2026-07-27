@@ -48,7 +48,13 @@ import {
   isZipPackage,
   type AdoptiumAsset
 } from '@shared/javaProvision'
-import { diffUpdates, folderForLoaders, pickCompatibleVersion, planModSwap } from '@shared/mods'
+import {
+  diffUpdates,
+  folderForLoaders,
+  pickCompatibleVersion,
+  planModSwap,
+  safeJarName
+} from '@shared/mods'
 import type { MrVersion, MrVersionInfo } from '@shared/mods'
 import { computeUptime, clipSessions } from '@shared/uptime'
 import { evaluateRule, normalizeRule, IDLE, type AlertRule, type AlertSample } from '@shared/alerts'
@@ -718,7 +724,26 @@ export async function runModUpdateSmoke(): Promise<void> {
     const modded = planModSwap('mods/fabric-api-0.1.jar', 'fabric-api-0.2.jar', ci)
     if (modded.folder !== 'mods') return fail('mods/ folder lost')
     if (modded.removeRel !== 'mods/fabric-api-0.1.jar') return fail('wrong removal path for mods/')
-    console.log('MODUPDATE-SMOKE: update swap OK (case-collision safe, disabled stays disabled)')
+    // A filename from the API is joined straight onto a server directory, so it
+    // must not be able to steer the write out of it.
+    if (safeJarName('../../../start.bat') !== 'start.bat') return fail('unix traversal not stripped')
+    if (safeJarName('..\\..\\evil.jar') !== 'evil.jar') return fail('windows traversal not stripped')
+    if (safeJarName('plugins/Sub/Thing.jar') !== 'Thing.jar') return fail('directory part not stripped')
+    if (safeJarName('.hidden.jar') !== 'hidden.jar') return fail('leading dots not stripped')
+    for (const bad of ['', '..', '/', '\\', '...']) {
+      let threw = false
+      try {
+        safeJarName(bad)
+      } catch {
+        threw = true
+      }
+      if (!threw) return fail('a name that reduces to nothing must be refused: ' + JSON.stringify(bad))
+    }
+    // ...and the swap plan applies it, so a traversal name cannot reach join().
+    if (planModSwap('plugins/A.jar', '../../evil.jar', ci).newName !== 'evil.jar') {
+      return fail('planModSwap did not sanitise the new filename')
+    }
+    console.log('MODUPDATE-SMOKE: update swap OK (case-collision safe, disabled stays disabled, traversal stripped)')
 
     console.log('MODUPDATE-SMOKE: PASS')
     app.exit(0)

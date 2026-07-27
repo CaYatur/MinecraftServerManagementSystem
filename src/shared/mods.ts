@@ -160,6 +160,23 @@ function baseName(rel: string): string {
 }
 
 /**
+ * Reduce a filename supplied by the Modrinth API to a plain name that cannot
+ * escape the folder it is joined to.
+ *
+ * The API is not the threat model on a good day, but `filename` is attacker-
+ * controlled data as far as this process is concerned: it is joined straight
+ * onto a server directory, and `../../../start.bat` would land outside the
+ * server entirely. Both separators are stripped because a Windows path uses
+ * backslashes and `join` honours them.
+ */
+export function safeJarName(name: string): string {
+  const flat = name.split(/[\\/]/).pop() ?? ''
+  const clean = flat.replace(/^\.+/, '').trim()
+  if (!clean) throw new Error('invalid-filename')
+  return clean
+}
+
+/**
  * Pure: decide what an update writes and what it removes.
  *
  * Extracted from `applyUpdate` so the decision is testable (#29) rather than
@@ -178,10 +195,11 @@ export function planModSwap(
   opts: { caseInsensitive: boolean }
 ): ModSwapPlan {
   const folder: 'plugins' | 'mods' = oldRel.startsWith('mods/') ? 'mods' : 'plugins'
+  const safeNew = safeJarName(newFilename)
   const wasDisabled = /\.disabled$/i.test(oldRel)
   // A disabled jar stays disabled: an update must never silently switch a
   // plugin the operator turned off back on.
-  const newName = wasDisabled ? newFilename + '.disabled' : newFilename
+  const newName = wasDisabled ? safeNew + '.disabled' : safeNew
   const oldBase = baseName(oldRel)
   const same = opts.caseInsensitive
     ? oldBase.toLowerCase() === newName.toLowerCase()
