@@ -8,6 +8,8 @@ import { readFileSync, writeFileSync, existsSync, renameSync } from 'node:fs'
 import { usersPath } from '../paths'
 import { log } from '../logger'
 import type { Scope, WebRole, WebUserView } from '@shared/web'
+import { effectiveScopes } from '@shared/rbac'
+import { listRoles } from './roles'
 
 interface StoredUser {
   id: string
@@ -16,6 +18,8 @@ interface StoredUser {
   hash: string
   role: WebRole
   perms: Record<string, Scope[]>
+  /** Named roles assigned per server (#28); union with `perms`. */
+  roles?: Record<string, string[]>
   mcName?: string
   /** Account-level grant to read the global audit log (personal-data IPs). */
   canAudit?: boolean
@@ -65,6 +69,7 @@ const view = (u: StoredUser): WebUserView => ({
   username: u.username,
   role: u.role,
   perms: u.perms,
+  roles: u.roles ?? {},
   mcName: u.mcName,
   canAudit: u.canAudit ?? false,
   createdAt: u.createdAt
@@ -128,6 +133,23 @@ export function setUserPerms(id: string, perms: Record<string, Scope[]>): void {
   save()
 }
 
+/** Assign named roles per server (#28). Desktop-only, like setUserPerms. */
+export function setUserRoles(id: string, roles: Record<string, string[]>): string {
+  const u = users.find((x) => x.id === id)
+  if (!u) throw new Error('user-not-found')
+  const known = new Set(listRoles().map((r) => r.id))
+  const clean: Record<string, string[]> = {}
+  for (const [serverId, ids] of Object.entries(roles ?? {})) {
+    // Only real roles are stored: a dangling id would sit in the file looking
+    // like a grant, and would silently become one if that id were ever reused.
+    const keep = (Array.isArray(ids) ? ids : []).filter((r) => known.has(r))
+    if (keep.length) clean[serverId] = [...new Set(keep)]
+  }
+  u.roles = clean
+  save()
+  return u.username
+}
+
 /** Grant/revoke the account-level audit-log permission. Returns the username so
  *  the caller (desktop IPC) can attribute the change in the audit log. */
 export function setUserAudit(id: string, canAudit: boolean): string {
@@ -153,6 +175,7 @@ export interface AuthUser {
   username: string
   role: WebRole
   perms: Record<string, Scope[]>
+  roles?: Record<string, string[]>
   mcName?: string
   canAudit?: boolean
 }
@@ -164,7 +187,7 @@ export function login(username: string, password: string): { token: string; user
   sessions.set(token, { userId: u.id, expires: Date.now() + SESSION_TTL })
   return {
     token,
-    user: { id: u.id, username: u.username, role: u.role, perms: u.perms, mcName: u.mcName, canAudit: u.canAudit ?? false }
+    user: { id: u.id, username: u.username, role: u.role, perms: u.perms, roles: u.roles ?? {}, mcName: u.mcName, canAudit: u.canAudit ?? false }
   }
 }
 
@@ -182,22 +205,31 @@ export function resolveSession(token: string | undefined): AuthUser | null {
   }
   const u = users.find((x) => x.id === s.userId)
   if (!u) return null
-  return { id: u.id, username: u.username, role: u.role, perms: u.perms, mcName: u.mcName, canAudit: u.canAudit ?? false }
+  return { id: u.id, username: u.username, role: u.role, perms: u.perms, roles: u.roles ?? {}, mcName: u.mcName, canAudit: u.canAudit ?? false }
 }
 
 /** The core authorization check — every HTTP route calls this. */
 export function can(user: AuthUser, serverId: string, scope: Scope): boolean {
   if (user.role === 'owner') return true
-  const scopes = user.perms[serverId]
-  return !!scopes && scopes.includes(scope)
+  return scopesFor(user, serverId).includes(scope)
+}
+
+/**
+ * Everything the user may do on one server: direct scopes UNION the scopes of
+ * every role assigned there (#28). A role that no longer exists contributes
+ * nothing, so deleting a role really does revoke what it granted.
+ */
+export function scopesFor(user: AuthUser, serverId: string): Scope[] {
+  return effectiveScopes(user.perms[serverId], user.roles?.[serverId], listRoles())
 }
 
 /** Server ids the user can at least view. */
 export function visibleServerIds(user: AuthUser): string[] | 'all' {
   if (user.role === 'owner') return 'all'
-  return Object.entries(user.perms)
-    .filter(([, scopes]) => scopes.length > 0)
-    .map(([id]) => id)
+  // A server reached only through a role must still be listed, or the user
+  // holds permissions on something they cannot see.
+  const ids = new Set([...Object.keys(user.perms), ...Object.keys(user.roles ?? {})])
+  return [...ids].filter((id) => scopesFor(user, id).length > 0)
 }
 
 export function clearSessions(): void {

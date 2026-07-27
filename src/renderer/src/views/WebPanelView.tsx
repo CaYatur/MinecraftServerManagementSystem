@@ -3,6 +3,8 @@ import { useTranslation } from 'react-i18next'
 import { Globe, Check, Trash2, Plus, KeyRound, ShieldCheck, ExternalLink, X } from 'lucide-react'
 import { useStore } from '../store'
 import { SCOPES } from '@shared/web'
+import { effectiveScopes } from '@shared/rbac'
+import type { RoleDef } from '@shared/rbac'
 import type { Scope, WebRole, WebStatus, WebUserView } from '@shared/web'
 
 export function WebPanelView(): JSX.Element {
@@ -25,6 +27,10 @@ export function WebPanelView(): JSX.Element {
   const [permUser, setPermUser] = useState<WebUserView | null>(null)
   const [permDraft, setPermDraft] = useState<Record<string, Scope[]>>({})
   const [auditDraft, setAuditDraft] = useState(false)
+  const [roleDraft, setRoleDraft] = useState<Record<string, string[]>>({})
+  const [roles, setRoles] = useState<RoleDef[]>([])
+  const [newRoleName, setNewRoleName] = useState('')
+  const [newRoleScopes, setNewRoleScopes] = useState<Scope[]>(['view'])
   const [pwUser, setPwUser] = useState<WebUserView | null>(null)
   const [pwVal, setPwVal] = useState('')
 
@@ -37,6 +43,30 @@ export function WebPanelView(): JSX.Element {
     setSitePort(st.site.port)
     setBindLan(st.bindLan)
     setUsers(await window.msms.listWebUsers())
+    setRoles(await window.msms.listRoles())
+  }
+
+  const addRole = async (): Promise<void> => {
+    const name = newRoleName.trim()
+    if (!name) return
+    try {
+      await window.msms.upsertRole({ name, scopes: newRoleScopes })
+      setNewRoleName('')
+      setNewRoleScopes(['view'])
+      toast('success', 'web.saved')
+      void refresh()
+    } catch (e) {
+      toast('error', String((e as Error)?.message ?? e))
+    }
+  }
+  const removeRole = async (roleId: string): Promise<void> => {
+    try {
+      await window.msms.deleteRole(roleId)
+      toast('success', 'web.saved')
+      void refresh()
+    } catch (e) {
+      toast('error', String((e as Error)?.message ?? e))
+    }
   }
 
   useEffect(() => {
@@ -83,7 +113,16 @@ export function WebPanelView(): JSX.Element {
   const openPerms = (u: WebUserView): void => {
     setPermUser(u)
     setPermDraft(JSON.parse(JSON.stringify(u.perms || {})))
+    setRoleDraft(JSON.parse(JSON.stringify(u.roles || {})))
     setAuditDraft(!!u.canAudit)
+  }
+  const toggleRole = (serverId: string, roleId: string): void => {
+    setRoleDraft((prev) => {
+      const cur = new Set(prev[serverId] ?? [])
+      if (cur.has(roleId)) cur.delete(roleId)
+      else cur.add(roleId)
+      return { ...prev, [serverId]: [...cur] }
+    })
   }
   const toggleScope = (serverId: string, scope: Scope): void => {
     setPermDraft((prev) => {
@@ -98,6 +137,9 @@ export function WebPanelView(): JSX.Element {
     const clean: Record<string, Scope[]> = {}
     for (const [k, v] of Object.entries(permDraft)) if (v.length) clean[k] = v
     await window.msms.setWebUserPerms(permUser.id, clean)
+    const cleanRoles: Record<string, string[]> = {}
+    for (const [k, v] of Object.entries(roleDraft)) if (v.length) cleanRoles[k] = v
+    await window.msms.setWebUserRoles(permUser.id, cleanRoles)
     if (auditDraft !== !!permUser.canAudit) await window.msms.setWebUserAudit(permUser.id, auditDraft)
     setPermUser(null)
     toast('success', 'web.saved')
@@ -250,6 +292,62 @@ export function WebPanelView(): JSX.Element {
         )}
       </div>
 
+      {/* Role definitions (#28). Desktop-only, like per-user permissions: a web
+          route would let a settings-scoped user widen their own access. */}
+      <div className="section-title">
+        <ShieldCheck size={14} style={{ verticalAlign: -2, marginRight: 6 }} />
+        {t('web.roles')}
+      </div>
+      <div className="panel">
+        <p className="hint" style={{ marginTop: 0 }}>{t('web.rolesHint')}</p>
+        <div className="row wrap" style={{ gap: 6, marginBottom: 10 }}>
+          {roles.map((rd) => (
+            <span key={rd.id} className="badge" style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+              {rd.name}
+              <span className="dim">{rd.scopes.length}</span>
+              {!rd.builtin && (
+                <button
+                  className="btn ghost sm"
+                  style={{ padding: 0, lineHeight: 1 }}
+                  title={t('common.delete')}
+                  onClick={() => void removeRole(rd.id)}
+                >
+                  <X size={11} />
+                </button>
+              )}
+            </span>
+          ))}
+        </div>
+        <div className="row wrap" style={{ gap: 8, alignItems: 'center' }}>
+          <input
+            className="input"
+            style={{ flex: 1, minWidth: 140 }}
+            placeholder={t('web.newRole')}
+            value={newRoleName}
+            onChange={(e) => setNewRoleName(e.target.value)}
+          />
+          <button className="btn primary sm" onClick={() => void addRole()} disabled={!newRoleName.trim()}>
+            <Plus size={13} /> {t('common.add')}
+          </button>
+        </div>
+        <div className="row wrap" style={{ gap: 10, marginTop: 8 }}>
+          {SCOPES.map((sc) => (
+            <label key={sc} className="switch" style={{ fontSize: 12 }}>
+              <input
+                type="checkbox"
+                checked={newRoleScopes.includes(sc)}
+                onChange={() =>
+                  setNewRoleScopes((prev) =>
+                    prev.includes(sc) ? prev.filter((x) => x !== sc) : [...prev, sc]
+                  )
+                }
+              />
+              {t(`web.scope.${sc}`)}
+            </label>
+          ))}
+        </div>
+      </div>
+
       {permUser && (
         <div className="modal-backdrop" onClick={() => setPermUser(null)}>
           <div className="modal" style={{ width: 'min(680px,94vw)' }} onClick={(e) => e.stopPropagation()}>
@@ -269,6 +367,24 @@ export function WebPanelView(): JSX.Element {
               {servers.map((s) => (
                 <div key={s.id} className="panel" style={{ padding: 12, marginBottom: 8 }}>
                   <div className="mod-name" style={{ marginBottom: 8 }}>{s.name}</div>
+                  {roles.length > 0 && (
+                    <>
+                      <div className="field-label" style={{ fontSize: 11 }}>{t('web.roles')}</div>
+                      <div className="row wrap" style={{ gap: 10, marginBottom: 8 }}>
+                        {roles.map((rd) => (
+                          <label key={rd.id} className="switch" style={{ fontSize: 12 }}>
+                            <input
+                              type="checkbox"
+                              checked={(roleDraft[s.id] ?? []).includes(rd.id)}
+                              onChange={() => toggleRole(s.id, rd.id)}
+                            />
+                            {rd.name}
+                          </label>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                  <div className="field-label" style={{ fontSize: 11 }}>{t('web.directScopes')}</div>
                   <div className="row wrap" style={{ gap: 10 }}>
                     {SCOPES.map((sc) => (
                       <label key={sc} className="switch" style={{ fontSize: 12 }}>
@@ -280,6 +396,14 @@ export function WebPanelView(): JSX.Element {
                         {t(`web.scope.${sc}`)}
                       </label>
                     ))}
+                  </div>
+                  {/* What the two actually add up to - a role's contribution is
+                      invisible otherwise, and that is where mistakes hide. */}
+                  <div className="dim" style={{ fontSize: 11, marginTop: 6 }}>
+                    {t('web.effective')}:{' '}
+                    {effectiveScopes(permDraft[s.id], roleDraft[s.id], roles)
+                      .map((sc) => t(`web.scope.${sc}`))
+                      .join(', ') || '—'}
                   </div>
                 </div>
               ))}

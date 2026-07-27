@@ -43,6 +43,8 @@ export interface ListenerStatus {
 
 /** User as exposed to the desktop UI (never includes the password hash). */
 export interface WebUserView {
+  /** Named roles assigned per server (#28). */
+  roles?: Record<string, string[]>
   id: string
   username: string
   role: WebRole

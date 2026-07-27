@@ -55,6 +55,7 @@ import type {
   EconomyCategory
 } from './web'
 import type { CrateAnimation } from './crate'
+import type { RoleDef } from './rbac'
 
 /** request/response channels (renderer -> main via invoke). */
 export const IPC = {
@@ -172,6 +173,10 @@ export const IPC = {
   webUserCreate: 'web:user-create',
   webUserDelete: 'web:user-delete',
   webUserPerms: 'web:user-perms',
+  webUserRoles: 'web:user-roles',
+  rbacList: 'rbac:list-roles',
+  rbacUpsert: 'rbac:upsert-role',
+  rbacDelete: 'rbac:delete-role',
   webUserAudit: 'web:user-audit',
   webUserPassword: 'web:user-password',
   webUserMc: 'web:user-mc',
@@ -370,6 +375,10 @@ export interface MsmsApi {
   }): Promise<WebUserView>
   deleteWebUser(id: string): Promise<void>
   setWebUserPerms(id: string, perms: Record<string, Scope[]>): Promise<void>
+  setWebUserRoles(id: string, roles: Record<string, string[]>): Promise<void>
+  listRoles(): Promise<RoleDef[]>
+  upsertRole(role: Partial<RoleDef> & { id?: string }): Promise<RoleDef>
+  deleteRole(roleId: string): Promise<void>
   /** Grant/revoke the account-level audit-log permission (owner-set, desktop-only). */
   setWebUserAudit(id: string, canAudit: boolean): Promise<void>
   setWebUserPassword(id: string, password: string): Promise<void>

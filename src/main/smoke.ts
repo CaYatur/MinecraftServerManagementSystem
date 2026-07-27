@@ -12,9 +12,11 @@ import * as webPlayerAuth from './web/playerAuth'
 import * as economy from './store/economy'
 import * as siteMod from './web/site'
 import { pickSiteLang } from './web/siteLang'
-import type { LedgerEntry, Product } from '@shared/web'
+import type { LedgerEntry, Product, Scope } from '@shared/web'
 import { categoryName, filterLedger, ledgerSummary } from '@shared/economy'
 import { ANALYSIS_EVENT_LIMIT, ANALYSIS_EVENT_TYPES } from '@shared/analysis'
+import { effectiveScopes, normalizeScopes } from '@shared/rbac'
+import * as rolesMod from './web/roles'
 import {
   CRATE_ANIMATIONS,
   DEFAULT_CRATE_ANIMATION,
@@ -3630,6 +3632,70 @@ export async function runWebSmoke(): Promise<void> {
       if (alertsMod.listRules(id).some((x) => x.id === ownerRule.id)) return fail('rule not deleted')
       webAuth.deleteUser(setr.id)
       console.log('WEB-SMOKE: alert rules OK (action scope escalation blocked, serverId forced from URL)')
+
+      // ---- named roles (#28) ----
+      // Pure union first: roles only ever ADD, and an unknown role adds nothing.
+      const defs = [
+        { id: 'r-mod', name: 'Mod', scopes: ['view', 'console'] as Scope[] },
+        { id: 'r-files', name: 'Files', scopes: ['files'] as Scope[] }
+      ]
+      const eff = effectiveScopes(['view'], ['r-mod', 'r-files'], defs).sort()
+      if (eff.join() !== 'console,files,view') return fail('role union wrong: ' + eff.join())
+      if (effectiveScopes(['view'], ['r-mod', 'r-mod'], defs).sort().join() !== 'console,view') {
+        return fail('a repeated role should not duplicate scopes')
+      }
+      // A deleted role must revoke what it granted, not linger.
+      if (effectiveScopes(['view'], ['r-gone'], defs).join() !== 'view') {
+        return fail('an unknown role id must contribute nothing')
+      }
+      if (effectiveScopes(undefined, undefined, defs).length !== 0) {
+        return fail('no perms and no roles should be no scopes')
+      }
+      // Junk scopes never survive normalisation into a grant.
+      if (normalizeScopes(['view', 'notascope', 42, null]).join() !== 'view') {
+        return fail('invalid scopes were not dropped')
+      }
+
+      // End to end through a real user + the HTTP gate.
+      for (const u of webAuth.listUsers()) if (u.username === 'role_t') webAuth.deleteUser(u.id)
+      rolesMod._reset()
+      const rl = rolesMod.upsertRole({ name: 'Console only', scopes: ['view', 'console'] })
+      const roleUser = webAuth.createUser('role_t', 'rolepass', 'user', {})
+      webAuth.setUserRoles(roleUser.id, { [id]: [rl.id] })
+      r = await post('/api/login', { username: 'role_t', password: 'rolepass' })
+      const rt = ((await r.json()) as { token: string }).token
+      // The server is visible even though `perms` is empty - the grant is the role.
+      r = await get('/api/servers', rt)
+      const visible = ((await r.json()) as { servers: { id: string }[] }).servers
+      if (!visible.some((x) => x.id === id)) return fail('a role-only grant did not make the server visible')
+      r = await post(`/api/servers/${id}/command`, { command: 'say hi' }, rt)
+      if (r.status === 403) return fail('a role granting console was refused')
+      // ...and a scope the role does NOT carry is still refused.
+      r = await post(`/api/servers/${id}/power`, { action: 'stop' }, rt)
+      if (r.status !== 403) return fail('a role must not grant power it does not list, got ' + r.status)
+      // Deleting the role revokes the access immediately.
+      rolesMod.deleteRole(rl.id)
+      r = await post(`/api/servers/${id}/command`, { command: 'say hi' }, rt)
+      if (r.status !== 403) return fail('deleting a role did not revoke it, got ' + r.status)
+      // Built-ins are not editable or deletable, and cannot be shadowed.
+      let refused = false
+      try {
+        rolesMod.upsertRole({ id: 'moderator', name: 'Pwn', scopes: ['view', 'console', 'power', 'files'] })
+      } catch {
+        refused = true
+      }
+      if (!refused) return fail('a built-in role must not be redefinable')
+      if (!rolesMod.listRoles().some((x) => x.id === 'moderator' && x.scopes.length === 3)) {
+        return fail('the built-in moderator role was altered')
+      }
+      // Assigning a role id that does not exist must not be stored as a grant.
+      webAuth.setUserRoles(roleUser.id, { [id]: ['nope'] })
+      if (webAuth.listUsers().find((x) => x.id === roleUser.id)?.roles?.[id]) {
+        return fail('a dangling role id was stored')
+      }
+      webAuth.deleteUser(roleUser.id)
+      rolesMod._reset()
+      console.log('WEB-SMOKE: named roles OK (union grants, delete revokes, built-ins immutable)')
       webAuth.deleteUser(nosee.id)
       console.log('WEB-SMOKE: metrics endpoint OK (view-gated, 401/403/404, resolutions honoured)')
     } finally {

@@ -30,6 +30,7 @@ import { startWebServer, stopWebServer, getWebStatus } from '../web/server'
 import * as auth from '../web/auth'
 import * as economy from '../store/economy'
 import * as site from '../web/site'
+import * as roles from '../web/roles'
 import { log } from '../logger'
 import type {
   WebConfig,
@@ -52,6 +53,7 @@ import type {
   WorldDimension
 } from '@shared/types'
 import type { CreateServerOptions } from '@shared/versions'
+import type { RoleDef } from '@shared/rbac'
 
 function broadcast(channel: string, payload: unknown): void {
   for (const w of BrowserWindow.getAllWindows()) {
