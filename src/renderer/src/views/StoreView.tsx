@@ -125,9 +125,18 @@ export function StoreView(): JSX.Element {
     void load()
   }
   const saveCrateAnimation = async (animation: CrateAnimation): Promise<void> => {
+    const previous = crateAnim
     setCrateAnim(animation)
-    await window.msms.setCrateAnimation(id, animation)
-    toast('success', 'store.saved')
+    try {
+      // Trust what was actually stored, not what was asked for - the main side
+      // coerces an unknown value, and the picker must not claim otherwise.
+      const saved = await window.msms.setCrateAnimation(id, animation)
+      setCrateAnim(saved)
+      toast('success', 'store.saved')
+    } catch (e) {
+      setCrateAnim(previous)
+      toast('error', String((e as Error)?.message ?? e))
+    }
   }
   const addCategory = async (): Promise<void> => {
     const name = newCat.trim()
