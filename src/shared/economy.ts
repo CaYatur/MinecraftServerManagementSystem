@@ -1,4 +1,24 @@
-import type { LedgerEntry } from './web'
+import type { EconomyCategory, LedgerEntry } from './web'
+
+/**
+ * Seeded on first use so the feature is usable without configuration. These are
+ * economy reasons, NOT store products (#13) - a payout for winning an event has
+ * no product behind it, and inventing one just to label the payout is what this
+ * separation exists to avoid. Fully editable afterwards.
+ */
+export const DEFAULT_CATEGORIES: EconomyCategory[] = [
+  { id: 'reward', name: 'Reward', color: '#4ade80' },
+  { id: 'event', name: 'Event payout', color: '#60a5fa' },
+  { id: 'refund', name: 'Refund', color: '#fbbf24' },
+  { id: 'penalty', name: 'Penalty', color: '#f87171' },
+  { id: 'correction', name: 'Correction', color: '#a78bfa' }
+]
+
+/** Category name for display, falling back to the raw id for a deleted one. */
+export function categoryName(categories: EconomyCategory[], id?: string): string | undefined {
+  if (!id) return undefined
+  return categories.find((c) => c.id === id)?.name ?? id
+}
 
 /**
  * Pure economy helpers shared by the desktop Store view and the web panel, so
@@ -12,6 +32,8 @@ export interface LedgerFilter {
   text?: string
   /** `undefined` / 'all' = every kind. */
   kind?: LedgerKind | 'all'
+  /** `undefined` / 'all' = every category; 'none' = entries with no category. */
+  category?: string
 }
 
 /**
@@ -25,8 +47,12 @@ export interface LedgerFilter {
 export function filterLedger(entries: LedgerEntry[], f: LedgerFilter = {}): LedgerEntry[] {
   const q = (f.text ?? '').trim().toLowerCase()
   const kind = f.kind && f.kind !== 'all' ? f.kind : undefined
+  const cat = f.category && f.category !== 'all' ? f.category : undefined
   return entries.filter((e) => {
     if (kind && e.kind !== kind) return false
+    // 'none' is a real choice: purchases and pre-category entries carry no
+    // category, and "show me what was never labelled" is how you find them.
+    if (cat === 'none' ? e.category != null : cat != null && e.category !== cat) return false
     if (!q) return true
     return (
       e.mcName.toLowerCase().includes(q) ||

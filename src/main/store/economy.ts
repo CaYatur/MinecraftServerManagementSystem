@@ -4,9 +4,11 @@ import { storePath } from '../paths'
 import { processManager } from '../core/processManager'
 import * as rcon from '../core/rcon'
 import { log } from '../logger'
+import { DEFAULT_CATEGORIES } from '@shared/economy'
 import type {
   BuyResult,
   CrateReward,
+  EconomyCategory,
   LedgerEntry,
   Product,
   ProductPublic,
@@ -18,6 +20,8 @@ import type {
 interface StoreState {
   currency: string
   products: Product[]
+  /** Economy categories - independent of `products` (#13). */
+  categories: EconomyCategory[]
   balances: Record<string, number>
   txns: Txn[]
   ledger: LedgerEntry[]
@@ -48,6 +52,7 @@ function getStore(serverId: string): StoreState {
     stores[serverId] = {
       currency: 'Coins',
       products: [],
+      categories: DEFAULT_CATEGORIES.map((c) => ({ ...c })),
       balances: {},
       txns: [],
       ledger: [],
@@ -56,6 +61,11 @@ function getStore(serverId: string): StoreState {
   }
   // migrate older files that predate the ledger
   if (!stores[serverId].ledger) stores[serverId].ledger = []
+  // ...and files that predate economy categories. Seeded once; an operator who
+  // deletes them all keeps an empty array rather than having them come back.
+  if (!Array.isArray(stores[serverId].categories)) {
+    stores[serverId].categories = DEFAULT_CATEGORIES.map((c) => ({ ...c }))
+  }
   return stores[serverId]
 }
 
@@ -233,7 +243,8 @@ export function addBalance(
   mcName: string,
   amount: number,
   by = 'desktop',
-  reason = ''
+  reason = '',
+  category?: string
 ): number {
   if (!MC_NAME.test(mcName)) throw new Error('invalid-mcname')
   const st = getStore(serverId)
@@ -246,7 +257,8 @@ export function addBalance(
     balanceAfter: st.balances[mcName],
     reason,
     by,
-    kind: delta < 0 ? 'remove' : 'grant'
+    kind: delta < 0 ? 'remove' : 'grant',
+    ...cat(st, category)
   })
   save()
   return st.balances[mcName]
@@ -258,7 +270,8 @@ export function setBalance(
   mcName: string,
   amount: number,
   by = 'desktop',
-  reason = ''
+  reason = '',
+  category?: string
 ): number {
   if (!MC_NAME.test(mcName)) throw new Error('invalid-mcname')
   const st = getStore(serverId)
@@ -270,10 +283,53 @@ export function setBalance(
     balanceAfter: st.balances[mcName],
     reason,
     by,
-    kind: 'set'
+    kind: 'set',
+    ...cat(st, category)
   })
   save()
   return st.balances[mcName]
+}
+
+// ---- economy categories (#13) ----
+
+/**
+ * Only a category that actually exists is recorded. A ledger entry is an audit
+ * record: storing a free-string category the renderer invented would let the
+ * log claim a label nothing on the server defines.
+ */
+function cat(st: StoreState, category?: string): { category?: string } {
+  if (!category) return {}
+  return st.categories.some((c) => c.id === category) ? { category } : {}
+}
+
+export function listCategories(serverId: string): EconomyCategory[] {
+  return getStore(serverId).categories
+}
+
+export function upsertCategory(serverId: string, input: EconomyCategory): EconomyCategory {
+  const st = getStore(serverId)
+  const clean: EconomyCategory = {
+    id: input.id || randomUUID(),
+    name: (input.name || '').trim() || 'Category',
+    ...(input.color ? { color: input.color } : {})
+  }
+  const i = st.categories.findIndex((c) => c.id === clean.id)
+  if (i >= 0) st.categories[i] = clean
+  else st.categories.push(clean)
+  save()
+  return clean
+}
+
+/**
+ * Deleting a category does NOT rewrite history. Past ledger entries keep the
+ * id they were recorded with - editing an audit trail to tidy up a dropdown is
+ * exactly what an audit trail must never do. The UI falls back to showing the
+ * raw id for an entry whose category is gone.
+ */
+export function deleteCategory(serverId: string, categoryId: string): void {
+  const st = getStore(serverId)
+  st.categories = st.categories.filter((c) => c.id !== categoryId)
+  save()
 }
 
 export function listBalances(serverId: string): Record<string, number> {

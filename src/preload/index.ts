@@ -130,10 +130,14 @@ const api: MsmsApi = {
   setStoreCurrency: (id, currency) => ipcRenderer.invoke(IPC.storeCurrency, id, currency),
   upsertStoreProduct: (id, product) => ipcRenderer.invoke(IPC.storeUpsert, id, product),
   deleteStoreProduct: (id, productId) => ipcRenderer.invoke(IPC.storeDelete, id, productId),
-  addStoreBalance: (id, mcName, amount, reason) =>
-    ipcRenderer.invoke(IPC.storeAddBalance, id, mcName, amount, reason),
-  setStoreBalance: (id, mcName, amount, reason) =>
-    ipcRenderer.invoke(IPC.storeSetBalance, id, mcName, amount, reason),
+  addStoreBalance: (id, mcName, amount, reason, category) =>
+    ipcRenderer.invoke(IPC.storeAddBalance, id, mcName, amount, reason, category),
+  setStoreBalance: (id, mcName, amount, reason, category) =>
+    ipcRenderer.invoke(IPC.storeSetBalance, id, mcName, amount, reason, category),
+  upsertEconomyCategory: (id, category) =>
+    ipcRenderer.invoke(IPC.economyUpsertCategory, id, category),
+  deleteEconomyCategory: (id, categoryId) =>
+    ipcRenderer.invoke(IPC.economyDeleteCategory, id, categoryId),
   getStoreLedger: (id, mcName) => ipcRenderer.invoke(IPC.storeLedger, id, mcName),
 
   getSiteConfig: () => ipcRenderer.invoke(IPC.siteGet),

@@ -51,7 +51,8 @@ import type {
   StoreConfig,
   SiteConfig,
   SitePost,
-  LedgerEntry
+  LedgerEntry,
+  EconomyCategory
 } from './web'
 
 /** request/response channels (renderer -> main via invoke). */
@@ -181,6 +182,8 @@ export const IPC = {
   storeAddBalance: 'store:add-balance',
   storeSetBalance: 'store:set-balance',
   storeLedger: 'store:ledger',
+  economyUpsertCategory: 'economy:upsert-category',
+  economyDeleteCategory: 'economy:delete-category',
 
   siteGet: 'site:get',
   siteSet: 'site:set',
@@ -370,12 +373,30 @@ export interface MsmsApi {
   setWebUserPassword(id: string, password: string): Promise<void>
   setWebUserMc(id: string, mcName: string): Promise<void>
 
-  getStore(id: string): Promise<StoreConfig & { balances: Record<string, number> }>
+  getStore(
+    id: string
+  ): Promise<
+    StoreConfig & { balances: Record<string, number>; categories: EconomyCategory[] }
+  >
   setStoreCurrency(id: string, currency: string): Promise<void>
   upsertStoreProduct(id: string, product: Product): Promise<Product>
   deleteStoreProduct(id: string, productId: string): Promise<void>
-  addStoreBalance(id: string, mcName: string, amount: number, reason?: string): Promise<number>
-  setStoreBalance(id: string, mcName: string, amount: number, reason?: string): Promise<number>
+  addStoreBalance(
+    id: string,
+    mcName: string,
+    amount: number,
+    reason?: string,
+    category?: string
+  ): Promise<number>
+  setStoreBalance(
+    id: string,
+    mcName: string,
+    amount: number,
+    reason?: string,
+    category?: string
+  ): Promise<number>
+  upsertEconomyCategory(id: string, category: EconomyCategory): Promise<EconomyCategory>
+  deleteEconomyCategory(id: string, categoryId: string): Promise<void>
   getStoreLedger(id: string, mcName?: string): Promise<LedgerEntry[]>
 
   getSiteConfig(): Promise<SiteConfig>

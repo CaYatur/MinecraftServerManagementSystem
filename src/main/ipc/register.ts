@@ -31,7 +31,15 @@ import * as auth from '../web/auth'
 import * as economy from '../store/economy'
 import * as site from '../web/site'
 import { log } from '../logger'
-import type { WebConfig, WebRole, Scope, Product, SiteConfig, SitePost } from '@shared/web'
+import type {
+  WebConfig,
+  WebRole,
+  Scope,
+  Product,
+  SiteConfig,
+  SitePost,
+  EconomyCategory
+} from '@shared/web'
 import type {
   Bootstrap,
   Language,
@@ -401,16 +409,27 @@ export function registerIpc(): void {
   // --- store / economy (trusted desktop admin) ---
   H(IPC.storeGet, (_e, id: string) => ({
     ...economy.getStoreConfig(id),
-    balances: economy.listBalances(id)
+    balances: economy.listBalances(id),
+    categories: economy.listCategories(id)
   }))
+  H(IPC.economyUpsertCategory, (_e, id: string, category: EconomyCategory) =>
+    economy.upsertCategory(id, category)
+  )
+  H(IPC.economyDeleteCategory, (_e, id: string, categoryId: string) =>
+    economy.deleteCategory(id, categoryId)
+  )
   H(IPC.storeCurrency, (_e, id: string, currency: string) => economy.setCurrency(id, currency))
   H(IPC.storeUpsert, (_e, id: string, product: Product) => economy.upsertProduct(id, product))
   H(IPC.storeDelete, (_e, id: string, productId: string) => economy.deleteProduct(id, productId))
-  H(IPC.storeAddBalance, (_e, id: string, mcName: string, amount: number, reason?: string) =>
-    economy.addBalance(id, mcName, amount, 'desktop', reason ?? '')
+  H(
+    IPC.storeAddBalance,
+    (_e, id: string, mcName: string, amount: number, reason?: string, category?: string) =>
+      economy.addBalance(id, mcName, amount, 'desktop', reason ?? '', category)
   )
-  H(IPC.storeSetBalance, (_e, id: string, mcName: string, amount: number, reason?: string) =>
-    economy.setBalance(id, mcName, amount, 'desktop', reason ?? '')
+  H(
+    IPC.storeSetBalance,
+    (_e, id: string, mcName: string, amount: number, reason?: string, category?: string) =>
+      economy.setBalance(id, mcName, amount, 'desktop', reason ?? '', category)
   )
   H(IPC.storeLedger, (_e, id: string, mcName?: string) => economy.getLedger(id, mcName))
 
