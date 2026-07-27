@@ -441,6 +441,20 @@ These allow current server state and historical activity to be presented separat
 
 ---
 
+### 🌉 MSMS Bridge (protocol ready, plugin pending)
+
+TPS read over RCON is an approximation, and the console can never report MSPT or player positions at all. The **MSMS Bridge** closes that gap with an in-server plugin that prints marked telemetry lines to the server's **standard output** — a stream MSMS already reads.
+
+That transport choice is the point: no extra port, no socket, no firewall rule, no credentials. It works the same for a LAN server, a remote box behind NAT, and a server with every port closed.
+
+The app side is implemented: protocol v1 parsing, and a freshness rule that falls back to RCON the moment the bridge goes quiet — so a crashed plugin cannot leave a frozen TPS on screen.
+
+⚠️ **The Java plugin itself does not exist yet**, so nothing currently emits these lines on a real server. Tracked in #19–#21.
+
+📖 **[Protocol documentation → `docs/bridge-protocol.md`](docs/bridge-protocol.md)**
+
+---
+
 ### 🚨 Alert Rules
 
 The project includes a dedicated alert engine and Alert Rules interface.
@@ -460,17 +474,19 @@ Exact available rule types may evolve as the project develops.
 
 ### 📜 Audit, History & Timeline
 
-MSMS includes dedicated audit/history/event components.
+MSMS keeps three separate histories, on purpose:
 
-These are intended to improve traceability by separating operational history from the live console.
+| | Records | Scope |
+|---|---|---|
+| **Audit trail** | who did what, from where, and whether it worked | **global** — survives server deletion |
+| **Event log** | typed game and lifecycle facts | per-server |
+| **Metrics / History** | CPU, RAM, TPS and player samples over time | per-server |
 
-Related project modules/views include:
+The audit trail attributes every administrative and security action to an actor — a web username, a player name, or the local operator — and records **failures as well as successes**, so denied logins are visible rather than silently dropped. It is pruned by age and volume only (180 days / 20 000 entries) and is never cleared by deleting a server.
 
-- audit core
-- event handling
-- audit view
-- history view
-- timeline view
+Reading it is a privilege of its own: the web endpoint is gated on owner or an account-level `canAudit` flag, because the log is global and contains IP addresses.
+
+📖 **[Full documentation → `docs/audit-trail.md`](docs/audit-trail.md)**
 
 This becomes increasingly important when a server has multiple administrative actions, scheduled jobs and repeated maintenance events.
 
