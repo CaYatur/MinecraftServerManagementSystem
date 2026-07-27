@@ -124,6 +124,13 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);
 .reel{display:flex;gap:8px;padding:8px;transition:transform 4s cubic-bezier(.12,.7,.2,1)}
 .reel-item{min-width:120px;height:76px;border-radius:9px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;background:var(--elev);border:1px solid var(--border);font-size:13px;font-weight:650;padding:6px;text-align:center}
 .reel-item img{width:28px;height:28px;image-rendering:pixelated}
+.findings{display:flex;flex-direction:column;gap:8px;margin:10px 0}
+.finding{border:1px solid var(--border);border-left-width:3px;border-radius:9px;padding:9px 11px;background:var(--elev)}
+.finding.info{border-left-color:#60a5fa}
+.finding.warn{border-left-color:#fbbf24}
+.finding.error{border-left-color:#f87171}
+.finding .fw{font-weight:700;font-size:13px}
+.finding .ff{font-size:12px;opacity:.78;margin-top:3px}
 .reel-marker{position:absolute;top:0;left:50%;width:2px;height:100%;background:var(--accent);box-shadow:0 0 12px var(--accent)}
 /* vertical slot machine */
 .reel-mask.anim-spin{height:170px}
@@ -272,6 +279,7 @@ h2{margin:8px 0;font-weight:800;letter-spacing:-.4px}
         <button class="btn sm" onclick="setRange(604800000,this)">7 d</button>
       </div>
       <div id="dStats" class="stats"></div>
+      <div id="dFindings" class="findings"></div>
       <div id="dCharts" class="charts"></div>
     </div>
     <div id="panelTimeline" class="hidden"><div class="card tight" id="dEvents"></div></div>
@@ -434,7 +442,44 @@ function loadStats(){
       chartCard('CPU',(s.cpuAvg!=null?s.cpuAvg+'% avg · '+s.cpuMax+'% peak':'—'),pts,function(p){return p.cpu},'#dc2727',100)+
       chartCard('Memory',(s.rssAvg!=null?s.rssAvg+' MB avg · '+s.rssMax+' MB peak':'—'),pts,function(p){return p.rss},'#60a5fa',0)+
       chartCard('Players',(s.playersMax!=null?s.playersMax+' peak':'—'),pts,function(p){return p.players},'#fbbf24',0)
-    : '<div class="dim">Nothing recorded in this range yet.</div>'})})}
+    : '<div class="dim">Nothing recorded in this range yet.</div>';
+   loadFindings()})})}
+
+/* ---- performance analysis (#25) ----
+   The API returns findings as {code, severity, data}; the sentences live here
+   because the panel is English-only. Wording mirrors the desktop analysis.*
+   locale keys - if those change, change these too. */
+var FINDING_TEXT={
+ 'insufficient-data':['Not enough history yet - {samples} readings, {needed} needed.','Leave the server running for a while and come back; nothing is diagnosed from a handful of samples.'],
+ 'tps-unavailable':['No tick rate reported in this range.','Only Paper and its forks report TPS. On {type} the TPS chart stays empty - that is not a fault.'],
+ 'tps-not-reported':['No tick rate recorded, although this server can report one.','TPS is read over RCON. Check that RCON is enabled in server.properties and that MSMS connected.'],
+ 'chronic-lag':['The server ticked below {min} for {share}% of this range (avg {avg}).','Check the timeline for what was running then, and look at plugins/mods, view-distance and entity counts before adding memory.'],
+ 'lag-with-players':['Tick rate follows the player count: {quietTps} when quiet, {busyTps} from about {players} players (peak {peak}).','The load is player-driven. Lower view-distance / simulation-distance, or cap players below the point where it degrades.'],
+ 'cpu-saturated':['CPU was at or above {max}% for {share}% of this range (avg {avg}%).','Minecraft is largely single-threaded, so this is one core saturating. More RAM will not help; reduce the work per tick.'],
+ 'memory-over-allocated':['The process peaked at {rssMax} MB against a {xmx} MB heap - {share}% of it.','You can safely give this server less memory and leave the rest to the operating system.'],
+ 'frequent-crashes':['{crashes} crash(es) in the last {days} days.','Open the Crash Analyzer in the desktop app - it reads the actual log and names the cause.'],
+ 'no-backups':['No backup taken in the last {days} days.','Add a scheduled backup on the Automation tab - a daily 4 AM world backup takes seconds.'],
+ 'aikars-flags':['Running basic launch flags with a {xmx} MB heap.','Switch the Java preset to the Aikar flags in Settings; they tune the garbage collector for exactly this heap size.'],
+ 'healthy':['Nothing worth flagging across {days} days and {samples} readings.','Tick rate, CPU, memory and stability all look normal for this range.']};
+// No regex: this string is inside a TS template literal, and a backslash escape
+// here resolves TWICE (template literal, then the browser), which silently turned
+// /\{(\w+)\}/ into /{(w+)}/ and interpolated nothing. split/join cannot be
+// mis-escaped. An absent datum leaves its {placeholder} visible on purpose -
+// that is a legible signal, not a silent '?'.
+function fillFinding(tpl,data){var out=tpl,d=data||{};
+ for(var k in d){if(d[k]!==undefined&&d[k]!==null)out=out.split('{'+k+'}').join(String(d[k]))}
+ return out}
+function loadFindings(){var el=document.getElementById('dFindings');if(!el)return;
+ api('/api/servers/'+current.id+'/analysis?hours='+Math.max(1,Math.round(statsRange/3600000))).then(function(r){
+  if(!r.ok){el.innerHTML='';return}
+  var f=(r.body&&r.body.findings)||[];
+  if(!f.length){el.innerHTML='';return}
+  el.innerHTML=f.map(function(x){var t=FINDING_TEXT[x.code];
+   // An unknown code must still render - a newer app version can emit one.
+   var what=t?fillFinding(t[0],x.data):x.code;var fix=t?fillFinding(t[1],x.data):'';
+   var sev=(x.severity==='error'||x.severity==='warn')?x.severity:'info';
+   return '<div class="finding '+sev+'"><div class="fw">'+esc(what)+'</div>'+
+    (fix?'<div class="ff">'+esc(fix)+'</div>':'')+'</div>'}).join('')})}
 
 /* ---- timeline ---- */
 var EV_ICON={'server.starting':'▶','server.ready':'✓','server.stopped':'■','server.crashed':'✕','server.error':'!',

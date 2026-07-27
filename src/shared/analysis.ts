@@ -18,7 +18,14 @@
  * process that never comes close to its own -Xmx is over-allocated.
  */
 import { MODDED_TYPES, PLUGIN_TYPES, TPS_TYPES } from './types'
-import type { MetricPoint, MetricSeries, ServerConfig, ServerEvent, ServerType } from './types'
+import type {
+  MetricPoint,
+  MetricSeries,
+  ServerConfig,
+  ServerEvent,
+  ServerEventType,
+  ServerType
+} from './types'
 import type { UptimeReport } from './uptime'
 
 export type FindingSeverity = 'info' | 'warn' | 'error'
@@ -44,6 +51,25 @@ export interface Finding {
   /** Numbers behind the claim; interpolated into the translated sentence. */
   data?: Record<string, string | number>
 }
+
+/**
+ * What `analyze` must be fed. Exported so the desktop History tab and the web
+ * panel's analysis endpoint query with the SAME parameters - otherwise the two
+ * surfaces quietly give different advice about the same server.
+ *
+ * The type filter is not an optimisation. `events.query` returns the newest
+ * matching events up to `limit`, so an unfiltered query on a busy server fills
+ * that budget with player joins and pushes `backup.created` out - and the
+ * no-backups finding then fires on a server that is being backed up nightly.
+ */
+export const ANALYSIS_EVENT_TYPES: ServerEventType[] = [
+  'server.crashed',
+  'server.error',
+  'server.ready',
+  'backup.created'
+]
+export const ANALYSIS_EVENT_LIMIT = 200
+export const ANALYSIS_METRIC_LIMIT = 1200
 
 export interface AnalysisInput {
   series: MetricSeries
