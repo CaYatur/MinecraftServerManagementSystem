@@ -134,6 +134,7 @@ const api: MsmsApi = {
     ipcRenderer.invoke(IPC.storeAddBalance, id, mcName, amount, reason, category),
   setStoreBalance: (id, mcName, amount, reason, category) =>
     ipcRenderer.invoke(IPC.storeSetBalance, id, mcName, amount, reason, category),
+  setCrateAnimation: (id, animation) => ipcRenderer.invoke(IPC.storeCrateAnimation, id, animation),
   upsertEconomyCategory: (id, category) =>
     ipcRenderer.invoke(IPC.economyUpsertCategory, id, category),
   deleteEconomyCategory: (id, categoryId) =>

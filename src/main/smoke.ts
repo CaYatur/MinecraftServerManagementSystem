@@ -14,6 +14,12 @@ import * as siteMod from './web/site'
 import { pickSiteLang } from './web/siteLang'
 import type { LedgerEntry, Product } from '@shared/web'
 import { categoryName, filterLedger, ledgerSummary } from '@shared/economy'
+import {
+  CRATE_ANIMATIONS,
+  DEFAULT_CRATE_ANIMATION,
+  crateDuration,
+  normalizeCrateAnimation
+} from '@shared/crate'
 import { getProvider } from './core/versions'
 import { createServer } from './core/createServer'
 import { pickForgeRunJar } from './core/serverDetect'
@@ -3516,6 +3522,37 @@ export async function runWebSmoke(): Promise<void> {
       return fail('a deleted category should fall back to its raw id')
     }
     console.log('WEB-SMOKE: economy categories OK (validated on write, history not rewritten on delete)')
+
+    // Crate animation (#16): a bad value must never stop a player receiving
+    // what they paid for, so every path coerces to a real animation.
+    if (normalizeCrateAnimation('spin') !== 'spin') return fail('a valid animation was rejected')
+    for (const bad of [undefined, null, '', 'nope', 42, {}, []]) {
+      if (normalizeCrateAnimation(bad) !== DEFAULT_CRATE_ANIMATION) {
+        return fail('a bad animation did not fall back to the default: ' + String(bad))
+      }
+    }
+    if (crateDuration('instant') !== 0) return fail('instant should have no wait')
+    if (crateDuration('garbage') !== crateDuration(DEFAULT_CRATE_ANIMATION)) {
+      return fail('an unknown animation should time like the default')
+    }
+    if (CRATE_ANIMATIONS[0].id !== DEFAULT_CRATE_ANIMATION) {
+      return fail('the default should be the first option in the picker')
+    }
+    // Round-trip through the store, including the buyer-facing payload - the
+    // panel plays the animation from publicStore, not from the admin config.
+    const anSrv = 'crate-smoke-server'
+    if (economy.getStoreConfig(anSrv).crateAnimation !== DEFAULT_CRATE_ANIMATION) {
+      return fail('a fresh store should default its animation')
+    }
+    if (economy.setCrateAnimation(anSrv, 'flip') !== 'flip') return fail('set did not return the value')
+    if (economy.getStoreConfig(anSrv).crateAnimation !== 'flip') return fail('animation did not persist')
+    if (economy.publicStore(anSrv).crateAnimation !== 'flip') {
+      return fail('the buyer-facing store must carry the animation')
+    }
+    if (economy.setCrateAnimation(anSrv, 'not-real') !== DEFAULT_CRATE_ANIMATION) {
+      return fail('an invalid animation must be coerced, not stored')
+    }
+    console.log('WEB-SMOKE: crate animation OK (coerced on every path, reaches the buyer payload)')
   } catch (e) {
     return fail('exception: ' + String(e))
   } finally {

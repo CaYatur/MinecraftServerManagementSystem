@@ -526,6 +526,11 @@ async function handlePanel(req: IncomingMessage, res: ServerResponse): Promise<v
         return sendJson(res, 400, { error: String((e as Error)?.message ?? e) })
       }
     }
+    if (rest === 'admin/crate-animation' && method === 'POST') {
+      if (!gate('store')) return
+      const b = (await readBody(req).catch(() => ({}))) as { animation?: string }
+      return sendJson(res, 200, { animation: economy.setCrateAnimation(id, b.animation) })
+    }
     if (rest === 'admin/category' && method === 'POST') {
       if (!gate('store')) return
       const b = (await readBody(req).catch(() => ({}))) as EconomyCategory

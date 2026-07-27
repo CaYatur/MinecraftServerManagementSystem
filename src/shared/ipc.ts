@@ -54,6 +54,7 @@ import type {
   LedgerEntry,
   EconomyCategory
 } from './web'
+import type { CrateAnimation } from './crate'
 
 /** request/response channels (renderer -> main via invoke). */
 export const IPC = {
@@ -182,6 +183,7 @@ export const IPC = {
   storeAddBalance: 'store:add-balance',
   storeSetBalance: 'store:set-balance',
   storeLedger: 'store:ledger',
+  storeCrateAnimation: 'store:crate-animation',
   economyUpsertCategory: 'economy:upsert-category',
   economyDeleteCategory: 'economy:delete-category',
 
@@ -395,6 +397,7 @@ export interface MsmsApi {
     reason?: string,
     category?: string
   ): Promise<number>
+  setCrateAnimation(id: string, animation: CrateAnimation): Promise<CrateAnimation>
   upsertEconomyCategory(id: string, category: EconomyCategory): Promise<EconomyCategory>
   deleteEconomyCategory(id: string, categoryId: string): Promise<void>
   getStoreLedger(id: string, mcName?: string): Promise<LedgerEntry[]>

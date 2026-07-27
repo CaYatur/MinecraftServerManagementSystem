@@ -1,3 +1,5 @@
+import type { CrateAnimation } from './crate'
+
 // Per-server permission scopes for web-panel users.
 export type Scope =
   | 'view' // see status/stats/console output
@@ -90,11 +92,14 @@ export interface ProductPublic {
 export interface StorePublic {
   currency: string
   products: ProductPublic[]
+  /** Which crate animation this server's panel should play (#16). */
+  crateAnimation: CrateAnimation
 }
 
 export interface StoreConfig {
   currency: string
   products: Product[]
+  crateAnimation: CrateAnimation
 }
 
 /**
