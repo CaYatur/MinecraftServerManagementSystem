@@ -1,0 +1,2 @@
+# How often the bridge reports TPS, MSPT and player positions.
+interval-seconds: 5

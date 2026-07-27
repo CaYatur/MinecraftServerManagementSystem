@@ -1,0 +1,7 @@
+name: MSMS-Bridge
+version: 1.0.0
+main: dev.cayadev.msms.bridge.MsmsBridge
+api-version: '1.21'
+author: CaYaDev
+description: Reports TPS, MSPT, player positions and world events to MSMS over the server's standard output.
+website: https://github.com/CaYatur/MinecraftServerManagementSystem
