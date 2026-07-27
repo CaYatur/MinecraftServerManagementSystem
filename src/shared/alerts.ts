@@ -10,6 +10,7 @@
  * effects; a test can replay hours of samples in milliseconds.
  */
 import type { ScheduleAction } from './types'
+import type { Scope } from './web'
 
 /** What a rule watches. `ram` is process RSS in MB, not JVM heap. */
 export type AlertMetric = 'tps' | 'cpu' | 'ram' | 'players'
@@ -168,6 +169,34 @@ export function normalizeRule(
     ...(input.payload ? { payload: input.payload.slice(0, 500) } : {}),
     ...(input.lastFired ? { lastFired: input.lastFired } : {}),
     ...(input.fireCount ? { fireCount: input.fireCount } : {})
+  }
+}
+
+/**
+ * Extra permission an alert rule demands because of what it *does* when it
+ * fires (#24).
+ *
+ * A rule is stored, privileged, auto-executing work: `action: 'command'` with a
+ * payload is an arbitrary console command that will run unattended. Letting a
+ * user create one with only the `settings` scope would be a straight escalation
+ * from "may edit settings" to "may run any console command" - so the action's
+ * own scope is required *in addition to* `settings`.
+ *
+ * An alert with no action only records, and needs nothing extra.
+ */
+export function extraScopesForAction(action?: ScheduleAction): Scope[] {
+  switch (action) {
+    case 'command':
+    case 'broadcast':
+      return ['console']
+    case 'start':
+    case 'stop':
+    case 'restart':
+      return ['power']
+    case 'backup':
+      return ['backups']
+    default:
+      return []
   }
 }
 
