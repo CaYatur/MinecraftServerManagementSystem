@@ -57,6 +57,9 @@ export const CRATE_CSS = `
 .crate-result.win{color:var(--accent,#dc2727);animation:cratePulse .5s ease 3}
 @keyframes cratePulse{50%{transform:scale(1.12)}}
 .crate-preview-note{font-size:12px;opacity:.7;margin-top:6px;color:#fff}
+/* The OK button while the roll is still running: visibly not ready, rather
+   than clickable-but-ignored. */
+#crateOk.is-waiting{opacity:.45;cursor:progress}
 /* contents list (#79): what a crate can give you, before you pay for it */
 .crate-pool{display:flex;flex-direction:column;gap:5px;margin-top:9px}
 .crate-pool-row{display:flex;align-items:center;gap:8px;font-size:12.5px;padding:5px 8px;border-radius:8px;
@@ -99,13 +102,28 @@ function cAttr(t){return cEsc(t).replace(/"/g,'&quot;').replace(/'/g,'&#39;')}
    first animation still has pending timers - without this the old run keeps
    writing into the reel and announces the PREVIOUS reward over the new one. */
 var crateRun=0;
+/* True while an animation is still running. The OK button and the backdrop are
+   both inert until the reward has been announced. */
+var crateLocked=false;
 function crateVariant(v){return CRATE_MS[v]===undefined?'reel':v}
 function cratePool(reward){return reward.pool&&reward.pool.length?reward.pool:[{name:reward.name,icon:reward.icon}]}
 function crateCell(it,cls){return '<div class="'+cls+'">'+(it.icon?'<img src="'+cAttr(it.icon)+'" alt=""/>':'')+cEsc(it.name)+'</div>'}
 function crateFinish(reward,ms,run,note){var res=document.getElementById('crateResult');
- setTimeout(function(){if(run!==crateRun)return;res.textContent=(note||'')+reward.name;res.className='crate-result win'},ms+100)}
+ var ok=document.getElementById('crateOk');
+ if(ok)ok.classList.add('is-waiting');
+ setTimeout(function(){if(run!==crateRun)return;
+  res.textContent=(note||'')+reward.name;res.className='crate-result win';
+  /* Only now is closing meaningful: the player has seen what they got. */
+  crateLocked=false;
+  if(ok)ok.classList.remove('is-waiting')},ms+100)}
 function openCrate(reward,opts){opts=opts||{};
  var modal=document.getElementById('crate');modal.classList.remove('hidden');
+ /* Locked until the roll resolves. closeCrate used to fire on any backdrop
+    click from the moment the modal opened, so a player clicking anywhere during
+    the animation closed it and never learned what they won - having already
+    been charged for it. The reward is delivered either way, which makes it
+    worse: the purchase looks lost. */
+ crateLocked=true;
  var reel=document.getElementById('reel');var mask=modal.querySelector('.reel-mask');
  var res=document.getElementById('crateResult');res.textContent='';res.className='crate-result';
  var pn=document.getElementById('cratePreviewNote');
@@ -153,6 +171,8 @@ function crateBurst(reward,ms,reel,run,prefix){var pool=cratePool(reward);
   reel.innerHTML=crateCell(pool[Math.floor(Math.random()*pool.length)],'reel-item burst-card')},200);
  crateFinish(reward,ms,run,prefix)}
 function closeCrate(e){if(e&&e.target&&e.target.id!=='crate'&&e.target.tagName!=='BUTTON')return;
+ /* Refuse while the roll is still running - see openCrate. */
+ if(crateLocked)return;
  /* Bump the token so a half-finished run cannot announce its reward into the
     next crate the player opens. */
  crateRun++;document.getElementById('crate').classList.add('hidden')}

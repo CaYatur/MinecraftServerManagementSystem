@@ -1,8 +1,18 @@
 import { randomUUID } from 'node:crypto'
 import { readFileSync, writeFileSync, existsSync, renameSync } from 'node:fs'
 import { storePath } from '../paths'
+import { getConfig } from '../config'
 import { processManager } from '../core/processManager'
 import * as rcon from '../core/rcon'
+import * as files from '../core/serverFiles'
+import { bridgePlayers } from '@shared/bridge'
+import {
+  clampGrace,
+  deliveryDecision,
+  queueReason,
+  type DeliveryInputs,
+  type HoldReason
+} from '@shared/delivery'
 import { log } from '../logger'
 import * as audit from '../core/audit'
 import type { AuditSource } from '@shared/audit'
@@ -55,7 +65,27 @@ interface StoreState {
    */
   purchases: Record<string, Record<string, number>>
   ledger: LedgerEntry[]
-  queue: { mcName: string; commands: string[]; at: number }[]
+  queue: QueueEntry[]
+}
+
+/**
+ * A reward that has been paid for and not yet handed over (#106).
+ *
+ * `id` exists so a retry can remove exactly the entry it delivered: the old
+ * queue was filtered by player name *before* the commands ran, so anything that
+ * went wrong after that point lost the reward with no record of it.
+ */
+export interface QueueEntry {
+  id: string
+  mcName: string
+  commands: string[]
+  /** What to tell the player they received. */
+  rewardName: string
+  at: number
+  /** Why it is still here. Drives the panel's pending list. */
+  reason?: HoldReason
+  attempts?: number
+  lastTryAt?: number
 }
 
 type AllStores = Record<string, StoreState>
@@ -129,44 +159,239 @@ function pushLedger(
 
 export function initEconomy(): void {
   load()
-  // Deliver queued rewards when a player joins.
+  // Deliver queued rewards when a player joins — after the grace, and only when
+  // something says they are really in the world. See shared/delivery.ts.
   processManager.on('join', ({ id, name }: { id: string; name: string }) => {
+    joinedAt.set(id + '|' + name, Date.now())
     void deliverQueued(id, name)
   })
 }
 
 // ---- delivery (injection-safe: only {player} is interpolated, validated) ----
-async function runCommands(serverId: string, mcName: string, commands: string[]): Promise<void> {
-  for (const c of commands) {
-    const cmd = c.replace(/\{player\}/g, mcName)
-    if (rcon.isConnected(serverId)) await rcon.tryCommand(serverId, cmd)
-    else if (processManager.isRunning(serverId)) processManager.sendCommand(serverId, cmd)
+
+/**
+ * Run the reward's commands. Returns whether they were actually carried.
+ *
+ * The old version returned void and did nothing when neither channel was
+ * available — while the caller had already removed the entry from the queue. A
+ * reward could therefore be paid for, dequeued, and never given, with nothing
+ * anywhere recording that it had been tried.
+ */
+async function runCommands(serverId: string, mcName: string, commands: string[]): Promise<boolean> {
+  if (!rcon.isConnected(serverId) && !processManager.isRunning(serverId)) return false
+  for (let i = 0; i < commands.length; i++) {
+    const cmd = commands[i].replace(/\{player\}/g, mcName)
+    // `tryCommand` swallows its failure and answers null — it is the "try"
+    // variant, which is right for a fire-and-forget console command and wrong
+    // here. Taking a connected socket as proof the command landed reintroduces
+    // exactly the bug this function was rewritten to close, one layer down: the
+    // caller would dequeue a reward that RCON dropped.
+    const sent = rcon.isConnected(serverId) ? (await rcon.tryCommand(serverId, cmd)) !== null : false
+    if (sent) continue
+    // RCON is the preferred channel, not the only one. A dropped connection to
+    // a process that is still up is a reason to use stdin, not to give up.
+    if (processManager.isRunning(serverId)) {
+      processManager.sendCommand(serverId, cmd)
+      continue
+    }
+    log.warn(`Store: command ${i + 1}/${commands.length} for ${mcName} could not be sent`)
+    return false
+  }
+  return true
+}
+
+/** Tell the player what arrived. A silent `give` looks like nothing happened. */
+async function announce(serverId: string, mcName: string, rewardName: string): Promise<void> {
+  if (!rewardName) return
+  // tellraw takes JSON, and JSON.stringify is what makes an arbitrary reward
+  // name safe to put inside it. The player name is already validated.
+  const json = JSON.stringify([
+    { text: '[CaYaDev] ', color: 'red' },
+    { text: 'Delivered: ', color: 'gray' },
+    { text: rewardName, color: 'gold', bold: true }
+  ])
+  await runCommands(serverId, mcName, [`tellraw ${mcName} ${json}`])
+}
+
+function deliveryInputs(serverId: string, mcName: string): DeliveryInputs {
+  const rt = processManager.getRuntime(serverId)
+  const now = Date.now()
+  const bridge = rt ? bridgePlayers(rt.bridge, now) : []
+  return {
+    serverRunning: processManager.isRunning(serverId),
+    canSend: rcon.isConnected(serverId) || processManager.isRunning(serverId),
+    playerOnline: !!rt?.players.names.includes(mcName),
+    bridgeInWorld: bridge.some(
+      (p) => p.name === mcName && Number.isFinite(p.x) && Number.isFinite(p.z)
+    ),
+    onlineMode: isOnlineMode(serverId),
+    joinedAgoMs: joinedAt.get(serverId + '|' + mcName)
+      ? now - (joinedAt.get(serverId + '|' + mcName) as number)
+      : undefined,
+    graceMs: clampGrace(getConfig().store?.deliveryGraceMs),
+    holdWhenUnverified: getConfig().store?.holdUnverifiedDeliveries !== false
   }
 }
 
-async function deliver(serverId: string, mcName: string, commands: string[]): Promise<void> {
-  const online = processManager.getRuntime(serverId)?.players.names.includes(mcName)
-  if (processManager.isRunning(serverId) && online) {
-    await runCommands(serverId, mcName, commands)
-  } else {
-    const st = getStore(serverId)
-    st.queue.push({ mcName, commands, at: Date.now() })
-    save()
-    log.info(`Store: queued delivery for offline ${mcName}`)
+/** When each player's join line was seen, so the grace can be measured. */
+const joinedAt = new Map<string, number>()
+
+/**
+ * `online-mode` from server.properties, cached per server for a minute.
+ *
+ * Read rather than assumed: on a cracked server anyone can connect as anyone,
+ * so "this name is online" proves nothing about who is holding the keyboard —
+ * which is the difference between delivering and holding.
+ */
+const onlineModeCache = new Map<string, { value: boolean; at: number }>()
+
+function isOnlineMode(serverId: string): boolean {
+  const hit = onlineModeCache.get(serverId)
+  if (hit && Date.now() - hit.at < 60_000) return hit.value
+  let value = true
+  try {
+    const entry = files.readProperties(serverId).entries.find((e) => e.key === 'online-mode')
+    // Absent means the server has not written its properties yet. Vanilla
+    // defaults to true, and treating an unknown as the SAFE value here would be
+    // backwards: `true` is the permissive branch.
+    value = entry ? entry.value.trim().toLowerCase() !== 'false' : true
+  } catch {
+    value = true
   }
+  onlineModeCache.set(serverId, { value, at: Date.now() })
+  return value
+}
+
+export function _resetOnlineModeCache(): void {
+  onlineModeCache.clear()
+  joinedAt.clear()
+  scheduled.clear()
+}
+
+/**
+ * Deliver, or keep. Never drops.
+ *
+ * `queueId` is set when this is a retry of an already-queued entry, so a
+ * successful run removes exactly that one and a failed run leaves it where it
+ * was — the ordering the old code had backwards.
+ */
+async function attemptDelivery(
+  serverId: string,
+  entry: QueueEntry,
+  source: 'purchase' | 'join' | 'manual'
+): Promise<boolean> {
+  const key = serverId + '|' + entry.id
+  // A retry timer owns this entry until it fires. Without the guard, persisting
+  // a waiting reward (below) would make it visible to `deliverQueued`, and a
+  // join arriving mid-grace would run the same commands a second time.
+  if (scheduled.has(key)) return false
+  const decision = deliveryDecision(deliveryInputs(serverId, entry.mcName))
+  // Persist BEFORE anything else, for every decision that is not a hand-over.
+  // A reward that exists only inside a setTimeout closure is lost if the app
+  // quits during the grace — a window the grace deliberately makes as long as a
+  // login plugin needs.
+  const pending = queueReason(decision)
+  if (pending) holdInQueue(serverId, entry, pending)
+  if (decision.action === 'wait') {
+    scheduled.add(key)
+    setTimeout(() => {
+      scheduled.delete(key)
+      void attemptDelivery(serverId, entry, source)
+    }, decision.ms)
+    return false
+  }
+  if (decision.action === 'hold') return false
+  const ran = await runCommands(serverId, entry.mcName, entry.commands)
+  if (!ran) {
+    // The channel closed between the decision and the send.
+    holdInQueue(serverId, entry, 'server-down')
+    return false
+  }
+  removeFromQueue(serverId, entry.id)
+  await announce(serverId, entry.mcName, entry.rewardName)
+  audit.record({
+    source: 'system',
+    action: 'store.deliver',
+    actor: entry.mcName,
+    ok: true,
+    serverId,
+    target: entry.rewardName || entry.id,
+    detail: source
+  })
+  log.info(`Store: delivered "${entry.rewardName}" to ${entry.mcName} (${source})`)
+  return true
+}
+
+/**
+ * Entries with a retry timer pending. In memory only, and deliberately so: it
+ * is the *timer* that is not durable, and after a restart there is no timer, so
+ * a persisted `just-joined` entry must be free for the next join to pick up.
+ */
+const scheduled = new Set<string>()
+
+function holdInQueue(serverId: string, entry: QueueEntry, reason: HoldReason): void {
+  const st = getStore(serverId)
+  const existing = st.queue.find((q) => q.id === entry.id)
+  if (existing) {
+    existing.reason = reason
+    existing.attempts = (existing.attempts ?? 0) + 1
+    existing.lastTryAt = Date.now()
+  } else {
+    st.queue.push({ ...entry, reason, attempts: 1, lastTryAt: Date.now() })
+  }
+  save()
+  const verb = reason === 'just-joined' ? 'waiting to deliver' : 'holding'
+  log.info(`Store: ${verb} "${entry.rewardName}" for ${entry.mcName} (${reason})`)
+}
+
+function removeFromQueue(serverId: string, id: string): void {
+  const st = getStore(serverId)
+  const before = st.queue.length
+  st.queue = st.queue.filter((q) => q.id !== id)
+  if (st.queue.length !== before) save()
 }
 
 async function deliverQueued(serverId: string, mcName: string): Promise<void> {
   const st = stores[serverId]
-  if (!st || st.queue.length === 0) return
-  const mine = st.queue.filter((q) => q.mcName === mcName)
-  if (mine.length === 0) return
-  st.queue = st.queue.filter((q) => q.mcName !== mcName)
-  save()
-  // brief delay so the player is fully connected
-  await new Promise((r) => setTimeout(r, 1500))
-  for (const q of mine) await runCommands(serverId, mcName, q.commands)
-  log.info(`Store: delivered ${mine.length} queued reward(s) to ${mcName}`)
+  if (!st?.queue.length) return
+  // A copy: `attemptDelivery` mutates the queue as it goes.
+  for (const entry of st.queue.filter((q) => q.mcName === mcName)) {
+    await attemptDelivery(serverId, entry, 'join')
+  }
+}
+
+/** Rewards waiting for this server, newest first. Drives the panel's list. */
+export function pendingDeliveries(serverId: string): QueueEntry[] {
+  return [...getStore(serverId).queue].sort((a, b) => b.at - a.at)
+}
+
+/**
+ * Operator override: hand it over now, whatever the decision function thinks.
+ *
+ * The escape hatch that makes holding acceptable. Without it, a cracked server
+ * with no bridge would accumulate rewards nobody could release.
+ */
+export async function releaseDelivery(
+  serverId: string,
+  queueId: string,
+  by: string
+): Promise<{ ok: boolean; error?: string }> {
+  const entry = getStore(serverId).queue.find((q) => q.id === queueId)
+  if (!entry) return { ok: false, error: 'not-found' }
+  const ran = await runCommands(serverId, entry.mcName, entry.commands)
+  if (!ran) return { ok: false, error: 'server-down' }
+  removeFromQueue(serverId, queueId)
+  await announce(serverId, entry.mcName, entry.rewardName)
+  audit.record({
+    source: 'panel',
+    action: 'store.deliver',
+    actor: by,
+    ok: true,
+    serverId,
+    target: entry.rewardName || queueId,
+    detail: 'released manually for ' + entry.mcName
+  })
+  return { ok: true }
 }
 
 function rollCrate(rewards: CrateReward[]): CrateReward {
@@ -247,8 +472,14 @@ export function purchase(serverId: string, mcName: string, productId: string): B
   })
   save() // persist deduction + txn immediately
 
-  // Deliver asynchronously (queues if the player is offline).
-  void deliver(serverId, mcName, commands)
+  // Deliver asynchronously. The entry is built first and kept until it is
+  // actually handed over: the money has already left the balance, so from here
+  // on the only acceptable outcomes are "delivered" and "still owed".
+  void attemptDelivery(
+    serverId,
+    { id: randomUUID(), mcName, commands, rewardName: reward.name, at: Date.now() },
+    'purchase'
+  )
   return { ok: true, balance: st.balances[mcName], reward }
 }
 

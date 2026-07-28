@@ -416,11 +416,17 @@ function buy(pid){if(!ptoken){
     sits above the auth modal, so opening the login without this dimmed the
     screen and put the form behind the thing the visitor just clicked in. */
  sfCloseDetail();openAuth();return}
+ var bought=sfFind(pid);
  api('/api/public/store/buy',{productId:pid},ptoken).then(function(r){
-  if(!r.ok){alert(r.j.error==='insufficient'?T('store.insufficient')
-   :r.j.error==='out-of-stock'?T('store.outOfStock')
-   :r.j.error==='limit-reached'?T('store.limitReached')
-   :('Error: '+(r.j.error||r.s)));
+  if(!r.ok){
+   /* In the page, not an alert(): the failure has a reason worth reading, and
+      the storefront should say it in its own voice. */
+   sfNotice('err',T('store.buyFailed'),
+    r.j.error==='insufficient'?T('store.insufficient')
+    :r.j.error==='out-of-stock'?T('store.outOfStock')
+    :r.j.error==='limit-reached'?T('store.limitReached')
+    :(r.j.error||String(r.s)),
+    bought&&bought.icon);
    /* Somebody else may have taken the last one while this page was open. */
    loadStore();return}
   refreshBalance();sfCloseDetail();
@@ -434,7 +440,7 @@ function buy(pid){if(!ptoken){
       never opens the auth modal, and would meet an English crate. */
    document.getElementById('crateOk').textContent=T('crate.ok');
    openCrate(r.j.reward,{prefix:T('crate.congrats')+': '})}
-  else alert(T('crate.congrats')+': '+(r.j.reward?r.j.reward.name:''))})}
+  else sfNotice('ok',T('crate.congrats'),r.j.reward?r.j.reward.name:'',r.j.reward&&r.j.reward.icon)})}
 function zoom(src){document.getElementById('lbImg').src=src;document.getElementById('lightbox').classList.remove('hidden')}
 
 /* ---------- router ---------- */

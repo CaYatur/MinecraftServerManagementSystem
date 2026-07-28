@@ -134,6 +134,25 @@ export interface AppConfig {
   serverMessages?: Record<string, string>
   /** Metric history collection + retention. */
   telemetry?: TelemetryConfig
+  /** How purchased rewards are handed over (#106). */
+  store?: StoreDeliveryConfig
+}
+
+/**
+ * Reward delivery safety.
+ *
+ * Both defaults are the cautious ones: a reward that arrives late is an
+ * annoyance, and one handed over while a login plugin is holding the player can
+ * be dropped on the floor or wiped when the plugin restores their inventory.
+ */
+export interface StoreDeliveryConfig {
+  /** Wait this long after a join before delivering. Default 20s. */
+  deliveryGraceMs?: number
+  /**
+   * On a cracked server with no bridge, keep rewards for an operator to release
+   * rather than guessing. Default true.
+   */
+  holdUnverifiedDeliveries?: boolean
 }
 
 /** How much performance history is kept, per resolution tier. */

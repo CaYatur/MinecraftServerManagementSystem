@@ -1743,6 +1743,18 @@ async function handlePanel(req: IncomingMessage, res: ServerResponse): Promise<v
       economy.deleteCategory(id, b.categoryId ?? '')
       return sendJson(res, 200, { ok: true })
     }
+    // Rewards paid for and not yet handed over (#106). Holding them is only
+    // acceptable if somebody can see the list and release them.
+    if (rest === 'admin/pending' && method === 'GET') {
+      if (!gate('store')) return
+      return sendJson(res, 200, { pending: economy.pendingDeliveries(id) })
+    }
+    if (rest === 'admin/deliver' && method === 'POST') {
+      if (!gate('store')) return
+      const b = (await readBody(req).catch(() => ({}))) as { queueId?: string }
+      const out = await economy.releaseDelivery(id, b.queueId ?? '', user.username)
+      return sendJson(res, out.ok ? 200 : out.error === 'not-found' ? 404 : 409, out)
+    }
     if (rest === 'admin/ledger' && method === 'GET') {
       if (!gate('store')) return
       return sendJson(res, 200, {
