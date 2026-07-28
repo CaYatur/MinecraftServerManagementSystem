@@ -355,6 +355,12 @@ export function logoutPlayer(token: string): void {
   sessions.delete(token)
 }
 
+/** When this name registered on the site, or undefined. Not a secret: it is the
+ *  one date a profile is actually about. */
+export function registeredAt(mcName: string): number | undefined {
+  return accounts.find((a) => a.mcName.toLowerCase() === mcName.trim().toLowerCase())?.createdAt
+}
+
 export function isRegistered(mcName: string): boolean {
   return accounts.some((a) => a.mcName.toLowerCase() === mcName.trim().toLowerCase())
 }

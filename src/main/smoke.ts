@@ -88,6 +88,8 @@ import {
 } from '@shared/bridgeRelease'
 import type { GhRelease } from '@shared/bridgeRelease'
 import { publicVerifyReply, verifyDecision } from '@shared/playerVerify'
+import { canSee, redactProfile, PROFILE_PUBLISHING_DEFAULTS } from '@shared/profile'
+import type { FullProfile, ProfileField, ProfilePublishing, ProfileViewer } from '@shared/profile'
 import * as rcon from './core/rcon'
 import * as metrics from './core/metrics'
 import * as eventsMod from './core/events'
@@ -4394,6 +4396,150 @@ export async function runWebSmoke(): Promise<void> {
         'WEB-SMOKE: player verification OK (12 rows, ' + swept +
           ' combinations, no code without online-mode, no enumeration)'
       )
+    }
+
+    // ---- who may read a profile (#107) ----
+    {
+      const ALL: ProfileField[] = [
+        'identity', 'dates', 'playtime', 'inventory', 'enderChest', 'stats', 'location'
+      ]
+      const OPEN: ProfileField[] = ['identity', 'dates', 'playtime']
+      const GATED: ProfileField[] = ['inventory', 'enderChest', 'stats', 'location']
+      const viewers: ProfileViewer[] = ['owner', 'stranger', 'anonymous']
+
+      // Exhaustive: every field, every viewer, every combination of the four
+      // toggles. The expected answer is stated here as a rule, not read back
+      // from the function being tested.
+      let checked = 0
+      for (let mask = 0; mask < 16; mask++) {
+        const pub: ProfilePublishing = {
+          inventory: !!(mask & 1),
+          enderChest: !!(mask & 2),
+          stats: !!(mask & 4),
+          location: !!(mask & 8)
+        }
+        for (const viewer of viewers) {
+          for (const field of ALL) {
+            const expected = OPEN.includes(field) || viewer === 'owner' || pub[field as keyof ProfilePublishing]
+            const got = canSee(field, viewer, pub)
+            checked++
+            if (got !== !!expected) {
+              return fail(
+                'profile visibility wrong for ' + field + '/' + viewer + ' with ' + JSON.stringify(pub)
+              )
+            }
+          }
+        }
+      }
+      // The two rules that matter, stated separately so a change to the loop
+      // above cannot quietly take them with it.
+      for (const field of GATED) {
+        if (canSee(field, 'stranger', PROFILE_PUBLISHING_DEFAULTS)) {
+          return fail('a stranger can read ' + field + ' by default')
+        }
+        if (canSee(field, 'anonymous', PROFILE_PUBLISHING_DEFAULTS)) {
+          return fail('an anonymous visitor can read ' + field + ' by default')
+        }
+        if (!canSee(field, 'owner', PROFILE_PUBLISHING_DEFAULTS)) {
+          return fail('a player cannot read their own ' + field)
+        }
+      }
+
+      // Redaction OMITS. A field the viewer may not see must be absent from the
+      // payload, not sent and hidden in the page — a page can be read with the
+      // network tab open.
+      const full: FullProfile = {
+        mcName: 'Steve',
+        uuid: 'u-1',
+        registeredAt: 1,
+        lastSeen: 2,
+        playtimeHours: 3,
+        inventory: [{ slot: 0, id: 'minecraft:diamond', count: 64 }],
+        enderChest: [{ slot: 0, id: 'minecraft:netherite_ingot', count: 1 }],
+        stats: { health: 20, food: 20, xpLevel: 30 },
+        location: { x: 100, y: 12, z: -400, dimension: 'overworld' }
+      }
+      const strangerView = redactProfile(full, 'stranger', PROFILE_PUBLISHING_DEFAULTS) as unknown as Record<string, unknown>
+      for (const f of GATED) {
+        if (f in strangerView) return fail('a stranger payload carries "' + f + '"')
+      }
+      if (JSON.stringify(strangerView).includes('netherite')) {
+        return fail('a withheld field leaked into the payload anyway')
+      }
+      if (strangerView.mcName !== 'Steve') return fail('redaction dropped the name')
+      // ...and the page is told what was withheld, so it can say so rather than
+      // simply stopping.
+      const hidden = strangerView.hidden as string[]
+      for (const f of GATED) {
+        if (!hidden.includes(f)) return fail('the payload did not report "' + f + '" as withheld')
+      }
+
+      // Each toggle removes exactly its own field and nothing else.
+      for (const only of GATED) {
+        const pub = { ...PROFILE_PUBLISHING_DEFAULTS, [only]: true } as ProfilePublishing
+        const view = redactProfile(full, 'stranger', pub) as unknown as Record<string, unknown>
+        if (!(only in view)) return fail('turning on ' + only + ' did not publish it')
+        for (const other of GATED) {
+          if (other !== only && other in view) {
+            return fail('turning on ' + only + ' also published ' + other)
+          }
+        }
+      }
+      // The owner sees everything regardless of the toggles.
+      const ownView = redactProfile(full, 'owner', PROFILE_PUBLISHING_DEFAULTS) as unknown as Record<string, unknown>
+      for (const f of GATED) {
+        if (!(f in ownView)) return fail('a player could not see their own ' + f)
+      }
+      if ((ownView.hidden as string[]).length !== 0) return fail('an owner was told something was withheld')
+
+      console.log('WEB-SMOKE: profile visibility OK (' + checked + ' checks, omitted not hidden, per-field toggles)')
+
+      // ---- and over HTTP ----
+      const profileBefore = siteMod.getSiteConfig().profile
+      const storeBefore = siteMod.getSiteConfig().storeServerId
+      try {
+        siteMod.setSiteConfig({ storeServerId: id, profile: { ...PROFILE_PUBLISHING_DEFAULTS } })
+        webPlayerAuth._testCreateAccount('Profiley', 'profpass')
+        const plr = await spost('/api/public/login', { mcName: 'Profiley', password: 'profpass' })
+        const ptok = ((await plr.json()) as { token: string }).token
+        if (!ptok) return fail('the profile probe could not sign in')
+
+        // A name that is neither on the roster nor registered is a 404, and a
+        // malformed one never reaches the roster read at all.
+        let pr = await sget('/api/public/profile?name=' + encodeURIComponent('no-such-player'))
+        if (pr.status !== 400 && pr.status !== 404) {
+          return fail('an unknown profile expected 400/404, got ' + pr.status)
+        }
+        pr = await sget('/api/public/profile?name=' + encodeURIComponent('../../etc/passwd'))
+        if (pr.status !== 400) return fail('a malformed profile name expected 400, got ' + pr.status)
+
+        // Own profile, signed in. It exists because the account does, even with
+        // no roster entry on a server that has never run.
+        pr = await sget('/api/public/profile', ptok)
+        if (pr.status !== 200) return fail('own profile expected 200, got ' + pr.status)
+        const own = (await pr.json()) as { mcName: string; hidden: string[] }
+        if (own.mcName !== 'Profiley') return fail('own profile returned the wrong player')
+        if (own.hidden.length !== 0) return fail('a player was told their own data was withheld')
+
+        // A stranger reading the same name, with everything off.
+        pr = await sget('/api/public/profile?name=Profiley')
+        if (pr.status !== 200) return fail('a public profile expected 200, got ' + pr.status)
+        const strange = (await pr.json()) as unknown as Record<string, unknown>
+        for (const f of GATED) {
+          if (f in strange) return fail('an anonymous profile read carried "' + f + '"')
+        }
+        // An admin token must not be a player token here either: the endpoint
+        // decides "owner" from a PLAYER session, and an operator holding a panel
+        // token is a stranger to every player account.
+        pr = await sget('/api/public/profile?name=Profiley', ot)
+        const asAdmin = (await pr.json()) as unknown as Record<string, unknown>
+        for (const f of GATED) {
+          if (f in asAdmin) return fail('an admin token read a player\'s ' + f + ' from the public site')
+        }
+        console.log('WEB-SMOKE: public profile OK (own vs stranger, admin token is a stranger, 400 on a bad name)')
+      } finally {
+        siteMod.setSiteConfig({ storeServerId: storeBefore, profile: profileBefore })
+      }
     }
 
     // an ADMIN token must NOT satisfy player auth

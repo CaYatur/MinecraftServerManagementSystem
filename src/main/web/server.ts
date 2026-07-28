@@ -33,6 +33,11 @@ import {
 import type { PlayerInfo } from '@shared/types'
 import { bridgeFresh, bridgePlayers } from '@shared/bridge'
 import { heatmap, livePlayers, mapBounds, normalizeDimension, redactPlayers } from '@shared/livemap'
+import { redactProfile } from '@shared/profile'
+import type { ProfileViewer } from '@shared/profile'
+
+/** Same shape the rest of the app validates a Minecraft name with. */
+const MC_NAME_RE = /^[A-Za-z0-9_]{3,16}$/
 import * as metrics from '../core/metrics'
 import * as events from '../core/events'
 import * as alerts from '../core/alerts'
@@ -518,6 +523,53 @@ async function handlePublic(
       heads: cfg.heads,
       at: now
     })
+  }
+
+  // ---- a player's profile (#107) ----
+  //
+  // Who is asking decides what comes back, and the decision is a pure table in
+  // @shared/profile because it is the whole security of the feature. Fields are
+  // OMITTED, never sent-and-hidden: a page can be read with the network tab
+  // open, and "we shipped it but did not draw it" is not a privacy setting.
+  if (sub === 'profile' && method === 'GET') {
+    const psid = site.siteServerId()
+    const q = new URL(req.url ?? '/', 'http://localhost').searchParams
+    const session = playerAuth.resolvePlayerSession(bearer(req))
+    const asked = (q.get('name') ?? '').trim() || session?.mcName || ''
+    if (!MC_NAME_RE.test(asked)) return sendJson(res, 400, { error: 'invalid-name' })
+    if (!psid || !getServer(psid)) return sendJson(res, 404, { error: 'not-found' })
+    const viewer: ProfileViewer = !session
+      ? 'anonymous'
+      : session.mcName.toLowerCase() === asked.toLowerCase()
+        ? 'owner'
+        : 'stranger'
+    // The roster read is the expensive part (it parses player .dat files), so
+    // it happens once and the decision runs over the result.
+    const roster = await playersMod.getPlayers(psid).catch(() => [])
+    const p = roster.find((x) => x.name.toLowerCase() === asked.toLowerCase())
+    if (!p && !playerAuth.isRegistered(asked)) return sendJson(res, 404, { error: 'not-found' })
+    return sendJson(
+      res,
+      200,
+      redactProfile(
+        {
+          mcName: p?.name ?? asked,
+          ...(p?.uuid ? { uuid: p.uuid } : {}),
+          ...(p ? { online: p.online } : {}),
+          ...(playerAuth.registeredAt(asked) ? { registeredAt: playerAuth.registeredAt(asked) } : {}),
+          ...(p?.lastSeen ? { lastSeen: p.lastSeen } : {}),
+          ...(typeof p?.playtimeHours === 'number' ? { playtimeHours: p.playtimeHours } : {}),
+          ...(p?.inventory ? { inventory: p.inventory } : {}),
+          ...(p?.enderChest ? { enderChest: p.enderChest } : {}),
+          ...(p && (p.health !== undefined || p.food !== undefined || p.xpLevel !== undefined)
+            ? { stats: { health: p.health, food: p.food, xpLevel: p.xpLevel } }
+            : {}),
+          ...(p?.position ? { location: p.position } : {})
+        },
+        viewer,
+        site.profilePublishing()
+      )
+    )
   }
 
   const sid = site.siteServerId()

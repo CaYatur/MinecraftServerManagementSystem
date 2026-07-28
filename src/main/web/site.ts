@@ -15,7 +15,9 @@ import { getServer, listServers } from '../core/serverRegistry'
 import { processManager } from '../core/processManager'
 import { SITE_STRINGS_EN, SITE_STRINGS_TR } from './siteI18n'
 import { PUBLIC_MAP_DEFAULTS, clampRound } from '@shared/livemap'
+import { PROFILE_PUBLISHING_DEFAULTS } from '@shared/profile'
 import type { PublicMapConfig } from '@shared/livemap'
+import type { ProfilePublishing } from '@shared/profile'
 import type { PublicSite, ServerCard, SiteConfig, SitePost } from '@shared/web'
 
 const RASTER = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif'])
@@ -34,6 +36,7 @@ function defaults(): SiteConfig {
     serverIp: '',
     showStore: true,
     map: { ...PUBLIC_MAP_DEFAULTS },
+    profile: { ...PROFILE_PUBLISHING_DEFAULTS },
     theme: {
       accent: '#dc2727',
       bg: '#0b0b10',
@@ -64,6 +67,7 @@ function migrate(raw: any): SiteConfig {
     // #104 has no `map` at all, and one written by a future build may be
     // missing a key this one reads. Either way the answer must be "off".
     map: { ...base.map, ...(raw.map ?? {}) },
+    profile: { ...base.profile, ...(raw.profile ?? {}) },
     i18n: {
       defaultLang: raw.i18n?.defaultLang ?? base.i18n.defaultLang,
       langs: {
@@ -139,6 +143,13 @@ export function setSiteConfig(patch: Partial<SiteConfig>): SiteConfig {
     if (m.round !== undefined) s.map.round = clampRound(m.round)
     if (m.heads !== undefined) s.map.heads = !!m.heads
     if (m.names !== undefined) s.map.names = !!m.names
+  }
+  if (patch.profile) {
+    // Field by field and coerced, for the reason above: "false" is truthy, and
+    // here that reads as "publish every player's inventory".
+    for (const k of ['inventory', 'enderChest', 'stats', 'location'] as const) {
+      if (patch.profile[k] !== undefined) s.profile[k] = !!patch.profile[k]
+    }
   }
   if (patch.theme) {
     const t = patch.theme
@@ -303,6 +314,9 @@ export function publicSite(): PublicSite {
     // the setting not being a setting.
     showMap: s.map.enabled && !!getServer(s.map.serverId),
     mapHeads: s.map.enabled && s.map.heads,
+    // A profile needs a server to read a roster from. Without one the page
+    // would render a name and a head and nothing else.
+    showProfiles: !!getServer(s.storeServerId),
     theme: s.theme,
     i18n: s.i18n,
     servers: ids.map(card).filter((c): c is ServerCard => !!c),
@@ -321,6 +335,10 @@ export function siteServerId(): string {
  * is on — the check is "enabled AND the server still exists", and a server
  * deregistered after the setting was made is the case a plain boolean misses.
  */
+export function profilePublishing(): ProfilePublishing {
+  return { ...get().profile }
+}
+
 export function publicMapConfig(): PublicMapConfig | null {
   const s = get()
   if (!s.map.enabled || !getServer(s.map.serverId)) return null

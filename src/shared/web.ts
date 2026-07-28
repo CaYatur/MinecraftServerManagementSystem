@@ -1,6 +1,7 @@
 import type { CrateAnimation } from './crate'
 import type { StoreLayout } from './storefront'
 import type { PublicMapConfig } from './livemap'
+import type { ProfilePublishing } from './profile'
 
 // Per-server permission scopes for web-panel users.
 export type Scope =
@@ -281,6 +282,8 @@ export interface SiteConfig {
   showStore: boolean
   /** Live map on the public site (#104). Off by default; see PublicMapConfig. */
   map: PublicMapConfig
+  /** What a stranger may read on a player's profile (#107). All off by default. */
+  profile: ProfilePublishing
   theme: SiteTheme
   i18n: SiteI18n
   posts: SitePost[]
@@ -309,6 +312,8 @@ export interface PublicSite {
    */
   showMap: boolean
   mapHeads: boolean
+  /** Whether a profile page is worth offering at all. */
+  showProfiles: boolean
   theme: SiteTheme
   i18n: SiteI18n
   servers: ServerCard[]

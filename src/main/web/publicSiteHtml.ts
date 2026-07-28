@@ -100,6 +100,22 @@ main{min-height:52vh;flex:1 0 auto}
 .section h2{position:relative;font-size:clamp(23px,3.1vw,32px);margin:0;font-weight:850;letter-spacing:-.6px;padding-left:15px}
 .section h2::before{content:'';position:absolute;left:0;top:.18em;bottom:.18em;width:4px;border-radius:3px;background:var(--accent);box-shadow:0 0 14px var(--glow)}
 .muted{color:var(--dim)}
+/* Player profile (#107). A head is pixel art: smoothing 8x8 pixels up to 48
+   is mush, so every one of them is rendered without interpolation. */
+.phead{image-rendering:pixelated;border-radius:6px;vertical-align:middle}
+.whoami{display:inline-flex;align-items:center;gap:8px;margin-right:10px;font-size:14px;
+  color:var(--text);text-decoration:none;opacity:.85}
+.whoami:hover{opacity:1}
+.pmeta{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:8px}
+.pmeta>div{display:flex;flex-direction:column;gap:2px;padding:10px 14px;border-radius:12px;
+  border:1px solid var(--line);background:color-mix(in srgb,var(--card) 70%,transparent);min-width:120px}
+.pmeta span{font-size:12px}
+.pmeta b{font-size:15px;font-weight:800}
+.inv{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:8px;margin-bottom:8px}
+.slot{position:relative;padding:10px 8px;border-radius:10px;border:1px solid var(--line);
+  background:color-mix(in srgb,var(--card) 70%,transparent);font-size:11.5px;overflow:hidden}
+.slot .iname{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.slot .icount{position:absolute;right:6px;bottom:5px;font-weight:800;font-size:12px;color:var(--accent)}
 .grid{display:grid;gap:18px}
 .grid.c3{grid-template-columns:repeat(auto-fill,minmax(300px,1fr))}
 .grid.c4{grid-template-columns:repeat(auto-fill,minmax(225px,1fr))}
@@ -249,6 +265,16 @@ ${STORE_MODAL_HTML}
 
 <script>
 var S=null,LANG='en',ptoken=localStorage.getItem('msms_ptoken')||'',pname=localStorage.getItem('msms_pname')||'',STORE=null;
+/* The signed-in player's uuid, for the head beside their name (#107). Cached in
+   localStorage rather than re-fetched on every render: it never changes for a
+   given name, and the profile read parses player .dat files. */
+var puuid=localStorage.getItem('msms_puuid')||'';
+function refreshWhoami(){
+ if(!ptoken){puuid='';localStorage.removeItem('msms_puuid');return}
+ if(puuid)return;
+ api('/api/public/profile',null,ptoken).then(function(r){
+  if(!r.ok||!r.j.uuid)return;
+  puuid=r.j.uuid;localStorage.setItem('msms_puuid',puuid);renderChrome()})}
 function esc(t){var d=document.createElement('div');d.textContent=(t==null?'':t);return d.innerHTML}
 /* esc() escapes < > &, which is right for text but NOT for an attribute: it
    leaves quotes alone, so esc(url) inside src="..." lets a store admin close
@@ -272,6 +298,7 @@ function applyTheme(){var t=S.theme||{};var r=document.documentElement.style;
 }
 function renderChrome(){
  document.getElementById('brandName').textContent=S.siteName;document.title=S.siteName;
+ refreshWhoami();
  var route=location.hash||'#/';
  var links=[['#/','nav.home'],['#/news','nav.news']];
  if(S.showStore)links.push(['#/store','nav.store']);
@@ -283,7 +310,7 @@ function renderChrome(){
  var sel=document.getElementById('langSel');var codes=Object.keys(S.i18n.langs);
  sel.innerHTML=codes.map(function(c){return '<option value="'+c+'"'+(c===LANG?' selected':'')+'>'+c.toUpperCase()+'</option>'}).join('');
  document.getElementById('accBtn').innerHTML=ptoken
-  ? '<span class="muted" style="margin-right:10px;font-size:14px">'+esc(pname)+'</span><button class="btn sm" onclick="plogout()">'+esc(T('auth.logout'))+'</button>'
+  ? '<a href="#/profile" class="whoami" title="'+escAttr(T('profile.title'))+'">'+headImg(puuid,24)+'<span>'+esc(pname)+'</span></a><button class="btn sm" onclick="plogout()">'+esc(T('auth.logout'))+'</button>'
   : '<button class="btn sm primary" onclick="openAuth()">'+esc(T('auth.login'))+'</button>';
  var links=[['#/','nav.home'],['#/news','nav.news']];
  if(S.showStore)links.push(['#/store','nav.store']);
@@ -411,6 +438,49 @@ function mapServerId(){return ''}
 /* Only ever called when the feed said heads are on, which is only when the
    operator agreed to send uuids to a third party. */
 function mapAvatarUrl(uuid){return 'https://crafatar.com/avatars/'+encodeURIComponent(uuid)+'?size=32&overlay'}
+/* ---------- player profile (#107) ----------
+   The head, the dates, and whatever server data the operator has published.
+   What comes back is decided on the server: a field the viewer may not see is
+   ABSENT from the response, not hidden here. */
+var PROFILE=null;
+function pageProfile(name){
+ setTimeout(function(){loadProfile(name)},0);
+ return '<section class="section"><div class="wrap"><div id="profBox" class="muted">'+esc(T('common.loading'))+'</div></div></section>'}
+function loadProfile(name){
+ api('/api/public/profile'+(name?('?name='+encodeURIComponent(name)):''),null,ptoken).then(function(r){
+  var el=document.getElementById('profBox');if(!el)return;
+  if(!r.ok){el.innerHTML='<p class="muted">'+esc(T('profile.notFound'))+'</p>';return}
+  PROFILE=r.j;el.innerHTML=profileHtml(r.j)})}
+function headImg(uuid,size){
+ return uuid?('<img class="phead" width="'+size+'" height="'+size+'" src="https://crafatar.com/avatars/'+
+  encodeURIComponent(uuid)+'?size='+size+'&overlay" alt="" loading="lazy"/>'):''}
+function invHtml(items){
+ if(!items||!items.length)return '<p class="muted">'+esc(T('profile.empty'))+'</p>';
+ return '<div class="inv">'+items.map(function(i){
+  var short=String(i.id||'').replace(/^minecraft:/,'');
+  return '<div class="slot" title="'+escAttr(short)+'"><span class="iname">'+esc(short)+'</span>'+
+   (i.count>1?'<span class="icount">'+i.count+'</span>':'')+'</div>'}).join('')+'</div>'}
+function profDate(ms){return ms?new Date(ms).toLocaleDateString():'—'}
+function profileHtml(p){
+ var rows=[[T('profile.registered'),profDate(p.registeredAt)],
+  [T('profile.lastSeen'),profDate(p.lastSeen)],
+  [T('profile.playtime'),(typeof p.playtimeHours==='number')?(p.playtimeHours+' h'):'—']];
+ var h='<div class="section-head"><h2>'+headImg(p.uuid,48)+' '+esc(p.mcName)+'</h2>'+
+  (p.online?'<span class="pill">'+esc(T('status.online'))+'</span>':'')+'</div>'+
+  '<div class="pmeta">'+rows.map(function(r){
+   return '<div><span class="muted">'+esc(r[0])+'</span><b>'+esc(String(r[1]))+'</b></div>'}).join('')+'</div>';
+ if(p.stats)h+='<h3>'+esc(T('profile.stats'))+'</h3><div class="pmeta">'+
+  '<div><span class="muted">HP</span><b>'+esc(String(p.stats.health==null?'—':Math.round(p.stats.health)))+'</b></div>'+
+  '<div><span class="muted">XP</span><b>'+esc(String(p.stats.xpLevel==null?'—':p.stats.xpLevel))+'</b></div></div>';
+ if(p.location)h+='<h3>'+esc(T('profile.location'))+'</h3><p class="muted">'+
+  esc(Math.round(p.location.x)+', '+Math.round(p.location.y)+', '+Math.round(p.location.z))+'</p>';
+ if(p.inventory)h+='<h3>'+esc(T('profile.inventory'))+'</h3>'+invHtml(p.inventory);
+ if(p.enderChest)h+='<h3>'+esc(T('profile.enderChest'))+'</h3>'+invHtml(p.enderChest);
+ /* Say what is missing and why. A profile that simply stops after the dates
+    reads as broken; "the server has not published this" reads as a choice. */
+ var hid=(p.hidden||[]).filter(function(k){return k!=='dates'&&k!=='playtime'&&k!=='identity'});
+ if(hid.length)h+='<p class="muted" style="margin-top:18px;font-size:13px">'+esc(T('profile.hidden'))+'</p>';
+ return h}
 function pageServers(){
  return '<section class="section"><div class="wrap"><div class="section-head"><h2>'+esc(T('servers.title'))+'</h2></div>'+
   (S.servers.length?serverGrid():'<p class="muted">'+esc(T('servers.empty'))+'</p>')+'</div></section>'}
@@ -478,6 +548,8 @@ function render(){
  else if(h==='#/store')app.innerHTML=pageStore();
  else if(h==='#/servers')app.innerHTML=pageServers();
  else if(h==='#/map'&&S.showMap)app.innerHTML=pageMap();
+ else if(h.indexOf('#/player/')===0)app.innerHTML=pageProfile(decodeURIComponent(h.slice(9)));
+ else if(h==='#/profile'&&ptoken)app.innerHTML=pageProfile('');
  else app.innerHTML=pageHome();
  /* Stop the 2s feed on the way OUT of the map. Without this a visitor who
     opened it once keeps polling for as long as the tab is open, from every
@@ -548,7 +620,12 @@ function doVerify(){amClear();
  api('/api/public/'+(AUTH_MODE==='reset'?'reset':'register')+'/verify',{mcName:window._rgName,code:document.getElementById('rgCode').value,password:document.getElementById('rgPass').value}).then(function(r){
   if(!r.ok){document.getElementById('amErr').textContent=authErr(r.j.error);return}
   ptoken=r.j.token;pname=r.j.mcName;localStorage.setItem('msms_ptoken',ptoken);localStorage.setItem('msms_pname',pname);closeAuth();render();if((location.hash||'#/')==='#/store')loadStore()})}
-function plogout(){api('/api/public/logout',{},ptoken);ptoken='';pname='';localStorage.removeItem('msms_ptoken');localStorage.removeItem('msms_pname');render();if((location.hash||'#/')==='#/store')loadStore()}
+function plogout(){api('/api/public/logout',{},ptoken);ptoken='';pname='';puuid='';
+ localStorage.removeItem('msms_ptoken');localStorage.removeItem('msms_pname');localStorage.removeItem('msms_puuid');
+ /* A profile page belongs to whoever was signed in, so signing out has to leave
+    it rather than re-render it empty. */
+ if((location.hash||'#/')==='#/profile'){location.hash='#/';return}
+ render();if((location.hash||'#/')==='#/store')loadStore()}
 
 /* ---------- crate ----------
    Was a hardcoded 5.2s reel that ignored the server's animation setting

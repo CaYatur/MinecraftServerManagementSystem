@@ -52,6 +52,8 @@ export function SiteView(): JSX.Element {
     setCfg({ ...cfg, theme: { ...cfg.theme, ...p } })
   const patchMap = (p: Partial<SiteConfig['map']>): void =>
     setCfg({ ...cfg, map: { ...cfg.map, ...p } })
+  const patchProfile = (p: Partial<SiteConfig['profile']>): void =>
+    setCfg({ ...cfg, profile: { ...cfg.profile, ...p } })
 
   const save = async (): Promise<void> => {
     const next = await window.msms.setSiteConfig({
@@ -64,6 +66,7 @@ export function SiteView(): JSX.Element {
       serverIp: cfg.serverIp,
       showStore: cfg.showStore,
       map: cfg.map,
+      profile: cfg.profile,
       theme: cfg.theme,
       i18n: cfg.i18n
     })
@@ -196,6 +199,23 @@ export function SiteView(): JSX.Element {
             </label>
           </div>
           <p className="hint">{t('site.mapHint')}</p>
+
+          {/* What a STRANGER may read on a player's profile (#107). A player
+              always sees their own — the toggles are about publishing, and an
+              inventory published is a list of who is worth robbing. */}
+          <div className="row wrap" style={{ gap: 12, alignItems: 'flex-end', marginTop: 14 }}>
+            {(['inventory', 'enderChest', 'stats', 'location'] as const).map((k) => (
+              <label className="switch" key={k} style={{ paddingBottom: 8 }}>
+                <input
+                  type="checkbox"
+                  checked={cfg.profile[k]}
+                  onChange={(e) => patchProfile({ [k]: e.target.checked })}
+                />
+                {t('site.profile_' + k)}
+              </label>
+            ))}
+          </div>
+          <p className="hint">{t('site.profileHint')}</p>
         </div>
       )}
 

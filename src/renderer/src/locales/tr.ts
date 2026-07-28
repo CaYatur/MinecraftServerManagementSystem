@@ -709,6 +709,12 @@ const tr: typeof en = {
     mapRound: 'Yuvarlama (blok)',
     mapNames: 'İsimleri göster',
     mapHeads: 'Oyuncu kafalarını çiz',
+    profile_inventory: 'Envanterleri yayınla',
+    profile_enderChest: 'Ender sandıklarını yayınla',
+    profile_stats: 'Can ve XP’yi yayınla',
+    profile_location: 'Konumları yayınla',
+    profileHint:
+      'Bir ZİYARETÇİNİN oyuncu profilinde görebilecekleri. Oyuncu kendi bilgilerini her zaman görür. Envanteri yayınlamak sunucuya kimin soyulmaya değer olduğunu, konumu yayınlamak da nerede olduğunu söyler.',
     mapHint:
       'Ziyaretçiler yuvarlanmış konumları görür, yükseklik gösterilmez — panel haritası yöneticiler içindir, aynı ayrıntı herkese açıkken tüm üslerin listesi olur. Oyuncu kafaları her oyuncunun UUID’sini crafatar.com adresine gönderir.',
     open: 'Siteyi aç',
