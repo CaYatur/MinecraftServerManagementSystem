@@ -57,6 +57,7 @@ import type {
 import type { CrateAnimation } from './crate'
 import type { RoleDef } from './rbac'
 import type { ApiKeyView, KeyServers } from './apikeys'
+import type { LivePlayer } from './livemap'
 import type { StoreLayout } from './storefront'
 
 /** request/response channels (renderer -> main via invoke). */
@@ -110,6 +111,7 @@ export const IPC = {
   propsWriteRaw: 'props:write-raw',
 
   playersList: 'players:list',
+  playersLive: 'players:live',
   playerOp: 'players:op',
   playerWhitelist: 'players:whitelist',
   playerBan: 'players:ban',
@@ -297,6 +299,12 @@ export interface MsmsApi {
   writeRawProperties(id: string, raw: string): Promise<void>
 
   getPlayers(id: string): Promise<PlayerInfo[]>
+  /**
+   * Live positions from the MSMS Bridge plugin (#26). Empty when the plugin
+   * is absent or has gone quiet - never the last known positions, which
+   * would be indistinguishable from current ones.
+   */
+  getLivePlayers(id: string): Promise<{ bridge: boolean; players: LivePlayer[] }>
   setOp(id: string, player: PlayerInfo, on: boolean): Promise<void>
   setWhitelist(id: string, player: PlayerInfo, on: boolean): Promise<void>
   setBan(id: string, player: PlayerInfo, on: boolean, reason?: string): Promise<void>

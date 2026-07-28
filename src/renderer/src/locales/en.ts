@@ -113,6 +113,18 @@ export default {
     settings: 'Settings',
     openFolder: 'Open folder'
   },
+  map: {
+    title: 'Live map',
+    live: 'Bridge live',
+    noBridge: 'Bridge not connected',
+    heatmap: 'Heatmap',
+    cellChunk: 'Chunk (16)',
+    cellBlocks: '{{n}} blocks',
+    shown: '{{n}} shown',
+    emptyDimension: 'Nobody is in this dimension right now.',
+    needsBridge:
+      'No live positions yet. Install the MSMS-Bridge plugin in the plugins folder of the server and restart it — positions arrive over the server console, so no extra port is opened.'
+  },
   audit: {
     title: 'Audit log',
     modeLog: 'Log',
@@ -385,6 +397,7 @@ export default {
     xp: 'XP level',
     position: 'Position',
     inventory: 'Inventory',
+    enderChest: 'Ender chest',
     inventorySoon: 'Live inventory viewer is coming in a later update.',
     noInventory: 'No saved inventory (the player must have logged in and the world saved). Icons load from an online source.',
     clickHint: 'Click a player card for details and actions.',

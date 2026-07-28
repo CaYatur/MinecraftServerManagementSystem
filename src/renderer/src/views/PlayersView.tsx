@@ -19,10 +19,12 @@ import {
   Heart,
   Drumstick,
   Sparkles,
-  Clock
+  Clock,
+  Map as MapIcon
 } from 'lucide-react'
 import { useStore } from '../store'
 import { PlayerAvatar } from '../components/PlayerAvatar'
+import { LiveMap } from '../components/LiveMap'
 import { ItemIcon } from '../components/ItemIcon'
 import type { PlayerInfo } from '@shared/types'
 
@@ -114,11 +116,34 @@ export function PlayersView(): JSX.Element {
   }
 
   const online = list.filter((p) => p.online).length
+  const [section, setSection] = useState<'roster' | 'map'>('roster')
 
   return (
     <div>
       <WorldControls id={id} running={running} />
 
+      {/* Roster and map are the same question asked two ways - who is here, and
+          where are they - so they live together rather than in a separate tab
+          the operator has to remember exists (#26). */}
+      <div className="tabs" style={{ border: 'none', padding: 0, marginBottom: 12 }}>
+        <button
+          className={`tab ${section === 'roster' ? 'active' : ''}`}
+          onClick={() => setSection('roster')}
+        >
+          {t('players.title')}
+        </button>
+        <button
+          className={`tab ${section === 'map' ? 'active' : ''}`}
+          onClick={() => setSection('map')}
+        >
+          <MapIcon size={13} style={{ verticalAlign: -2, marginRight: 5 }} />
+          {t('map.title')}
+        </button>
+      </div>
+
+      {section === 'map' && <LiveMap serverId={id} />}
+
+      <div style={{ display: section === 'roster' ? undefined : 'none' }}>
       <div className="row" style={{ justifyContent: 'space-between', marginBottom: 10 }}>
         <div className="section-title" style={{ margin: 0 }}>
           {t('players.title')} <span className="dim">· {online} online</span>
@@ -237,9 +262,30 @@ export function PlayersView(): JSX.Element {
             ) : (
               <p className="hint" style={{ marginTop: 0 }}>{t('players.noInventory')}</p>
             )}
+
+            {/* The other half of a player's belongings, parsed from the same
+                .dat and never shown before (#49). Hidden when empty rather than
+                showing an empty grid - most players never use one. */}
+            {selected.enderChest && selected.enderChest.length > 0 && (
+              <>
+                <div className="section-title" style={{ marginBottom: 8 }}>
+                  <Sparkles size={13} style={{ verticalAlign: -2, marginRight: 6 }} />
+                  {t('players.enderChest')}
+                </div>
+                <div className="inv-grid">
+                  {selected.enderChest.map((it, i) => (
+                    <div className="inv-slot" key={i} title={`${it.id} ×${it.count}`}>
+                      <ItemIcon id={it.id} version={mcVersion} size={30} />
+                      {it.count > 1 && <span className="inv-count">{it.count}</span>}
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
+      </div>
     </div>
   )
 }

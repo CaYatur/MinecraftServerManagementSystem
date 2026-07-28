@@ -176,6 +176,18 @@ export interface BridgeSnapshot {
   lastTs: number
   tps: number | null
   mspt: number | null
+  /**
+   * Live players with positions, from the last `players` heartbeat (#26, #49).
+   *
+   * Kept on the snapshot rather than in a store of its own because it has
+   * exactly the lifetime of the bridge connection: it is only meaningful while
+   * the plugin is talking, and it must vanish when it stops. Persisting a
+   * position feed would mean serving somebody's last known location long after
+   * they logged off.
+   */
+  players: BridgePlayer[]
+  /** When `players` was last refreshed; 0 = never. */
+  playersTs: number
 }
 
 export function newBridgeSnapshot(): BridgeSnapshot {
@@ -184,8 +196,22 @@ export function newBridgeSnapshot(): BridgeSnapshot {
     intervalMs: BRIDGE_DEFAULT_INTERVAL_MS,
     lastTs: 0,
     tps: null,
-    mspt: null
+    mspt: null,
+    players: [],
+    playersTs: 0
   }
+}
+
+/**
+ * The live roster, or an empty list once it has gone stale.
+ *
+ * Same freshness rule as the tick numbers, and for the same reason: a plugin
+ * that stopped talking must not leave players frozen on the map at the last
+ * place it saw them. Stale position data looks exactly like live position data,
+ * which is what makes it worse than none.
+ */
+export function bridgePlayers(b: BridgeSnapshot, now: number): BridgePlayer[] {
+  return bridgeFresh(b, now) && b.playersTs > 0 ? b.players : []
 }
 
 /** True while bridge telemetry is fresh enough to be trusted over RCON. */

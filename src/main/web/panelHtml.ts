@@ -2,6 +2,7 @@
 // HTTP server. Vanilla JS; authenticates with a bearer token in localStorage.
 import { CRATE_CSS, CRATE_JS, CRATE_MODAL_HTML } from '@shared/crateUi'
 import { STORE_CSS, STORE_JS, STORE_MODAL_HTML, CRATE_ICON_SVG } from '@shared/storeUi'
+import { MAP_CSS, MAP_HTML, MAP_JS } from '@shared/mapUi'
 export function getPanelHtml(): string {
   return `<!doctype html><html lang="en"><head>
 <meta charset="utf-8"/>
@@ -122,6 +123,7 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);
 /* crate + storefront — one implementation, shared with the public site */
 ${CRATE_CSS}
 ${STORE_CSS}
+${MAP_CSS}
 .findings{display:flex;flex-direction:column;gap:8px;margin:10px 0}
 .finding{border:1px solid var(--border);border-left-width:3px;border-radius:9px;padding:9px 11px;background:var(--elev)}
 .finding.info{border-left-color:#60a5fa}
@@ -255,6 +257,7 @@ h2{margin:8px 0;font-weight:800;letter-spacing:-.4px}
       <button class="tab on" id="tabConsole" onclick="showTab('console')">Console</button>
       <button class="tab" id="tabStats" onclick="showTab('stats')">Performance</button>
       <button class="tab" id="tabTimeline" onclick="showTab('timeline')">Timeline</button>
+      <button class="tab" id="tabMap" onclick="showTab('map')">Map</button>
       <button class="tab" id="tabStore" onclick="showTab('store')">Store</button>
       <button class="tab hidden" id="tabAlertsBtn" onclick="showTab('alerts')">Alerts</button>
       <button class="tab hidden" id="tabManageBtn" onclick="showTab('manage')">Manage</button>
@@ -313,6 +316,7 @@ h2{margin:8px 0;font-weight:800;letter-spacing:-.4px}
       <div id="dCharts" class="charts"></div>
     </div>
     <div id="panelTimeline" class="hidden"><div class="card tight" id="dEvents"></div></div>
+    <div id="panelMap" class="hidden"><div class="card">${MAP_HTML}</div></div>
     <div id="panelStore" class="hidden">
       <div class="row" style="margin-bottom:10px"><b>Store</b><div class="spacer"></div><span id="dBal" class="badge"></span></div>
       <div id="sfBox"></div>
@@ -423,10 +427,14 @@ function renderDetail(){show('detail');var s=current;document.getElementById('dN
  document.getElementById('tabManageBtn').classList.toggle('hidden',!has('store'));
  document.getElementById('tabAlertsBtn').classList.toggle('hidden',!has('settings'));showTab('console')}
 function showTab(tab){activeTab=tab;
- [['console','panelConsole','tabConsole'],['stats','panelStats','tabStats'],['timeline','panelTimeline','tabTimeline'],['store','panelStore','tabStore'],['alerts','panelAlerts','tabAlertsBtn'],['manage','panelManage','tabManageBtn']]
+ [['console','panelConsole','tabConsole'],['stats','panelStats','tabStats'],['timeline','panelTimeline','tabTimeline'],['map','panelMap','tabMap'],['store','panelStore','tabStore'],['alerts','panelAlerts','tabAlertsBtn'],['manage','panelManage','tabManageBtn']]
   .forEach(function(t){document.getElementById(t[1]).classList.toggle('hidden',tab!==t[0]);
    document.getElementById(t[2]).classList.toggle('on',tab===t[0])});
  if(tab==='store')loadStore();
+ /* Only poll while the tab is visible: the feed is every two seconds, and a
+    background tab quietly hammering it is the kind of cost nobody attributes
+    to the page they left open. */
+ if(tab==='map')mapStart();else mapStop();
  if(tab==='manage')loadManage();
  if(tab==='stats')loadStats();
  if(tab==='timeline')loadEvents();
@@ -649,6 +657,8 @@ function sfBuy(pid){buy(pid)}
 function buy(pid){api('/api/servers/'+current.id+'/store/buy',{method:'POST',body:JSON.stringify({productId:pid})}).then(function(r){if(!r.ok){alert(r.body.error==='insufficient'?'Not enough balance':r.body.error==='no-mc-linked'?'No Minecraft name linked to your account':r.body.error==='out-of-stock'?'That sold out.':r.body.error==='limit-reached'?'You already have the maximum of that.':('Error: '+r.body.error));loadStore();return}loadStore();sfCloseDetail();if(r.body.reward&&r.body.reward.crate){openCrate(r.body.reward,{prefix:'🎉 '})}else{alert('You received: '+(r.body.reward?r.body.reward.name:''))}})}
 ${CRATE_JS}
 ${STORE_JS}
+${MAP_JS}
+function mapServerId(){return current?current.id:''}
 var CRATE_ICON_SVG=${JSON.stringify(CRATE_ICON_SVG)};
 
 /* ---- store admin: configuration (store scope) ---- */
@@ -859,7 +869,7 @@ function pollConsole(){if(!current)return;api('/api/servers/'+current.id+'/conso
  document.getElementById('dStatus').innerHTML=statusDot(r.body.status)+' '+r.body.status})}
 function startPoll(){stopPoll();pollConsole();pollTimer=setInterval(function(){pollConsole();if(activeTab==='timeline')loadEvents()},2000)}
 function stopPoll(){if(pollTimer){clearInterval(pollTimer);pollTimer=null}}
-function showList(){stopPoll();current=null;loadServers()}
+function showList(){stopPoll();mapStop();current=null;loadServers()}
 /* ---- news (publish to the public website from the panel) ---- */
 var editingPost=null;var galleryImages=[];var allUploads=[];
 function showSection(which){

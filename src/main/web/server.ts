@@ -21,6 +21,8 @@ import {
   sanitizeCommandArg
 } from '@shared/ops'
 import type { PlayerInfo } from '@shared/types'
+import { bridgeFresh, bridgePlayers } from '@shared/bridge'
+import { heatmap, livePlayers, mapBounds, normalizeDimension } from '@shared/livemap'
 import * as metrics from '../core/metrics'
 import * as events from '../core/events'
 import * as alerts from '../core/alerts'
@@ -705,6 +707,32 @@ async function handlePanel(req: IncomingMessage, res: ServerResponse): Promise<v
       const to = Number(url.searchParams.get('to')) || now
       return sendJson(res, 200, events.uptime(id, from, to, now))
     }
+    // Live map feed (#26): positions, bounds and a chunk heatmap in one call,
+    // so a client redraws from a single response instead of stitching three.
+    if (sub === 'map' && method === 'GET') {
+      if (!gate('view')) return
+      const rt = processManager.getRuntime(id)
+      const now = Date.now()
+      const all = rt ? livePlayers(bridgePlayers(rt.bridge, now)) : []
+      // One dimension at a time: overworld and nether coordinates share an axis
+      // but not a scale, and drawing them on one canvas puts a player in the
+      // nether 8x closer to spawn than they are.
+      const dim = normalizeDimension(url.searchParams.get('dim') ?? 'overworld')
+      const players = all.filter((p) => p.dim === dim)
+      const cell = Math.min(512, Math.max(1, Number(url.searchParams.get('cell')) || 16))
+      return sendJson(res, 200, {
+        // `bridge: false` is the honest answer when the plugin is absent or
+        // silent — an empty player list on its own reads as "nobody online".
+        bridge: rt ? bridgeFresh(rt.bridge, now) : false,
+        dimension: dim,
+        dimensions: [...new Set(all.map((p) => p.dim))].sort(),
+        players,
+        bounds: mapBounds(players),
+        heatmap: heatmap(players, cell).slice(0, 500),
+        cell,
+        at: now
+      })
+    }
     // Performance history: ?from&to (ms epoch) &res=10s|1m|1h &limit=
     if (sub === 'metrics' && method === 'GET') {
       if (!gate('view')) return
@@ -766,6 +794,31 @@ async function handlePanel(req: IncomingMessage, res: ServerResponse): Promise<v
     // No GET here: `/api/servers/:id/players` is a single path segment, so the
     // matcher above claims it and returns. A second handler would be dead code
     // that looks like the authoritative one.
+    // ---- player detail + live map feed (#49, #26) ----
+    if (group === 'players' && method === 'GET' && action) {
+      // Stricter than the roster on purpose: the roster is "who plays here",
+      // this is one person's inventory, ender chest, coordinates and playtime.
+      // Reading that is a player-management act, not a status glance.
+      if (!gate('players')) return
+      if (!isValidMcName(action)) return sendJson(res, 400, { error: 'invalid-player-name' })
+      const roster = await getPlayers(id)
+      const found = roster.find((p) => p.name.toLowerCase() === action.toLowerCase())
+      if (!found) return sendJson(res, 404, { error: 'player-not-found' })
+      const rt = processManager.getRuntime(id)
+      const live = rt ? livePlayers(bridgePlayers(rt.bridge, Date.now())) : []
+      const mine = live.find((p) => p.name.toLowerCase() === action.toLowerCase())
+      return sendJson(res, 200, {
+        player: found,
+        // Split from the stored fields rather than merged over them. The .dat
+        // position is where the player was when the server last saved; the
+        // bridge position is where they are now. Overwriting one with the
+        // other would make a stale coordinate indistinguishable from a live
+        // one, which is the whole question a caller is asking.
+        live: mine ?? null,
+        liveSource: mine ? 'bridge' : null
+      })
+    }
+
     if (group === 'players') {
       if (method === 'POST' && isModerationAction(action)) {
         if (!gate('players')) return
