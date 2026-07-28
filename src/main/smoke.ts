@@ -16,6 +16,7 @@ import * as webPlayerAuth from './web/playerAuth'
 import * as economy from './store/economy'
 import * as siteMod from './web/site'
 import { pickSiteLang } from './web/siteLang'
+import { SCOPES } from '@shared/web'
 import type { LedgerEntry, Product, Scope } from '@shared/web'
 import { categoryName, filterLedger, ledgerSummary } from '@shared/economy'
 import { ANALYSIS_EVENT_LIMIT, ANALYSIS_EVENT_TYPES } from '@shared/analysis'
@@ -104,7 +105,7 @@ import { aggregateJoins, type JoinRecord } from '@shared/joins'
 import * as auditMod from './core/audit'
 import type { UptimeReport } from '@shared/uptime'
 import type { JavaArgsConfig, MetricSeries, ServerConfig, ServerEvent } from '@shared/types'
-import { alertsPath, uploadsDir, auditDir } from './paths'
+import { alertsPath, uploadsDir, auditDir, dataDir } from './paths'
 import { analyzeCrash } from './core/crash'
 import { CREATABLE_TYPES, createErrorKey } from '@shared/versions'
 
@@ -4956,6 +4957,211 @@ export async function runWebSmoke(): Promise<void> {
         } catch {
           /* already gone */
         }
+        if (snap == null) rmSync(af, { force: true })
+        else writeFileSync(af, snap, 'utf-8')
+      }
+    }
+
+    // ---- mods, Java, telemetry, deregister (#53 part 3) ----
+    {
+      const fixture = getConfig().servers.find((s) => s.id === id)
+      if (!fixture) return fail('the fixture server vanished before the mods gate')
+      const mBase = '/api/servers/' + id + '/mods'
+      const jarRel = 'plugins/smoke-mod.jar'
+      const jarAbs = join(fixture.path, 'plugins', 'smoke-mod.jar')
+      const af = join(auditDir(), 'audit.jsonl')
+      const snap = existsSync(af) ? readFileSync(af, 'utf-8') : null
+      const telemetrySnapshot = getConfig().telemetry
+      // The deregister test needs a server it is allowed to lose. Under
+      // msms-data/ because scanServers skips that folder — a fixture the
+      // discovery pass re-adds would make "it is gone" untestable.
+      const forgetRoot = join(dataDir(), 'smoke-forget-server')
+      const forgetId = 'smoke-forget-' + Date.now()
+      const modKey = apikeys.createKey({ label: 'smoke_mods', scopes: ['files'], servers: [id] })
+      // Every scope there is, on every server. It still must not reach an
+      // owner-only route: a key carries scopes, never a role.
+      const superKey = apikeys.createKey({
+        label: 'smoke_super',
+        scopes: [...SCOPES],
+        servers: 'all',
+        canAudit: true
+      })
+      const kget = (p: string, k: string): Promise<Response> =>
+        fetch(base + p, { headers: { 'X-API-Key': k } })
+      const kpost = (p: string, body: unknown, k: string): Promise<Response> =>
+        fetch(base + p, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-API-Key': k },
+          body: JSON.stringify(body)
+        })
+      const kdel = (p: string, k: string): Promise<Response> =>
+        fetch(base + p, { method: 'DELETE', headers: { 'X-API-Key': k } })
+      try {
+        rmSync(af, { force: true })
+        auditMod._reset()
+        mkdirSync(join(fixture.path, 'plugins'), { recursive: true })
+        writeFileSync(jarAbs, 'not really a jar', 'utf-8')
+
+        // ---- plugins / mods ----
+        // `files`, not `view`: installing a jar is what runs at the next start.
+        r = await get(mBase, ft)
+        if (r.status !== 403) return fail('mod list without files scope expected 403, got ' + r.status)
+        r = await kget(mBase, modKey.secret)
+        if (r.status !== 200) return fail('mod list expected 200, got ' + r.status + ' ' + (await r.text()))
+        const modList = (await r.json()) as { mods: { path: string; enabled: boolean }[] }
+        if (!modList.mods.some((mo) => mo.path === jarRel)) {
+          return fail('the seeded jar is missing from the mod list')
+        }
+
+        // Missing parameters are refused before anything reaches Modrinth, so
+        // this stays true with the network unplugged.
+        r = await kget(mBase + '/search', modKey.secret)
+        if (r.status !== 400) return fail('a search with no query expected 400, got ' + r.status)
+        r = await kget(mBase + '/detail', modKey.secret)
+        if (r.status !== 400) return fail('a detail with no projectId expected 400, got ' + r.status)
+        r = await kpost(mBase + '/install', {}, modKey.secret)
+        if (r.status !== 400) return fail('an install with no projectId expected 400, got ' + r.status)
+        r = await kpost(mBase + '/update', { rel: jarRel }, modKey.secret)
+        if (r.status !== 400) return fail('an update with no versionId expected 400, got ' + r.status)
+
+        // A path outside plugins/ or mods/ is the caller naming something they
+        // may not name — a malformed request, not a conflict with server state.
+        r = await kpost(mBase + '/toggle', { rel: '../../evil.jar', enable: false }, modKey.secret)
+        if (r.status !== 400) return fail('a traversing mod path expected 400, got ' + r.status)
+        if (((await r.json()) as { error: string }).error !== 'invalid-mod-path') {
+          return fail('the traversal refusal gave the wrong error')
+        }
+
+        r = await kpost(mBase + '/toggle', { rel: jarRel, enable: false }, modKey.secret)
+        if (r.status !== 200) return fail('mod disable expected 200, got ' + r.status)
+        if (existsSync(jarAbs)) return fail('disabling did not rename the jar')
+        if (!existsSync(jarAbs + '.disabled')) return fail('the disabled jar is not there')
+        if (!auditMod.query({ actions: ['mod.toggle'] }).entries.some((e) => e.detail === 'disabled')) {
+          return fail('a mod toggle was not audited')
+        }
+
+        // Delete: shape first, then intent. A call with no `rel` is malformed,
+        // and auditing it as a refused delete of "" records a decision nobody
+        // made.
+        r = await kdel(mBase, modKey.secret)
+        if (r.status !== 400) return fail('a delete with no rel expected 400, got ' + r.status)
+        if (auditMod.query({ actions: ['mod.delete'] }).entries.length) {
+          return fail('a malformed delete was audited as a refused delete')
+        }
+        r = await kdel(mBase + '?rel=' + encodeURIComponent(jarRel + '.disabled'), modKey.secret)
+        if (r.status !== 400) return fail('a delete without confirm expected 400, got ' + r.status)
+        if (!auditMod.query({ actions: ['mod.delete'] }).entries.some((e) => e.ok === false)) {
+          return fail('a refused delete was not audited')
+        }
+        r = await kdel(
+          mBase + '?confirm=true&rel=' + encodeURIComponent(jarRel + '.disabled'),
+          modKey.secret
+        )
+        if (r.status !== 200) return fail('mod delete expected 200, got ' + r.status)
+        if (existsSync(jarAbs + '.disabled')) return fail('the jar survived its delete')
+
+        // ---- Java + telemetry: owner-only, and no key is an owner ----
+        for (const [label, p] of [
+          ['java list', '/api/java'],
+          ['telemetry read', '/api/telemetry']
+        ] as [string, string][]) {
+          r = await get(p, ft)
+          if (r.status !== 403) return fail(label + ' as a non-owner expected 403, got ' + r.status)
+          // The point of this one: the key holds every scope on every server and
+          // still cannot reach a host-wide route, because principalForKey never
+          // issues a role.
+          r = await kget(p, superKey.secret)
+          if (r.status !== 403) {
+            return fail(label + ' with an all-scope key expected 403, got ' + r.status)
+          }
+          r = await get(p, ot)
+          if (r.status !== 200) return fail(label + ' as owner expected 200, got ' + r.status)
+        }
+        const installs = ((await (await get('/api/java', ot)).json()) as { installs: unknown[] }).installs
+        if (!Array.isArray(installs)) return fail('the java list is not an array')
+
+        // The only input is a major version, and it selects from a release list
+        // rather than naming a URL. Nonsense is refused before any download.
+        for (const bad of [0, 999, 'twenty-one', 21.5]) {
+          r = await post('/api/java/install', { major: bad }, ot)
+          if (r.status !== 400) return fail('java install major=' + bad + ' expected 400, got ' + r.status)
+        }
+
+        // Telemetry is persisted, so a bad value does not fail the request that
+        // set it — it fails every prune afterwards, across restarts.
+        for (const [body, field] of [
+          [{ rawHours: 'abc' }, 'rawHours'],
+          [{ enabled: 'false' }, 'enabled'],
+          [{ rawHours: 1.5 }, 'rawHours'],
+          [{ minuteDays: 0 }, 'minuteDays'],
+          [{ hourDays: 99999 }, 'hourDays'],
+          [{ rawDays: 3 }, 'rawDays']
+        ] as [Record<string, unknown>, string][]) {
+          r = await post('/api/telemetry', body, ot)
+          if (r.status !== 400) {
+            return fail('telemetry ' + JSON.stringify(body) + ' expected 400, got ' + r.status)
+          }
+          const err = (await r.json()) as { field?: string }
+          if (err.field !== field) return fail('telemetry refusal named ' + err.field + ', expected ' + field)
+        }
+        if (getConfig().telemetry?.rawHours !== telemetrySnapshot?.rawHours) {
+          return fail('a refused telemetry patch changed the stored config')
+        }
+        r = await post('/api/telemetry', { rawHours: 48 }, ot)
+        if (r.status !== 200) return fail('a valid telemetry patch expected 200, got ' + r.status)
+        if (metrics.telemetryConfig().rawHours !== 48) return fail('the telemetry patch did not land')
+        // Merging, not replacing: a patch that names one tier keeps the others.
+        if (metrics.telemetryConfig().enabled !== true) {
+          return fail('a partial telemetry patch dropped `enabled`')
+        }
+
+        // ---- deregister: owner only, confirmed, and the files stay ----
+        mkdirSync(forgetRoot, { recursive: true })
+        writeFileSync(join(forgetRoot, 'server.jar'), 'fixture', 'utf-8')
+        updateConfig((c) => {
+          c.servers.push({
+            ...fixture,
+            id: forgetId,
+            name: 'Forget me',
+            path: forgetRoot
+          })
+        })
+        const fBaseId = '/api/servers/' + forgetId
+        r = await del(fBaseId + '?confirm=true', ft)
+        if (r.status !== 403) return fail('deregister as a non-owner expected 403, got ' + r.status)
+        r = await kdel(fBaseId + '?confirm=true', superKey.secret)
+        if (r.status !== 403) return fail('deregister with an all-scope key expected 403, got ' + r.status)
+        r = await del(fBaseId, ot)
+        if (r.status !== 400) return fail('deregister without confirm expected 400, got ' + r.status)
+        if (!getConfig().servers.some((s) => s.id === forgetId)) {
+          return fail('an unconfirmed deregister removed the server anyway')
+        }
+        r = await del(fBaseId + '?confirm=true', ot)
+        if (r.status !== 200) return fail('deregister expected 200, got ' + r.status + ' ' + (await r.text()))
+        if (getConfig().servers.some((s) => s.id === forgetId)) {
+          return fail('the server is still registered after a deregister')
+        }
+        // The whole reason this half is exposed and `deleteFiles` is not.
+        if (!existsSync(join(forgetRoot, 'server.jar'))) {
+          return fail('deregister deleted the server files')
+        }
+        if (!auditMod.query({ actions: ['server.forget'] }).entries.some((e) => e.ok === true)) {
+          return fail('a deregister was not audited')
+        }
+
+        console.log(
+          'WEB-SMOKE: mods + java + telemetry + deregister OK (files-scoped, owner-only host routes, files kept)'
+        )
+      } finally {
+        apikeys.deleteKey(modKey.key.id)
+        apikeys.deleteKey(superKey.key.id)
+        updateConfig((c) => {
+          c.servers = c.servers.filter((s) => s.id !== forgetId)
+          c.telemetry = telemetrySnapshot
+        })
+        rmSync(forgetRoot, { recursive: true, force: true })
+        rmSync(jarAbs, { force: true })
+        rmSync(jarAbs + '.disabled', { force: true })
         if (snap == null) rmSync(af, { force: true })
         else writeFileSync(af, snap, 'utf-8')
       }

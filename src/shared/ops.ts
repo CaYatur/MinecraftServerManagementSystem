@@ -149,6 +149,70 @@ export function localOnlyJavaFields(patch: Record<string, unknown> | null | unde
   return LOCAL_ONLY_JAVA_FIELDS.filter((f) => patch[f] !== undefined)
 }
 
+// ---- telemetry retention ----
+
+/**
+ * Accepted range for each retention tier: `[min, max]`.
+ *
+ * `rawHours` is capped at a year and the day tiers at ten, which is far more
+ * than anyone keeps — the bound is not a policy, it is there so a number that
+ * reaches the config is a number.
+ */
+export const TELEMETRY_LIMITS: Record<string, [number, number]> = {
+  rawHours: [1, 8760],
+  minuteDays: [1, 3650],
+  hourDays: [1, 3650]
+}
+
+export type TelemetryPatch = {
+  enabled?: boolean
+  rawHours?: number
+  minuteDays?: number
+  hourDays?: number
+}
+
+export type TelemetryPatchResult =
+  | { ok: true; patch: TelemetryPatch }
+  | { ok: false; error: string; field?: string }
+
+/**
+ * Validate a telemetry-config patch before it is merged into the stored config.
+ *
+ * This one is persisted, which is what makes it worth checking rather than
+ * casting: `metrics.retentionMs()` does arithmetic on these numbers on every
+ * prune, so `{ rawHours: "abc" }` does not fail the request that set it — it
+ * fails every prune afterwards, across restarts, from a config file nobody
+ * suspects. `{ enabled: "false" }` is worse: truthy, so it reads as "on" while
+ * the operator believes they turned it off.
+ *
+ * Unknown keys are refused rather than dropped. A caller sending `rawDays`
+ * because they misremembered the name should be told, not silently ignored and
+ * left believing retention changed.
+ */
+export function sanitizeTelemetryPatch(body: unknown): TelemetryPatchResult {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return { ok: false, error: 'invalid-body' }
+  }
+  const src = body as Record<string, unknown>
+  const patch: TelemetryPatch = {}
+  for (const [k, v] of Object.entries(src)) {
+    if (k === 'enabled') {
+      if (typeof v !== 'boolean') return { ok: false, error: 'not-a-boolean', field: k }
+      patch.enabled = v
+      continue
+    }
+    const range = TELEMETRY_LIMITS[k]
+    if (!range) return { ok: false, error: 'unknown-field', field: k }
+    if (typeof v !== 'number' || !Number.isInteger(v)) {
+      return { ok: false, error: 'not-an-integer', field: k }
+    }
+    if (v < range[0] || v > range[1]) return { ok: false, error: 'out-of-range', field: k }
+    ;(patch as Record<string, number>)[k] = v
+  }
+  if (!Object.keys(patch).length) return { ok: false, error: 'no-fields' }
+  return { ok: true, patch }
+}
+
 // ---- worlds ----
 
 export type WorldAction = 'activate' | 'rename' | 'clone' | 'reset' | 'delete'

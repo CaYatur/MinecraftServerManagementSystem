@@ -232,9 +232,89 @@ A patch mixing a safe field with a forbidden one is refused **whole** — the sa
 half is not applied, so a caller never has to guess which part of their request
 landed.
 
+## Plugins and mods
+
+```
+GET    /api/servers/:id/mods                       files
+GET    /api/servers/:id/mods/search?q=             files
+GET    /api/servers/:id/mods/detail?projectId=     files
+GET    /api/servers/:id/mods/updates               files
+POST   /api/servers/:id/mods/install               files  { projectId, versionId? }
+POST   /api/servers/:id/mods/update                files  { rel, versionId }
+POST   /api/servers/:id/mods/toggle                files  { rel, enable }
+DELETE /api/servers/:id/mods?rel=&confirm=true     files
+```
+
+**`files`, not a new `mods` scope.** Installing a plugin writes a jar into the
+server directory and deleting one removes a file from it — both things `files`
+already permits outright. A separate scope would be a strict subset of one the
+caller must already hold to do the same work by hand: it would look like a
+boundary while being none.
+
+`rel` is a path relative to the server root and must start with `plugins/` or
+`mods/`; anything else is `400 invalid-mod-path`. Install and update name a
+**project**, never a URL — the download link is resolved server-side from that
+project's own version list, and the file's SHA-1 is checked, so a caller cannot
+point the writer at an arbitrary file.
+
+Search, detail and update-check reach out to Modrinth. A network failure there
+is `409` with the underlying reason; `updates` alone answers `{ ok: false }`
+instead, because a list of plugins is still worth returning when the version
+check is what failed.
+
+## Host-wide settings
+
+```
+GET  /api/java?refresh=true      owner session
+POST /api/java/install           owner session   { major }
+GET  /api/telemetry              owner session
+POST /api/telemetry              owner session   partial TelemetryConfig
+```
+
+None of these belong to one server, so a per-server scope cannot express them.
+They require an **owner session**, and that has a consequence worth stating
+plainly: `principalForKey` always builds a principal with `role: 'user'` —
+a key carries scopes, never a role — so **no API key can reach these routes,
+however it is scoped.** A key holding every scope on every server still gets
+`403`. If you need them automated, drive them from a panel session.
+
+`major` is the only input to a Java install, and it selects from Adoptium's
+release list; the caller never names a URL or a path. Out-of-range values are
+`400 invalid-major` before anything is downloaded.
+
+The telemetry patch is **validated, not cast**: `enabled` must be a boolean and
+the three retention numbers integers within range, and an unknown key is refused
+rather than dropped. This config is persisted, so a bad value does not fail the
+request that set it — it fails every metrics prune afterwards, across restarts,
+from a config file nobody suspects. `{ enabled: "false" }` is the sharp case:
+truthy, so it reads as *on* while the operator believes they turned it off.
+
+## Deregistering a server
+
+```
+DELETE /api/servers/:id?confirm=true    owner session
+```
+
+Removes the server from MSMS and **leaves every file on disk** (the response says
+`filesKept: true`). Refused with `409 server-running` while it is up — dropping a
+running server from the registry orphans the process, because every lookup that
+would reach for its config to stop it then 404s.
+
+### Creating a server, and deleting its files, are not exposed
+
+`addServer(path)` takes a host filesystem path chosen by the caller, and
+`removeServer(id, true)` is a recursive delete of a directory tree. Those are the
+same class of thing `javaPath` was refused for above: an HTTP caller does not
+name paths on the host, and does not erase directories.
+
+Deregistering is exposed because it is recoverable — the folder is untouched and
+a rescan finds it again. That is the whole line: the reversible half is on the
+surface, the irreversible half is not.
+
 ## Not in this surface
 
-Still IPC-only, tracked in #53: plugins/mods search and install, Java list and
-install, metrics tier config, and creating or removing a server (those are not
-per-server, so they need an owner-level gate rather than a scope). World
-export/import as noted above.
+- **Creating or importing a server**, and deleting a server's files — above.
+- **World export/import** — both take a local filesystem path, and a zip upload
+  or download is a different shape of endpoint than the rest of this surface.
+- **Backup schedules** — the scheduler is cron-shaped state rather than an
+  operation; tracked separately.
