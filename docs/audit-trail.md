@@ -76,17 +76,32 @@ This list is read off the actual `audit.record` call sites, not aspirational:
 | `command.run` | **`console`** (desktop console), `webpanel` — success and failure; the command text is the `target` |
 | `purchase` | `public` |
 | `java.install` | `panel` |
+| `balance.grant` / `balance.remove` / `balance.set` | `panel` (desktop), `webpanel`, `api` — success and refusal |
+| `apikey.create` / `apikey.revoke` / `apikey.delete` | `panel` (desktop), `webpanel` |
+| `api.post` / `api.delete` | `api` — any mutating call made with an API key |
 
-### Known gap: balance changes are not in the audit trail
+### Balance administration
 
-An admin granting, removing or setting a player's balance is recorded in the
-**economy ledger** (`LedgerEntry.by` — the web username, `desktop`, or
-`purchase`) but **not** in the audit trail. The ledger answers "who changed this
-balance" fully, and the desktop and panel both display and search it — but a
-query over the audit trail alone will not show balance administration.
+A player *spending* currency is audited as `purchase`. An admin *creating*
+currency out of nothing used to be recorded only in the economy ledger, which
+made the higher-privilege action of the two the one missing from the global
+trail (#68, fixed).
 
-Purchases *are* audited (as `purchase`, from `public`), so the two economy
-paths are currently inconsistent. Tracked in #68.
+Both are audited now:
+
+- `detail` carries the **applied** delta and the resulting balance, e.g.
+  `-300 -> 0 (correction)`. Applied, not requested: `addBalance` clamps at zero,
+  so an admin asking to remove 500 from a balance of 300 removes 300, and an
+  entry claiming 500 would be a false record.
+- The entry is written inside `addBalance`/`setBalance` rather than at each call
+  site, so the desktop, the web panel and an API key cannot drift apart.
+- A refused change (`invalid-mcname`) is recorded with `ok: false`. An admin
+  action aimed at a name that is not a valid Minecraft username is either a typo
+  or somebody probing, and both are worth seeing.
+
+The ledger keeps its own copy and was **not** replaced. The two answer different
+questions: the ledger is per-server balance history that renders without a join,
+the audit trail is the global record of privileged actions.
 
 ---
 
@@ -98,7 +113,7 @@ Attribution is set at the **call site**, never inferred later:
 - **Desktop app** — `operator`. The desktop has no user accounts; the person at the machine already has full filesystem access, so inventing an identity for them would be theatre.
 - **Purchases** — the buying player's Minecraft name.
 
-The economy keeps its own attribution on each `LedgerEntry.by` (`purchase`, `desktop`, or the web username). Today this is the **only** record of who changed a balance — see the known gap above — and it is what both the desktop Store view and the web panel display and search.
+The economy keeps its own attribution on each `LedgerEntry.by` (`purchase`, `desktop`, or the web username), which is what both the desktop Store view and the web panel display and search. Since #68 the same change is *also* in the audit trail, so a global query for privileged activity finds it without going per-server.
 
 ---
 

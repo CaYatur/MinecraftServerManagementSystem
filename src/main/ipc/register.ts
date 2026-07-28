@@ -468,12 +468,12 @@ export function registerIpc(): void {
   H(
     IPC.storeAddBalance,
     (_e, id: string, mcName: string, amount: number, reason?: string, category?: string) =>
-      economy.addBalance(id, mcName, amount, 'desktop', reason ?? '', category)
+      economy.addBalance(id, mcName, amount, { by: 'desktop', source: 'panel', reason, category })
   )
   H(
     IPC.storeSetBalance,
     (_e, id: string, mcName: string, amount: number, reason?: string, category?: string) =>
-      economy.setBalance(id, mcName, amount, 'desktop', reason ?? '', category)
+      economy.setBalance(id, mcName, amount, { by: 'desktop', source: 'panel', reason, category })
   )
   H(IPC.storeLedger, (_e, id: string, mcName?: string) => economy.getLedger(id, mcName))
 
