@@ -201,6 +201,37 @@ export function bridgeNeed(input: {
   return { state: 'ok', installed, ...(latest ? { latest } : {}), actionable: false }
 }
 
+/**
+ * What to try, in order, when installing.
+ *
+ * The obvious implementation picks one source and commits to it, and that turns
+ * the bundled jar into a fallback for exactly one failure — GitHub's API being
+ * unreachable — while leaving the more common one uncovered. The API answering
+ * and the asset download then failing (a CDN hiccup, a proxy that allows
+ * api.github.com but not objects.githubusercontent.com, a connection dropped
+ * mid-stream) would refuse the install with a perfectly good jar sitting on
+ * disk.
+ *
+ * So it is a list. An older bundled jar is still a working bridge, and a
+ * working bridge beats none; the result reports which source it came from, so
+ * nothing is claimed that is not true.
+ *
+ * `bundled` alone when it is the newer of the two: downloading a jar older than
+ * the one already on disk is work done to arrive somewhere worse.
+ */
+export function installPlan(o: {
+  remote?: { version: string } | null
+  bundled?: { version: string } | null
+}): ('github' | 'bundled')[] {
+  const { remote, bundled } = o
+  if (!remote && !bundled) return []
+  if (!remote) return ['bundled']
+  if (!bundled) return ['github']
+  return compareBridgeVersions(remote.version, bundled.version) >= 0
+    ? ['github', 'bundled']
+    : ['bundled']
+}
+
 /** What the panel, the desktop app and the API all receive. */
 export interface BridgeStatus extends BridgeNeed {
   serverId: string
