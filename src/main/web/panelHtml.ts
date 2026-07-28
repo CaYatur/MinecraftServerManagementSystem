@@ -645,7 +645,7 @@ var SF_TEXT={'store.buy':'Buy','store.crate':'Crate','store.search':'Search prod
  'store.limitOf':'Max {n} per player','store.plays':'Opens with','common.close':'Close'};
 function sfText(k){return SF_TEXT[k]||k}
 function sfBuy(pid){buy(pid)}
-function buy(pid){api('/api/servers/'+current.id+'/store/buy',{method:'POST',body:JSON.stringify({productId:pid})}).then(function(r){if(!r.ok){alert(r.body.error==='insufficient'?'Not enough balance':r.body.error==='no-mc-linked'?'No Minecraft name linked to your account':('Error: '+r.body.error));return}loadStore();sfCloseDetail();if(r.body.reward&&r.body.reward.crate){openCrate(r.body.reward,{prefix:'🎉 '})}else{alert('You received: '+(r.body.reward?r.body.reward.name:''))}})}
+function buy(pid){api('/api/servers/'+current.id+'/store/buy',{method:'POST',body:JSON.stringify({productId:pid})}).then(function(r){if(!r.ok){alert(r.body.error==='insufficient'?'Not enough balance':r.body.error==='no-mc-linked'?'No Minecraft name linked to your account':r.body.error==='out-of-stock'?'That sold out.':r.body.error==='limit-reached'?'You already have the maximum of that.':('Error: '+r.body.error));loadStore();return}loadStore();sfCloseDetail();if(r.body.reward&&r.body.reward.crate){openCrate(r.body.reward,{prefix:'🎉 '})}else{alert('You received: '+(r.body.reward?r.body.reward.name:''))}})}
 ${CRATE_JS}
 ${STORE_JS}
 var CRATE_ICON_SVG=${JSON.stringify(CRATE_ICON_SVG)};

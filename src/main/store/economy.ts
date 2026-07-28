@@ -42,6 +42,16 @@ interface StoreState {
   categories: EconomyCategory[]
   balances: Record<string, number>
   txns: Txn[]
+  /**
+   * How many of each product each player has bought, ever: productId -> mcName
+   * -> count (#81).
+   *
+   * Deliberately NOT derived from `txns`, which is trimmed to the newest 500.
+   * Counting a per-player limit from a trimmed history means the limit quietly
+   * stops working once a store is busy enough for old rows to fall off - which
+   * is exactly the store busy enough to need it.
+   */
+  purchases: Record<string, Record<string, number>>
   ledger: LedgerEntry[]
   queue: { mcName: string; commands: string[]; at: number }[]
 }
@@ -75,6 +85,7 @@ function getStore(serverId: string): StoreState {
       categories: DEFAULT_CATEGORIES.map((c) => ({ ...c })),
       balances: {},
       txns: [],
+      purchases: {},
       ledger: [],
       queue: []
     }
@@ -91,6 +102,18 @@ function getStore(serverId: string): StoreState {
   stores[serverId].crateAnimation = normalizeCrateAnimation(stores[serverId].crateAnimation)
   // ...and files that predate the section layout.
   stores[serverId].layout = normalizeLayout(stores[serverId].layout)
+  // ...and files that predate per-product purchase counters. Seeded from the
+  // transaction history, which is the best that can be reconstructed - it is
+  // trimmed, so an old store may under-count, but under-counting once at
+  // migration beats a limit that keeps drifting forever.
+  if (!stores[serverId].purchases) {
+    const seeded: Record<string, Record<string, number>> = {}
+    for (const t of stores[serverId].txns ?? []) {
+      seeded[t.productId] = seeded[t.productId] ?? {}
+      seeded[t.productId][t.mcName] = (seeded[t.productId][t.mcName] ?? 0) + 1
+    }
+    stores[serverId].purchases = seeded
+  }
   return stores[serverId]
 }
 
@@ -179,6 +202,8 @@ export function purchase(serverId: string, mcName: string, productId: string): B
   // together must not both see the last one in stock.
   st.balances[mcName] = bal - p.price
   if (typeof p.stock === 'number') p.stock = Math.max(0, p.stock - 1)
+  st.purchases[p.id] = st.purchases[p.id] ?? {}
+  st.purchases[p.id][mcName] = (st.purchases[p.id][mcName] ?? 0) + 1
 
   let commands: string[]
   let reward: BuyResult['reward']
@@ -320,9 +345,9 @@ export function setStoreLayout(serverId: string, layout: unknown): StoreLayout {
   return st.layout
 }
 
-/** How many of this product `mcName` has already bought (#81). */
+/** How many of this product `mcName` has already bought, ever (#81). */
 function ownedCount(st: StoreState, mcName: string, productId: string): number {
-  return st.txns.filter((t) => t.productId === productId && t.mcName === mcName).length
+  return st.purchases[productId]?.[mcName] ?? 0
 }
 export function setCurrency(serverId: string, currency: string): void {
   getStore(serverId).currency = currency.trim() || 'Coins'
@@ -383,6 +408,11 @@ export function upsertProduct(serverId: string, product: Product): Product {
 export function deleteProduct(serverId: string, productId: string): void {
   const st = getStore(serverId)
   st.products = st.products.filter((p) => p.id !== productId)
+  // The counters go with it. A new product would never reuse the id, so keeping
+  // them is dead weight that grows forever. The ledger and txn history still
+  // record that the purchase happened - this is a cache of "how many", not the
+  // record of "what happened".
+  delete st.purchases[productId]
   save()
 }
 /** Add (or, with a negative amount, remove) balance. Audited. */

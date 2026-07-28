@@ -3139,7 +3139,8 @@ interface StubNode {
   value: string
   checked: boolean
   className: string
-  style: Record<string, string> & { cssText?: string }
+  style: Record<string, string> & { cssText?: string; setProperty(k: string, v: string): void }
+  lang?: string
   classList: {
     add(c: string): void
     remove(c: string): void
@@ -3175,7 +3176,8 @@ function runPageScript(html: string, seed: Record<string, unknown> = {}): PageRu
       value: '',
       checked: false,
       className: '',
-      style: {},
+      lang: '',
+      style: Object.assign(Object.create(null), { setProperty: () => {} }),
       classList: {
         add: (c) => void cls.add(c),
         remove: (c) => void cls.delete(c),
@@ -3230,7 +3232,9 @@ function runPageScript(html: string, seed: Record<string, unknown> = {}): PageRu
     querySelectorAll: (): StubNode[] => [],
     addEventListener: () => {},
     head: mkNode('head'),
-    body: mkNode('body')
+    body: mkNode('body'),
+    // Both pages set `documentElement.lang` and read `.style` off it on load.
+    documentElement: mkNode('html')
   }
 
   const ctx: Record<string, unknown> = {
@@ -3249,6 +3253,10 @@ function runPageScript(html: string, seed: Record<string, unknown> = {}): PageRu
     encodeURIComponent,
     addEventListener: () => {},
     removeEventListener: () => {},
+    scrollTo: () => {},
+    scrollY: 0,
+    innerWidth: 1280,
+    innerHeight: 800,
     matchMedia: () => ({ matches: false, addEventListener: () => {} }),
     IntersectionObserver: class {
       observe(): void {}
@@ -3257,7 +3265,22 @@ function runPageScript(html: string, seed: Record<string, unknown> = {}): PageRu
     navigator: { language: 'en', languages: ['en'], clipboard: { writeText: () => Promise.resolve() } },
     fetch: (path: string, opts?: { method?: string; body?: string }) => {
       calls.push(['fetch', path, opts?.method ?? 'GET', opts?.body])
-      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}) })
+      // Both pages call something on load. An empty `{}` makes those bootstrap
+      // paths throw asynchronously, and an unhandled rejection in the test
+      // output is how a real one later goes unnoticed — so the shapes they
+      // destructure on startup are answered plausibly.
+      const body: Record<string, unknown> = path.includes('/api/public/site')
+        ? {
+            siteName: 'Test',
+            tagline: '',
+            description: '',
+            servers: [],
+            posts: [],
+            showStore: true,
+            i18n: { defaultLang: 'en', langs: { en: {} } }
+          }
+        : { servers: [], products: [], lines: [], entries: [] }
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) })
     },
     ...seed
   }

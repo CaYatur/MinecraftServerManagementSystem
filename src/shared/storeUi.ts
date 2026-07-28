@@ -95,7 +95,7 @@ function sEsc(t){var d=document.createElement('div');d.textContent=(t==null?'':t
 function sAttr(t){return sEsc(t).replace(/"/g,'&quot;').replace(/'/g,'&#39;')}
 var SF={products:[],layout:'crates-first',text:'',type:'all',sort:'featured',detail:null};
 
-function sfSetFilter(k,v){SF[k]=v;sfRender()}
+function sfSetFilter(k,v){SF[k]=v;SF._typing=(k==='text');sfRender()}
 function sfMatch(p){
  var q=(SF.text||'').trim().toLowerCase();
  if(SF.type!=='all'&&p.type!==SF.type)return false;
@@ -166,14 +166,21 @@ function sfRender(){
    (sec.key==='all'?'':'<div class="sf-sec-head">'+(sec.key==='crate'?CRATE_ICON_SVG:'')+sEsc(sfText('store.section_'+sec.key))+'<span class="sf-n">'+sec.items.length+'</span></div>')+
    '<div class="sf-grid">'+sec.items.map(sfCard).join('')+'</div></div>'}).join('');
  /* Re-focus the search box: the toolbar is inside the innerHTML that was just
-    replaced, so without this every keystroke would drop the caret. */
+    replaced, so without this every keystroke would drop the caret. Keyed on
+    "was the user typing" rather than "is the box non-empty", or deleting the
+    last character would throw focus away mid-edit. */
  var q=box.querySelector('.sf-search');
- if(q&&SF.text){q.focus();q.setSelectionRange(SF.text.length,SF.text.length)}}
+ if(q&&SF._typing){q.focus();var n=(SF.text||'').length;q.setSelectionRange(n,n)}}
 function sfFind(id){var l=SF.products||[];for(var i=0;i<l.length;i++){if(l[i].id===id)return l[i]}return null}
 function sfOpen(id){var p=sfFind(id);if(!p)return;SF.detail=p;SF.shot=p.icon||'';sfRenderDetail()}
 function sfCloseDetail(e){if(e&&e.target&&e.target.id!=='sfModal')return;SF.detail=null;
  var m=document.getElementById('sfModal');if(m)m.classList.add('hidden')}
-function sfShotPick(src){SF.shot=src;sfRenderDetail()}
+/* Picked by index, never by URL. The handler goes inside an onclick="..."
+   attribute, and sAttr only guards the src next to it - a URL carrying a double
+   quote would close the attribute and the rest of it would be markup. */
+function sfShotPick(i){var p=SF.detail;if(!p)return;
+ var shots=[p.icon].concat(p.images||[]).filter(function(x){return x});
+ SF.shot=shots[i]||shots[0]||'';sfRenderDetail()}
 function sfRenderDetail(){
  var p=SF.detail;var m=document.getElementById('sfModal');if(!p||!m)return;
  var shots=[p.icon].concat(p.images||[]).filter(function(x){return x});
@@ -188,8 +195,8 @@ function sfRenderDetail(){
   '<div class="sf-inner"><h3>'+sEsc(p.name)+'</h3>'+
   '<div class="sf-price">'+p.price+' '+sEsc(sfCurrency())+'</div>'+
   (p.description?'<p class="sf-full">'+sEsc(p.description)+'</p>':'')+
-  (shots.length>1?'<div class="sf-thumbs">'+shots.map(function(sImg){
-    return '<img class="'+(sImg===hero?'on':'')+'" src="'+sAttr(sfImg(sImg))+'" alt="" onclick="sfShotPick(\\''+String(sImg).replace(/'/g,"\\\\'")+'\\')"/>'}).join('')+'</div>':'')+
+  (shots.length>1?'<div class="sf-thumbs">'+shots.map(function(sImg,i){
+    return '<img class="'+(sImg===hero?'on':'')+'" src="'+sAttr(sfImg(sImg))+'" alt="" onclick="sfShotPick('+i+')"/>'}).join('')+'</div>':'')+
   (p.type==='crate'?'<div style="margin-top:12px"><div class="sf-sec-head" style="font-size:13px">'+sEsc(sfText('store.contents'))+'</div>'+crateContentsHtml(p.rewards)+'</div>':'')+
   (meta.length?'<div class="sf-meta">'+meta.map(function(x){return '<span>'+sEsc(x)+'</span>'}).join('')+'</div>':'')+
   '<div class="sf-actions"><button class="btn primary"'+(block?' disabled':'')+' onclick="sfBuy(\\''+p.id+'\\')">'+

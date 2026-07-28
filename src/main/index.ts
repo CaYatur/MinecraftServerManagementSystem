@@ -116,7 +116,17 @@ function focusExisting(): void {
 // Single-instance lock: two instances on the same launch dir = data corruption.
 const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) {
-  app.quit()
+  // A smoke run that loses the lock has tested nothing, and quitting 0 would
+  // report that as a pass. One stray instance left behind by an earlier run
+  // would then turn every gate green while executing none of them — which is
+  // worse than a failing test, because it looks like a working one.
+  if (Object.keys(process.env).some((k) => k.startsWith('MSMS_SMOKE'))) {
+    // eslint-disable-next-line no-console
+    console.log('SMOKE: FAIL - another instance holds the single-instance lock; nothing ran')
+    app.exit(1)
+  } else {
+    app.quit()
+  }
 } else {
   app.on('second-instance', focusExisting)
 

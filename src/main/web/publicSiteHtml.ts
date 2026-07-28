@@ -408,7 +408,12 @@ function refreshBalance(){var el=document.getElementById('balBox');if(!el)return
   el.innerHTML='<span class="pill">'+esc(T('store.balance'))+': <b style="color:var(--accent)">'+b.j.balance+' '+esc(b.j.currency||'')+'</b></span>'})}
 function buy(pid){if(!ptoken){openAuth();return}
  api('/api/public/store/buy',{productId:pid},ptoken).then(function(r){
-  if(!r.ok){alert(r.j.error==='insufficient'?T('store.insufficient'):('Error: '+(r.j.error||r.s)));return}
+  if(!r.ok){alert(r.j.error==='insufficient'?T('store.insufficient')
+   :r.j.error==='out-of-stock'?T('store.outOfStock')
+   :r.j.error==='limit-reached'?T('store.limitReached')
+   :('Error: '+(r.j.error||r.s)));
+   /* Somebody else may have taken the last one while this page was open. */
+   loadStore();return}
   refreshBalance();sfCloseDetail();
   /* Reload so a stock count or per-player limit updates immediately rather
      than on the next visit. */
