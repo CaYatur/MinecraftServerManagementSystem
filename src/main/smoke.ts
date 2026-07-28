@@ -46,6 +46,8 @@ import { getPanelHtml } from './web/panelHtml'
 import { getPublicSiteHtml } from './web/publicSiteHtml'
 import { removeServer } from './core/serverRegistry'
 import * as sf from './core/serverFiles'
+import * as files from './core/serverFiles'
+import * as registry from './core/serverRegistry'
 import * as playersMod from './core/players'
 import * as backupsMod from './core/backups'
 import * as schedulerMod from './core/scheduler'
@@ -4797,6 +4799,141 @@ export async function runWebSmoke(): Promise<void> {
         if (!panel.byId('mpCount').innerHTML.includes('1')) return fail('the map did not count its players')
       }
       console.log('WEB-SMOKE: panel + site scripts parse; crate picker, storefront, map tab, detail and escaping OK')
+    }
+
+    // ---- files + config over HTTP (#53 part 2) ----
+    {
+      const fBase = '/api/servers/' + id + '/files'
+      const cBase = '/api/servers/' + id + '/config'
+      const af = join(auditDir(), 'audit.jsonl')
+      const snap = existsSync(af) ? readFileSync(af, 'utf-8') : null
+      // Snapshotted before anything is touched, restored in `finally`.
+      const javaSnapshot = getConfig().servers.find((s) => s.id === id)?.java
+      const motdSnapshot = files
+        .readProperties(id)
+        .entries.find((e) => e.key === 'motd')?.value
+      const fileKey = apikeys.createKey({ label: 'smoke_files', scopes: ['files'], servers: [id] })
+      const cfgKey = apikeys.createKey({ label: 'smoke_cfg', scopes: ['settings'], servers: [id] })
+      const kget = (p: string, k: string): Promise<Response> =>
+        fetch(base + p, { headers: { 'X-API-Key': k } })
+      const kpost = (p: string, body: unknown, k: string): Promise<Response> =>
+        fetch(base + p, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-API-Key': k },
+          body: JSON.stringify(body)
+        })
+      const kdel = (p: string, k: string): Promise<Response> =>
+        fetch(base + p, { method: 'DELETE', headers: { 'X-API-Key': k } })
+      try {
+        rmSync(af, { force: true })
+        auditMod._reset()
+
+        // Reading files needs `files`, not `view`: server.properties holds the
+        // RCON password, among whatever else an operator has pasted in.
+        r = await get(fBase, ft)
+        if (r.status !== 403) return fail('file list without the files scope expected 403, got ' + r.status)
+        r = await kget(fBase, cfgKey.secret)
+        if (r.status !== 403) return fail('a settings key read files, got ' + r.status)
+
+        r = await kget(fBase, fileKey.secret)
+        if (r.status !== 200) return fail('file list expected 200, got ' + r.status + ' ' + (await r.text()))
+        const listing = (await r.json()) as { entries: { name: string }[] }
+        if (!listing.entries.some((e) => e.name === 'server.jar')) {
+          return fail('the file list is missing the fixture jar')
+        }
+
+        // Traversal is refused by core, and reported as a bad request rather
+        // than a server error.
+        for (const bad of ['../../secrets', '..\\..\\secrets', '/etc/passwd']) {
+          r = await kget(fBase + '?path=' + encodeURIComponent(bad), fileKey.secret)
+          // The only thing that matters is that it is not served. Whether core
+          // calls it path-escape (400) or the path simply is not there (404) is
+          // its business, not this assertion's.
+          if (r.ok) return fail('a traversing path was served: ' + bad)
+        }
+
+        // Write, read back, then delete — and delete needs confirmation, since
+        // nothing inside MSMS can bring the file back.
+        r = await kpost(fBase, { path: 'api-smoke.txt', content: 'hello-api' }, fileKey.secret)
+        if (r.status !== 200) return fail('file write expected 200, got ' + r.status + ' ' + (await r.text()))
+        r = await kget(fBase + '?as=file&path=api-smoke.txt', fileKey.secret)
+        const readBack = (await r.json()) as { content: string }
+        if (readBack.content !== 'hello-api') return fail('file read-back mismatch: ' + readBack.content)
+        if (!auditMod.query({ actions: ['file.write'] }).entries.some((e) => e.target === 'api-smoke.txt')) {
+          return fail('a file write was not audited with its path')
+        }
+        r = await kdel(fBase + '?path=api-smoke.txt', fileKey.secret)
+        if (r.status !== 400) return fail('file delete without confirm expected 400, got ' + r.status)
+        r = await kdel(fBase + '?path=api-smoke.txt&confirm=true', fileKey.secret)
+        if (r.status !== 200) return fail('file delete expected 200, got ' + r.status)
+        if (files.listDir(id, '').some((e) => e.name === 'api-smoke.txt')) {
+          return fail('the file survived its delete')
+        }
+
+        // ---- config ----
+        r = await kget(cBase, fileKey.secret)
+        if (r.status !== 403) return fail('a files key read config, got ' + r.status)
+        r = await kget(cBase, cfgKey.secret)
+        if (r.status !== 200) return fail('config read expected 200, got ' + r.status)
+        const cfgBody = (await r.json()) as {
+          server: { id: string }
+          properties: { entries: { key: string; value: string }[] }
+        }
+        if (cfgBody.server.id !== id) return fail('config returned the wrong server')
+        if (!cfgBody.properties.entries.length) return fail('config returned no properties')
+
+        // A newline in a value would smuggle a second key into the file.
+        r = await kpost(cBase + '/properties', { updates: { motd: 'hi\nmax-players=999' } }, cfgKey.secret)
+        if (r.status !== 400) return fail('a newline in a property value expected 400, got ' + r.status)
+        if (((await r.json()) as { error: string }).error !== 'newline-in-value') {
+          return fail('the newline refusal gave the wrong error')
+        }
+        if (!auditMod.query({ actions: ['config.properties'] }).entries.some((e) => e.ok === false)) {
+          return fail('a refused property write was not audited')
+        }
+
+        const before = Object.fromEntries(
+          files.readProperties(id).entries.map((e) => [e.key, e.value])
+        )
+        r = await kpost(cBase + '/properties', { updates: { motd: 'api-smoke-motd' } }, cfgKey.secret)
+        if (r.status !== 200) return fail('property write expected 200, got ' + r.status)
+        const after = Object.fromEntries(files.readProperties(id).entries.map((e) => [e.key, e.value]))
+        if (after['motd'] !== 'api-smoke-motd') return fail('the property write did not land')
+        // The rest of the file must be untouched — writeProperties merges.
+        if (after['enable-rcon'] !== before['enable-rcon']) {
+          return fail('a targeted property write disturbed another key')
+        }
+        // Java config merges rather than replacing, or a partial patch would
+        // wipe the preset it did not mention.
+        r = await kpost(cBase + '/java', { maxMemoryMB: 3072 }, cfgKey.secret)
+        if (r.status !== 200) return fail('java config write expected 200, got ' + r.status)
+        const javaAfter = getConfig().servers.find((s) => s.id === id)?.java
+        if (javaAfter?.maxMemoryMB !== 3072) return fail('the java patch did not land')
+        if (javaAfter?.preset !== javaSnapshot?.preset) {
+          return fail('a partial java patch replaced the preset: ' + String(javaAfter?.preset))
+        }
+        if (javaAfter?.extraFlags === undefined) {
+          return fail('a partial java patch dropped extraFlags, which breaks the launch')
+        }
+        console.log('WEB-SMOKE: files + config over HTTP OK (scope split, traversal refused, writes audited)')
+      } finally {
+        // In `finally`, not inline. A failed assertion between the patch and an
+        // inline restore leaves the shared dev-root fixture with a partial java
+        // config, and every other gate then fails to start a server for reasons
+        // that have nothing to do with what they test. That already happened
+        // once here, which is why it moved.
+        if (javaSnapshot) registry.updateServer(id, { java: javaSnapshot })
+        if (motdSnapshot !== undefined) files.writeProperties(id, { motd: motdSnapshot })
+        apikeys.deleteKey(fileKey.key.id)
+        apikeys.deleteKey(cfgKey.key.id)
+        try {
+          files.deleteEntry(id, 'api-smoke.txt')
+        } catch {
+          /* already gone */
+        }
+        if (snap == null) rmSync(af, { force: true })
+        else writeFileSync(af, snap, 'utf-8')
+      }
     }
 
     // ---- player detail + live map (#49, #26) ----

@@ -112,7 +112,10 @@ export function buildJvmFlags(cfg: JavaArgsConfig, type: ServerType): string[] {
       break
     }
   }
-  if (cfg.extraFlags.trim()) jvm.push(...tokenize(cfg.extraFlags))
+  // Defensive: config.json is hand-editable, and a config missing this key
+  // used to throw `undefined.trim()` from inside start(), which surfaces as
+  // "the server never started" with no hint as to why.
+  if ((cfg.extraFlags ?? '').trim()) jvm.push(...tokenize(cfg.extraFlags))
   return jvm
 }
 
@@ -127,7 +130,7 @@ export function buildLaunchArgs(cfg: JavaArgsConfig, type: ServerType): string[]
     // front of it, and the JVM takes the last definition of a property, so
     // anything they write still wins — but a custom command line should not be
     // the one place the console silently mangles Turkish.
-    return [...CONSOLE_UTF8, ...tokenize(cfg.customArgs), ...tokenize(cfg.extraFlags)]
+    return [...CONSOLE_UTF8, ...tokenize(cfg.customArgs ?? ''), ...tokenize(cfg.extraFlags ?? '')]
   }
 
   const isProxy = PROXY_TYPES.includes(type)

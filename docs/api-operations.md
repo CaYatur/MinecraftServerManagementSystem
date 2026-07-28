@@ -169,8 +169,53 @@ Mutating key calls **also** leave the generic `api.post` / `api.delete` entry
 from #48. That is deliberate redundancy: it is the net for any route that forgets
 to audit itself.
 
+## Files
+
+```
+GET    /api/servers/:id/files?path=            files   (directory listing)
+GET    /api/servers/:id/files?path=&as=file    files   (file contents)
+POST   /api/servers/:id/files                  files   { path, content }
+POST   /api/servers/:id/files/folder           files   { path, name }
+POST   /api/servers/:id/files/rename           files   { path, newName }
+DELETE /api/servers/:id/files?path=&confirm=true   files
+```
+
+**Reading needs `files`, not `view`.** `server.properties` holds the RCON
+password, and whatever else an operator has pasted into a config.
+
+One endpoint serves both a listing and a file (`as=file`) because a caller
+walking a tree does not know which it has until it looks.
+
+`core/serverFiles.ts` refuses to leave the server root — every entry point runs
+the path through the same `safe()` check — so a traversal comes back as
+`400 path-escape` rather than reading anything. What it does *not* do is stop a
+caller reaching the files that decide what runs: replacing a jar is code
+execution on the next start. That is not a reason to block it (an operator edits
+these constantly), but it is why `files` is its own scope and why every write is
+audited **with its path**.
+
+Deleting requires `?confirm=true`: nothing inside MSMS can bring the file back.
+
+## Server config
+
+```
+GET  /api/servers/:id/config              settings
+POST /api/servers/:id/config/properties   settings  { updates } or { raw }
+POST /api/servers/:id/config/java         settings  (partial JavaArgsConfig)
+POST /api/servers/:id/config/favorite     settings  { favorite }
+```
+
+A property value containing a newline is refused with `400 newline-in-value`:
+in a properties file, a newline smuggles in a second key. `updates` merges, so a
+targeted write leaves the rest of the file alone; send `raw` to replace it
+wholesale.
+
+The Java patch **merges** — send `{ maxMemoryMB: 3072 }` and the preset,
+flags and jar stay as they were.
+
 ## Not in this surface
 
-Still IPC-only, tracked in #53: files, server config and `server.properties`,
-plugins/mods, Java install, metrics config, and creating or removing a server.
-World export/import as noted above.
+Still IPC-only, tracked in #53: plugins/mods search and install, Java list and
+install, metrics tier config, and creating or removing a server (those are not
+per-server, so they need an owner-level gate rather than a scope). World
+export/import as noted above.

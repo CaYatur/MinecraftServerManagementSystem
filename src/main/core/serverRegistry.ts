@@ -134,8 +134,15 @@ export function updateServer(id: string, patch: Partial<ServerConfig>): ServerCo
   updateConfig((cfg) => {
     const s = cfg.servers.find((x) => x.id === id)
     if (!s) return
+    // Captured BEFORE the assign. `Object.assign` has already replaced `s.java`
+    // with the patch's partial by the time the merge line runs, so
+    // `{ ...s.java, ...patch.java }` was spreading the partial into itself and
+    // silently dropping every key the caller did not mention. Invisible while
+    // the only caller (the desktop args editor) sent a complete config; a
+    // partial patch — which the config API now makes possible — lost the preset.
+    const prevJava = s.java
     Object.assign(s, patch, { id: s.id })
-    if (patch.java) s.java = { ...s.java, ...patch.java }
+    if (patch.java) s.java = { ...prevJava, ...patch.java }
     updated = s
   })
   if (!updated) throw new Error(`Server not found: ${id}`)
