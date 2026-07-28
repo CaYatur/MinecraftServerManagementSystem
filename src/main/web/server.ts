@@ -564,7 +564,14 @@ async function handlePublic(
   if (sub === 'profile' && method === 'GET') {
     const psid = site.siteServerId()
     const q = new URL(req.url ?? '/', 'http://localhost').searchParams
-    const session = playerAuth.resolvePlayerSession(bearer(req))
+    const tok = bearer(req)
+    const session = playerAuth.resolvePlayerSession(tok)
+    // A credential that was SUPPLIED and did not resolve is a different fact
+    // from no credential at all, and treating them the same is what made a
+    // restarted app tell a signed-in player they do not exist (#120). This says
+    // nothing about any name — it is about the token — so the 404-vs-200 rule
+    // for anonymous requests is untouched.
+    if (tok && !session) return sendJson(res, 401, { error: 'session-expired' })
     const asked = (q.get('name') ?? '').trim() || session?.mcName || ''
     if (!MC_NAME_RE.test(asked)) return sendJson(res, 400, { error: 'invalid-name' })
     if (!psid || !getServer(psid)) return sendJson(res, 404, { error: 'not-found' })

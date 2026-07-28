@@ -37,6 +37,17 @@ interface Pending {
 
 let accounts: Account[] = []
 const pending = new Map<string, Pending>() // key: mcName lower
+/**
+ * Player sessions, persisted (#120).
+ *
+ * They used to live only in this Map, so restarting the app signed out every
+ * player on the website — except the browser kept the token in localStorage and
+ * went on believing it was signed in, which turned every authenticated request
+ * into an anonymous one and made a player's own profile report them as missing.
+ *
+ * Written next to the accounts rather than into them: a session is not part of
+ * an identity, and an operator clearing sessions should not risk the passwords.
+ */
 const sessions = new Map<string, { mcName: string; expires: number }>()
 const startLimit = new Map<string, { count: number; ts: number }>() // per name|ip
 
@@ -54,8 +65,54 @@ function save(): void {
   writeFileSync(p + '.tmp', JSON.stringify(accounts, null, 2), 'utf-8')
   renameSync(p + '.tmp', p)
 }
+function sessionsFile(): string {
+  return playerAccountsPath().replace(/\.json$/, '') + '-sessions.json'
+}
+
+function loadSessions(): void {
+  sessions.clear()
+  try {
+    if (!existsSync(sessionsFile())) return
+    const raw = JSON.parse(readFileSync(sessionsFile(), 'utf-8')) as [
+      string,
+      { mcName: string; expires: number }
+    ][]
+    const now = Date.now()
+    for (const [token, s] of Array.isArray(raw) ? raw : []) {
+      // Expired ones are dropped on read rather than carried and checked later:
+      // the file is the only thing that grows without bound here.
+      if (s && typeof s.mcName === 'string' && s.expires > now) sessions.set(token, s)
+    }
+  } catch {
+    /* a corrupt session file signs everyone out; it must never stop the app */
+  }
+}
+
+/**
+ * Sessions are 14 days long and one login mints one, so a player who signs in
+ * from a new device every day accumulates them. Bounded here rather than left
+ * to the TTL: the oldest go first, which logs out the least recently used
+ * device rather than the person who just signed in.
+ */
+const MAX_SESSIONS = 2000
+
+function saveSessions(): void {
+  try {
+    if (sessions.size > MAX_SESSIONS) {
+      const byOldest = [...sessions.entries()].sort((a, b) => a[1].expires - b[1].expires)
+      for (const [token] of byOldest.slice(0, sessions.size - MAX_SESSIONS)) sessions.delete(token)
+    }
+    const p = sessionsFile()
+    writeFileSync(p + '.tmp', JSON.stringify([...sessions.entries()]), 'utf-8')
+    renameSync(p + '.tmp', p)
+  } catch {
+    /* a session that cannot be persisted still works until the next restart */
+  }
+}
+
 export function initPlayerAuth(): void {
   load()
+  loadSessions()
 }
 
 function hashPw(pw: string, salt: string): string {
@@ -325,6 +382,7 @@ function dropSessions(nameKey: string): void {
   for (const [token, s] of sessions) {
     if (s.mcName.toLowerCase() === nameKey) sessions.delete(token)
   }
+  saveSessions()
 }
 
 export function login(mcName: string, password: string): { ok: true; token: string; mcName: string } | { ok: false } {
@@ -336,6 +394,7 @@ export function login(mcName: string, password: string): { ok: true; token: stri
 function mintSession(mcName: string): { token: string; mcName: string } {
   const token = randomBytes(32).toString('hex')
   sessions.set(token, { mcName, expires: Date.now() + SESSION_TTL })
+  saveSessions()
   return { token, mcName }
 }
 
@@ -345,6 +404,12 @@ export function resolvePlayerSession(token: string | undefined): { mcName: strin
   const s = sessions.get(token)
   if (!s) return null
   if (s.expires < Date.now()) {
+    // Dropped from memory, NOT written back. This is a read path reachable by
+    // anyone holding an old token, and persisting here would let a replayed
+    // expired token force a disk write per request — an amplifier on an
+    // unauthenticated path, which is the shape closed in #107. The file is
+    // pruned of expired entries the next time it is loaded or written for a
+    // real reason.
     sessions.delete(token)
     return null
   }
@@ -352,7 +417,7 @@ export function resolvePlayerSession(token: string | undefined): { mcName: strin
 }
 
 export function logoutPlayer(token: string): void {
-  sessions.delete(token)
+  if (sessions.delete(token)) saveSessions()
 }
 
 /** When this name registered on the site, or undefined. Not a secret: it is the

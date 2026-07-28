@@ -114,6 +114,15 @@ function focusExisting(): void {
 }
 
 // Single-instance lock: two instances on the same launch dir = data corruption.
+//
+// Scoped to the launch dir, which is what that sentence actually says. Electron
+// keys the lock on the userData path, and leaving that at its default made the
+// lock app-wide — so a portable copy running from the user's desktop blocked a
+// smoke run out of the repo, two installs that share no state at all. Pointing
+// userData inside the launch dir makes the lock mean what it claims, and puts
+// Electron's own cache next to everything else this app keeps, which is the
+// portable behaviour the rest of the program already has.
+app.setPath('userData', join(resolveBaseDir(), 'msms-data', 'chrome'))
 const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) {
   // A smoke run that loses the lock has tested nothing, and quitting 0 would

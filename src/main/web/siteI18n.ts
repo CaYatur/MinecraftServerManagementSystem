@@ -60,6 +60,7 @@ export const SITE_STRINGS_EN: Record<string, string> = {
   'auth.backToLogin': 'Back to log in',
   'auth.noAccount': 'No account?',
   'auth.forgot': 'Forgot your password?',
+  'auth.sessionExpired': 'Your session has expired — please log in again.',
   'auth.resetTitle': 'Reset password',
   'auth.resetHint':
     'Enter your Minecraft username. You must be online on the server — we send a code to your in-game chat.',
@@ -163,6 +164,7 @@ export const SITE_STRINGS_TR: Record<string, string> = {
   'auth.backToLogin': 'Girişe dön',
   'auth.noAccount': 'Hesabınız yok mu?',
   'auth.forgot': 'Parolanızı mı unuttunuz?',
+  'auth.sessionExpired': 'Oturumunuzun süresi doldu — lütfen tekrar giriş yapın.',
   'auth.resetTitle': 'Parola sıfırlama',
   'auth.resetHint':
     'Minecraft kullanıcı adınızı girin. Sunucuda çevrimiçi olmalısınız — kodu oyun içi sohbetinize göndeririz.',

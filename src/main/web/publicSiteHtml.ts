@@ -278,6 +278,9 @@ function refreshWhoami(){
     only public one that parses the world's player files. */
  whoamiTried=true;
  api('/api/public/profile',null,ptoken).then(function(r){
+  /* The first authenticated request after a restart is usually this one, so it
+     is where a dead token is found. */
+  if(r.s===401){staleSession();return}
   if(!r.ok||!r.j.uuid)return;
   puuid=r.j.uuid;localStorage.setItem('msms_puuid',puuid);renderChrome()})}
 function esc(t){var d=document.createElement('div');d.textContent=(t==null?'':t);return d.innerHTML}
@@ -442,6 +445,11 @@ function pageMap(){
   '<span class="muted" id="mapRoundNote"></span></div>'+${JSON.stringify(MAP_HTML)}+'</div></section>'}
 function mapFeedUrl(dim,cell){
  return '/api/public/map?dim='+encodeURIComponent(dim)+'&cell='+encodeURIComponent(cell)}
+/* This page's api() answers {ok,s,j}; the panel's answers {ok,status,body}. The
+   map engine used to read .body unconditionally, so on this page every poll
+   threw on undefined and the map never drew (#115). */
+function mapGet(u){return api(u).then(function(r){return r.ok?r.j:null}).catch(function(){return null})}
+function mapPost(u){return api(u,{}).then(function(r){return r.j||null}).catch(function(){return null})}
 /* No admin server id on the public site: the bridge install affordance is an
    operator's, and a visitor offered it would get a 404. */
 function mapServerId(){return ''}
@@ -459,8 +467,19 @@ function pageProfile(name){
 function loadProfile(name){
  api('/api/public/profile'+(name?('?name='+encodeURIComponent(name)):''),null,ptoken).then(function(r){
   var el=document.getElementById('profBox');if(!el)return;
+  /* The token we hold is dead — the app was restarted, or it expired. Saying
+     "no such player" about the person holding it is the bug in #120; drop it
+     and offer a login instead. */
+  if(r.s===401){staleSession();el.innerHTML='<p class="muted">'+esc(T('auth.sessionExpired'))+'</p>';return}
   if(!r.ok){el.innerHTML='<p class="muted">'+esc(T('profile.notFound'))+'</p>';return}
   PROFILE=r.j;el.innerHTML=profileHtml(r.j)})}
+/* Forget a session the server has already forgotten. Without this the header
+   goes on showing a name and every request stays silently anonymous. */
+function staleSession(){
+ if(!ptoken)return;
+ ptoken='';pname='';puuid='';whoamiTried=false;
+ localStorage.removeItem('msms_ptoken');localStorage.removeItem('msms_pname');localStorage.removeItem('msms_puuid');
+ renderChrome();openAuth()}
 function headImg(uuid,size){
  return uuid?('<img class="phead" width="'+size+'" height="'+size+'" src="https://crafatar.com/avatars/'+
   encodeURIComponent(uuid)+'?size='+size+'&overlay" alt="" loading="lazy"/>'):''}

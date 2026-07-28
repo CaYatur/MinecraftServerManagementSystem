@@ -3736,7 +3736,22 @@ function runPageScript(html: string, seed: Record<string, unknown> = {}): PageRu
       // paths throw asynchronously, and an unhandled rejection in the test
       // output is how a real one later goes unnoticed — so the shapes they
       // destructure on startup are answered plausibly.
-      const body: Record<string, unknown> = path.includes('/api/public/site')
+      // The map feed, so `mapRefresh` can be exercised end to end through each
+      // page's own api() (#115). Answering the generic `{servers:[],...}` here
+      // would make the refresh bail on a missing `dimension` and hide exactly
+      // the failure the assertion is for.
+      const body: Record<string, unknown> = /\/map(\?|$)/.test(path)
+        ? {
+            bridge: false,
+            dimension: 'overworld',
+            dimensions: ['overworld'],
+            players: [],
+            bounds: { minX: -64, maxX: 64, minZ: -64, maxZ: 64 },
+            heatmap: [],
+            cell: 16,
+            at: Date.now()
+          }
+        : path.includes('/api/public/site')
         ? {
             siteName: 'Test',
             tagline: '',
@@ -4546,13 +4561,29 @@ export async function runWebSmoke(): Promise<void> {
         // An admin token must not be a player token here either: the endpoint
         // decides "owner" from a PLAYER session, and an operator holding a panel
         // token is a stranger to every player account.
+        // An admin panel token is not a player session. It used to fall through
+        // as "anonymous"; since #120 a credential that was supplied and did not
+        // resolve is refused outright, which is both clearer and consistent
+        // with every other player route.
+        //
+        // Asserted as `=== 401` rather than "if it happened to be 200": guarding
+        // the body check behind a status that no longer occurs is a test that
+        // silently stopped testing, which is what this assertion became when
+        // the 401 landed.
         pr = await sget('/api/public/profile?name=Profiley', ot)
-        if (pr.status === 200) {
-          const asAdmin = (await pr.json()) as unknown as Record<string, unknown>
-          for (const f of GATED) {
-            if (f in asAdmin) return fail('an admin token read a player\'s ' + f + ' from the public site')
-          }
+        if (pr.status !== 401) {
+          return fail('an admin token on the public profile expected 401, got ' + pr.status)
         }
+        // ...and a dead PLAYER token is refused the same way, which is the
+        // restart case: the browser still holds a token the server forgot.
+        pr = await sget('/api/public/profile', 'deadbeef'.repeat(8))
+        if (pr.status !== 401) {
+          return fail('a stale player token expected 401, got ' + pr.status)
+        }
+        // The anonymous rule is untouched by all of that — no credential still
+        // means "answer as a stranger", not "refuse".
+        pr = await sget('/api/public/profile?name=Profiley')
+        if (pr.status === 401) return fail('an anonymous profile read was refused as if it had a token')
         console.log('WEB-SMOKE: public profile OK (own vs stranger, admin token is a stranger, 400 on a bad name)')
       } finally {
         siteMod.setSiteConfig({ storeServerId: storeBefore, profile: profileBefore })
@@ -5641,6 +5672,40 @@ export async function runWebSmoke(): Promise<void> {
           cell: 16,
           at: Date.now()
         }
+        // #115: BOTH pages must be able to fetch a frame with their own api().
+        // The assertions below seed MAP.data and call mapDraw directly, which is
+        // exactly why they missed the real bug: the shared module read `r.body`,
+        // which is the panel's response shape, so on the public site every poll
+        // threw on `undefined.dimension` and the map never drew at all. Nothing
+        // that skips mapRefresh can see that.
+        for (const [label, page] of [['panel', panel], ['site', site]] as const) {
+          const pctx = page.ctx as Record<string, (...a: unknown[]) => unknown>
+          const pm = page.ctx as { MAP: { data: unknown } }
+          pm.MAP.data = null
+          let threw = ''
+          const onErr = (e: unknown): void => {
+            threw = String(e)
+          }
+          process.on('unhandledRejection', onErr)
+          try {
+            await (pctx['mapRefresh']() as unknown as Promise<void> | undefined)
+            await sleep(20)
+          } finally {
+            process.off('unhandledRejection', onErr)
+          }
+          if (threw) return fail('the ' + label + ' map threw while refreshing: ' + threw)
+          if (!pm.MAP.data) {
+            return fail('the ' + label + ' map got no frame from its own api() — see #115')
+          }
+          // ...and the status came from the response rather than staying on its
+          // initial text, which is what "Bridge not connected" forever looked
+          // like.
+          const state = page.byId('mpState').textContent
+          if (!/Bridge (live|not connected)/.test(state)) {
+            return fail('the ' + label + ' map did not set a bridge state: ' + JSON.stringify(state))
+          }
+        }
+
         const mapState = panel.ctx as {
           MAP: { data: { bridge: boolean; players: unknown[] }; bridge: unknown; msg: string }
         }
