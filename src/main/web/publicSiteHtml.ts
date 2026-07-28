@@ -396,8 +396,12 @@ function pageStore(){
  setTimeout(loadStore,0);return h}
 function loadStore(){
  api('/api/public/store').then(function(r){STORE=r.j;
-  SF.products=STORE.products||[];SF.layout=STORE.layout||'crates-first';
-  sfRender();revealAll();refreshBalance()})}
+  SF.layout=STORE.layout||'crates-first';
+  /* sfSetProducts, not an assignment: it also refreshes an open detail, which
+     is where the stock and per-player numbers a failed purchase just changed
+     are actually read. */
+  sfSetProducts(STORE.products);
+  revealAll();refreshBalance()})}
 /* The hooks the shared storefront calls back into. */
 function sfCurrency(){return (STORE&&STORE.currency)||''}
 function sfImg(src){return src}

@@ -4716,7 +4716,14 @@ export async function runWebSmoke(): Promise<void> {
       const GIFT_EMOJI = String.fromCodePoint(0x1f381)
       for (const page of [panel, site]) {
         const ctx = page.ctx as Record<string, (...a: unknown[]) => unknown> & {
-          SF: { products: unknown[]; layout: string; text: string; type: string; sort: string }
+          SF: {
+            products: unknown[]
+            layout: string
+            text: string
+            type: string
+            sort: string
+            detail: unknown
+          }
         }
         ctx.SF.products = [
           {
@@ -4790,6 +4797,24 @@ export async function runWebSmoke(): Promise<void> {
         // ...and does not name the animation. "Opens with: spin" told a buyer
         // the internal id of a transition they are about to watch anyway.
         if (/\bspin\b/.test(detail)) return fail('the detail view leaks the crate animation id')
+
+        // Reloading the catalogue with the detail open refreshes it. Assigning
+        // SF.products left the open detail pointing at the previous load's
+        // object, so a refused purchase re-rendered the grid with the new stock
+        // while the detail kept showing the old — Buy still enabled, next click
+        // failing the same way.
+        ctx['sfSetProducts']([
+          { id: 'p1', type: 'crate', name: 'Mythic Crate', price: 100, stock: 0, rewards: [] },
+          { id: 'p2', type: 'item', name: 'VIP Rank', price: 50 }
+        ])
+        const reopened = page.byId('sfDetail').innerHTML
+        if (!reopened.includes('Mythic Crate')) return fail('a catalogue reload dropped the open detail')
+        if (!/sf-actions[\s\S]*disabled/.test(reopened)) {
+          return fail('the reopened detail still offers a product that just sold out')
+        }
+        // ...and a product that is gone entirely closes rather than lingering.
+        ctx['sfSetProducts']([{ id: 'p2', type: 'item', name: 'VIP Rank', price: 50 }])
+        if (ctx.SF.detail) return fail('the detail stayed open for a product that no longer exists')
       }
 
       // Buying while signed out closes the product first. Both overlays are
@@ -4800,6 +4825,9 @@ export async function runWebSmoke(): Promise<void> {
           SF: { detail: unknown }
           ptoken: string
         }
+        // Seeded here rather than inherited: the block above deliberately ends
+        // with p1 removed from the catalogue.
+        ctx['sfSetProducts']([{ id: 'p1', type: 'item', name: 'VIP Rank', price: 50 }])
         // The page starts with no stored token, so this is the signed-out path.
         site.byId('authModal').classList.add('hidden')
         ctx['sfOpen']('p1')

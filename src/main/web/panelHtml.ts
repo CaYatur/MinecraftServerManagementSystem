@@ -635,10 +635,12 @@ function loadEvents(){
 
 /* ---- store ---- */
 function loadStore(){api('/api/servers/'+current.id+'/store').then(function(r){if(!r.ok)return;
- SF.products=r.body.products||[];SF.layout=r.body.layout||'crates-first';sfCurrencyName=r.body.currency||'';
+ SF.layout=r.body.layout||'crates-first';sfCurrencyName=r.body.currency||'';
  api('/api/servers/'+current.id+'/store/balance').then(function(b){var bal=b.ok?b.body:{balance:0,mcName:null};
   document.getElementById('dBal').textContent=(bal.mcName?bal.mcName+': ':'')+(bal.balance||0)+' '+(r.body.currency||'');
-  sfRender()})})}
+  /* sfSetProducts, not an assignment: it also refreshes an open detail, which
+     is where stock and per-player counts are read. */
+  sfSetProducts(r.body.products)})})}
 /* The four hooks the shared storefront calls back into. The panel is English
    only, so its translator returns a small table and falls back to the key. */
 var sfCurrencyName='';
@@ -651,7 +653,7 @@ var SF_TEXT={'store.buy':'Buy','store.crate':'Crate','store.search':'Search prod
  'store.sort_name-asc':'Name: A-Z','store.sort_name-desc':'Name: Z-A',
  'store.section_crate':'Crates','store.section_item':'Items','store.contents':'What is inside',
  'store.outOfStock':'Sold out','store.limitReached':'Limit reached','store.stockLeft':'{n} left',
- 'store.limitOf':'Max {n} per player','store.plays':'Opens with','common.close':'Close'};
+ 'store.limitOf':'Max {n} per player','common.close':'Close'};
 function sfText(k){return SF_TEXT[k]||k}
 function sfBuy(pid){buy(pid)}
 function buy(pid){api('/api/servers/'+current.id+'/store/buy',{method:'POST',body:JSON.stringify({productId:pid})}).then(function(r){if(!r.ok){alert(r.body.error==='insufficient'?'Not enough balance':r.body.error==='no-mc-linked'?'No Minecraft name linked to your account':r.body.error==='out-of-stock'?'That sold out.':r.body.error==='limit-reached'?'You already have the maximum of that.':('Error: '+r.body.error));loadStore();return}loadStore();sfCloseDetail();if(r.body.reward&&r.body.reward.crate){openCrate(r.body.reward,{prefix:'🎉 '})}else{alert('You received: '+(r.body.reward?r.body.reward.name:''))}})}

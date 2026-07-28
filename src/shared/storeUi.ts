@@ -183,6 +183,20 @@ function sfRender(){
  var q=box.querySelector('.sf-search');
  if(q&&SF._typing){q.focus();var n=(SF.text||'').length;q.setSelectionRange(n,n)}}
 function sfFind(id){var l=SF.products||[];for(var i=0;i<l.length;i++){if(l[i].id===id)return l[i]}return null}
+/* Replace the catalogue.
+   Both pages used to assign SF.products and call sfRender, which leaves an open
+   detail pointing at the object from the PREVIOUS load. That matters because
+   the detail is where a buyer reads stock and their per-player count: a refused
+   purchase reloads the catalogue and then re-renders the card grid with the new
+   numbers while the open detail keeps showing the old ones, Buy button still
+   enabled, so the next click fails the same way.
+   A product that disappeared entirely closes the detail instead — re-rendering
+   something that is no longer for sale is worse than saying it is gone. */
+function sfSetProducts(list){
+ SF.products=list||[];
+ if(SF.detail){var live=sfFind(SF.detail.id);
+  if(live){SF.detail=live;sfRenderDetail()}else{sfCloseDetail()}}
+ sfRender()}
 function sfOpen(id){var p=sfFind(id);if(!p)return;SF.detail=p;SF.shot=p.icon||'';sfRenderDetail()}
 function sfCloseDetail(e){if(e&&e.target&&e.target.id!=='sfModal')return;SF.detail=null;
  var m=document.getElementById('sfModal');if(m)m.classList.add('hidden')}
