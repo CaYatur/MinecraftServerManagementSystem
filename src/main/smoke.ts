@@ -4903,6 +4903,31 @@ export async function runWebSmoke(): Promise<void> {
         if (after['enable-rcon'] !== before['enable-rcon']) {
           return fail('a targeted property write disturbed another key')
         }
+        // The three fields that decide what binary runs are desktop-only,
+        // whatever scope the caller holds. `settings` is not a licence to run
+        // arbitrary programs as the MSMS process.
+        for (const field of ['javaPath', 'customArgs', 'extraFlags']) {
+          r = await kpost(cBase + '/java', { [field]: 'C:/evil.exe' }, cfgKey.secret)
+          if (r.status !== 403) return fail(field + ' over HTTP expected 403, got ' + r.status)
+          const body = (await r.json()) as { error: string; fields: string[] }
+          if (body.error !== 'local-only-field' || !body.fields.includes(field)) {
+            return fail(field + ' was refused for the wrong reason: ' + JSON.stringify(body))
+          }
+          // ...and it really did not land.
+          const now = getConfig().servers.find((x) => x.id === id)?.java as unknown as Record<string, unknown>
+          if (now[field] === 'C:/evil.exe') return fail(field + ' was written despite the 403')
+        }
+        if (!auditMod.query({ actions: ['config.java'] }).entries.some((e) => e.ok === false)) {
+          return fail('a refused java field was not audited')
+        }
+        // A patch mixing a safe field with a forbidden one is refused whole,
+        // rather than partially applied.
+        r = await kpost(cBase + '/java', { minMemoryMB: 512, javaPath: 'C:/evil.exe' }, cfgKey.secret)
+        if (r.status !== 403) return fail('a mixed patch expected 403, got ' + r.status)
+        if (getConfig().servers.find((x) => x.id === id)?.java.minMemoryMB === 512) {
+          return fail('a refused patch still applied its safe half')
+        }
+
         // Java config merges rather than replacing, or a partial patch would
         // wipe the preset it did not mention.
         r = await kpost(cBase + '/java', { maxMemoryMB: 3072 }, cfgKey.secret)

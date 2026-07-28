@@ -213,6 +213,25 @@ wholesale.
 The Java patch **merges** — send `{ maxMemoryMB: 3072 }` and the preset,
 flags and jar stay as they were.
 
+### Three Java fields are desktop-only
+
+`javaPath`, `customArgs` and `extraFlags` are refused over HTTP with
+`403 local-only-field`, whatever scope the caller holds.
+
+They decide **what program MSMS executes**: `javaPath` is spawned as the process
+binary, `customArgs` *is* the whole command line when the preset is `custom`, and
+`extraFlags` is appended to the real one. Accepting them from a remote caller
+would make `settings` mean "run arbitrary programs as the MSMS process", which is
+not a settings field.
+
+Over IPC they are fine, and stay editable in the desktop app: there the caller is
+the operator at the machine, who already has full filesystem access, so a text
+box grants them nothing new.
+
+A patch mixing a safe field with a forbidden one is refused **whole** — the safe
+half is not applied, so a caller never has to guess which part of their request
+landed.
+
 ## Not in this surface
 
 Still IPC-only, tracked in #53: plugins/mods search and install, Java list and

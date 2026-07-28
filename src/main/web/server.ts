@@ -19,6 +19,7 @@ import {
   isGamemode,
   isValidMcName,
   isValidWorldName,
+  localOnlyJavaFields,
   moderationAuditAction,
   needsConfirm,
   sanitizeCommandArg
@@ -892,6 +893,16 @@ async function handlePanel(req: IncomingMessage, res: ServerResponse): Promise<v
         }
         if (action === 'java' && method === 'POST') {
           const b = (await readBody(req).catch(() => ({}))) as Partial<JavaArgsConfig>
+          // javaPath / customArgs / extraFlags decide what binary runs and with
+          // what command line. `settings` means "edit server settings", not "run
+          // arbitrary programs as the MSMS process", so they are desktop-only -
+          // where the caller is the operator at the machine, who already has
+          // full filesystem access anyway.
+          const forbidden = localOnlyJavaFields(b as Record<string, unknown>)
+          if (forbidden.length) {
+            trail('config.java', forbidden.join(','), false, 'local-only-field')
+            return sendJson(res, 403, { error: 'local-only-field', fields: forbidden })
+          }
           // updateServer merges `java` rather than replacing it, so a partial
           // patch keeps the rest of the preset intact.
           const updated = registry.updateServer(id, { java: b as JavaArgsConfig })
