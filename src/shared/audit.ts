@@ -13,9 +13,22 @@
  */
 
 /** Where an action came from. */
-export type AuditSource = 'console' | 'panel' | 'webpanel' | 'public' | 'system'
+/**
+ * `api` is its own source rather than another `webpanel` entry: an API key acts
+ * on behalf of no human, and "which of my integrations did this" is the first
+ * question asked when a key misbehaves. Folding it into `webpanel` would hide
+ * that behind a username that is not a person.
+ */
+export type AuditSource = 'console' | 'panel' | 'webpanel' | 'public' | 'api' | 'system'
 
-export const AUDIT_SOURCES: AuditSource[] = ['console', 'panel', 'webpanel', 'public', 'system']
+export const AUDIT_SOURCES: AuditSource[] = [
+  'console',
+  'panel',
+  'webpanel',
+  'public',
+  'api',
+  'system'
+]
 
 export interface AuditEntry {
   id: string

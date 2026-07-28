@@ -31,7 +31,9 @@ import * as auth from '../web/auth'
 import * as economy from '../store/economy'
 import * as site from '../web/site'
 import * as roles from '../web/roles'
+import * as apikeys from '../web/apikeys'
 import { log } from '../logger'
+import { SCOPES } from '@shared/web'
 import type {
   WebConfig,
   WebRole,
@@ -380,7 +382,12 @@ export function registerIpc(): void {
         port: Number(cfg.port) || 8722,
         bindLan: !!cfg.bindLan,
         siteEnabled: !!cfg.siteEnabled,
-        sitePort: Number(cfg.sitePort) || 8723
+        sitePort: Number(cfg.sitePort) || 8723,
+        // Normalised here so a stray blank line in the editor cannot become an
+        // allowlist entry that matches an empty Origin header.
+        apiOrigins: (Array.isArray(cfg.apiOrigins) ? cfg.apiOrigins : [])
+          .map((o) => String(o).trim())
+          .filter(Boolean)
       }
     })
     const w = getConfig().web
@@ -407,6 +414,37 @@ export function registerIpc(): void {
   })
   H(IPC.webUserPassword, (_e, id: string, password: string) => auth.setUserPassword(id, password))
   H(IPC.webUserMc, (_e, id: string, mcName: string) => auth.setUserMc(id, mcName))
+
+  // --- API keys (#48). Desktop is the owner console, so no scope gate here;
+  // the HTTP surface has its own owner check. Issue/revoke are audited on both
+  // paths, because "who minted this credential" is the whole question later.
+  H(IPC.apiKeyList, () => apikeys.listKeys())
+  H(IPC.apiKeyCreate, (_e, input: apikeys.NewKeyInput) => {
+    const created = apikeys.createKey({
+      label: input?.label ?? '',
+      scopes: (Array.isArray(input?.scopes) ? input.scopes : []).filter((s) => SCOPES.includes(s)),
+      servers: input?.servers === 'all' ? 'all' : Array.isArray(input?.servers) ? input.servers : [],
+      expiresInDays: Number(input?.expiresInDays) || 0,
+      canAudit: !!input?.canAudit
+    })
+    audit.record({
+      source: 'panel',
+      action: 'apikey.create',
+      actor: 'operator',
+      target: created.key.label,
+      detail: created.key.scopes.join(',') || 'no scopes'
+    })
+    return created
+  })
+  H(IPC.apiKeyRevoke, (_e, keyId: string) => {
+    const k = apikeys.revokeKey(keyId)
+    audit.record({ source: 'panel', action: 'apikey.revoke', actor: 'operator', target: k.label })
+    return k
+  })
+  H(IPC.apiKeyDelete, (_e, keyId: string) => {
+    apikeys.deleteKey(keyId)
+    audit.record({ source: 'panel', action: 'apikey.delete', actor: 'operator', target: keyId })
+  })
 
   // --- store / economy (trusted desktop admin) ---
   H(IPC.storeGet, (_e, id: string) => ({

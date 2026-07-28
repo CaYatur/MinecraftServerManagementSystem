@@ -24,6 +24,7 @@ const SRC_CLASS: Record<AuditSource, string> = {
   panel: 'accent',
   webpanel: 'accent',
   public: 'warn',
+  api: 'warn',
   system: 'muted'
 }
 

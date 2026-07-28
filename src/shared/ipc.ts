@@ -56,6 +56,7 @@ import type {
 } from './web'
 import type { CrateAnimation } from './crate'
 import type { RoleDef } from './rbac'
+import type { ApiKeyView, KeyServers } from './apikeys'
 
 /** request/response channels (renderer -> main via invoke). */
 export const IPC = {
@@ -180,6 +181,10 @@ export const IPC = {
   webUserAudit: 'web:user-audit',
   webUserPassword: 'web:user-password',
   webUserMc: 'web:user-mc',
+  apiKeyList: 'apikey:list',
+  apiKeyCreate: 'apikey:create',
+  apiKeyRevoke: 'apikey:revoke',
+  apiKeyDelete: 'apikey:delete',
 
   storeGet: 'store:get',
   storeCurrency: 'store:currency',
@@ -383,6 +388,21 @@ export interface MsmsApi {
   setWebUserAudit(id: string, canAudit: boolean): Promise<void>
   setWebUserPassword(id: string, password: string): Promise<void>
   setWebUserMc(id: string, mcName: string): Promise<void>
+  /** API keys for third-party integrations (#48). Owner-side, desktop-trusted. */
+  listApiKeys(): Promise<ApiKeyView[]>
+  /**
+   * Issue a key. The returned `secret` is the only time the raw value exists —
+   * it is stored hashed and cannot be shown again.
+   */
+  createApiKey(input: {
+    label: string
+    scopes: Scope[]
+    servers: KeyServers
+    expiresInDays?: number
+    canAudit?: boolean
+  }): Promise<{ key: ApiKeyView; secret: string }>
+  revokeApiKey(keyId: string): Promise<ApiKeyView>
+  deleteApiKey(keyId: string): Promise<void>
 
   getStore(
     id: string

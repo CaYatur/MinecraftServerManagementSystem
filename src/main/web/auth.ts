@@ -9,6 +9,8 @@ import { usersPath } from '../paths'
 import { log } from '../logger'
 import type { Scope, WebRole, WebUserView } from '@shared/web'
 import { effectiveScopes } from '@shared/rbac'
+import { keyCoversServer } from '@shared/apikeys'
+import type { KeyServers } from '@shared/apikeys'
 import { listRoles } from './roles'
 
 interface StoredUser {
@@ -178,6 +180,40 @@ export interface AuthUser {
   roles?: Record<string, string[]>
   mcName?: string
   canAudit?: boolean
+  /**
+   * Set when the request authenticated with an API key instead of a login
+   * session (#48). The key IS the permission set: `scopesFor` reads it and
+   * ignores `perms`/`roles` entirely, so a key can never inherit anything from
+   * a human account, and `role` is always `'user'` so it can never take the
+   * owner short-circuit in `can()`.
+   */
+  apiKey?: ApiKeyPrincipal
+}
+
+/** The parts of an API key that authorization needs. */
+export interface ApiKeyPrincipal {
+  id: string
+  label: string
+  scopes: Scope[]
+  servers: KeyServers
+  canAudit?: boolean
+}
+
+/**
+ * Build the synthetic principal for a resolved key. Deliberately `role: 'user'`
+ * - the owner branch of `can()` bypasses every scope check, and a machine
+ * credential must never reach it however it was configured.
+ */
+export function principalForKey(key: ApiKeyPrincipal): AuthUser {
+  return {
+    id: 'apikey:' + key.id,
+    username: 'key:' + key.label,
+    role: 'user',
+    perms: {},
+    roles: {},
+    canAudit: key.canAudit ?? false,
+    apiKey: key
+  }
 }
 
 export function login(username: string, password: string): { token: string; user: AuthUser } | null {
@@ -220,11 +256,21 @@ export function can(user: AuthUser, serverId: string, scope: Scope): boolean {
  * nothing, so deleting a role really does revoke what it granted.
  */
 export function scopesFor(user: AuthUser, serverId: string): Scope[] {
+  // A key carries its own scopes and its own server allowlist. Nothing else
+  // contributes - not a role, not another account's perms.
+  if (user.apiKey) {
+    return keyCoversServer(user.apiKey.servers, serverId) ? user.apiKey.scopes : []
+  }
   return effectiveScopes(user.perms[serverId], user.roles?.[serverId], listRoles())
 }
 
 /** Server ids the user can at least view. */
 export function visibleServerIds(user: AuthUser): string[] | 'all' {
+  if (user.apiKey) {
+    // `'all'` must stay 'all' rather than being frozen into a list here: a key
+    // scoped to every server is expected to pick up servers added later.
+    return user.apiKey.servers === 'all' ? 'all' : [...user.apiKey.servers]
+  }
   if (user.role === 'owner') return 'all'
   // A server reached only through a role must still be listed, or the user
   // holds permissions on something they cannot see.
