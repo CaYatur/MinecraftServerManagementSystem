@@ -475,16 +475,32 @@ function auditBalanceRefused(
   })
 }
 
+/**
+ * Who is changing a balance, and from where.
+ *
+ * An options object rather than four trailing positionals so that `by` and
+ * `source` are both **required and named**. They are the two fields an audit
+ * entry cannot be reconstructed without, and a silently wrong audit entry is
+ * worse than a missing one - a default for `source` would let any future caller
+ * that forgets be recorded as the desktop operator.
+ */
+export interface BalanceChange {
+  /** Actor as the ledger records it: 'desktop', a web username, or 'key:<label>'. */
+  by: string
+  /** Which surface the change came from. */
+  source: AuditSource
+  reason?: string
+  category?: string
+}
+
 /** Add (or, with a negative amount, remove) balance. Audited. */
 export function addBalance(
   serverId: string,
   mcName: string,
   amount: number,
-  by = 'desktop',
-  reason = '',
-  category?: string,
-  source: AuditSource = 'panel'
+  who: BalanceChange
 ): number {
+  const { by, source, reason = '', category } = who
   const kind = Math.floor(amount) < 0 ? 'remove' : 'grant'
   if (!MC_NAME.test(mcName)) {
     auditBalanceRefused(serverId, source, by, mcName, kind, 'invalid-mcname')
@@ -514,11 +530,9 @@ export function setBalance(
   serverId: string,
   mcName: string,
   amount: number,
-  by = 'desktop',
-  reason = '',
-  category?: string,
-  source: AuditSource = 'panel'
+  who: BalanceChange
 ): number {
+  const { by, source, reason = '', category } = who
   if (!MC_NAME.test(mcName)) {
     auditBalanceRefused(serverId, source, by, mcName, 'set', 'invalid-mcname')
     throw new Error('invalid-mcname')

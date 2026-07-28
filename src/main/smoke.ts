@@ -3570,7 +3570,7 @@ export async function runWebSmoke(): Promise<void> {
 
     // ---- double-spend: two concurrent buys with balance for one -> exactly one wins ----
     webAuth.setUserMc(owner.id, 'Tester')
-    economy.addBalance(id, 'Tester', 100)
+    economy.addBalance(id, 'Tester', 100, { by: 'desktop', source: 'panel' })
     const prod = economy.upsertProduct(id, {
       id: '',
       type: 'item',
@@ -3641,10 +3641,10 @@ export async function runWebSmoke(): Promise<void> {
         // The recorded delta must be what was APPLIED, not what was asked for:
         // addBalance clamps at zero, so removing more than the balance holds
         // removes only what is there.
-        economy.setBalance(id, 'Auditee', 300, 'desktop')
+        economy.setBalance(id, 'Auditee', 300, { by: 'desktop', source: 'panel' })
         auditMod._reset()
         rmSync(af, { force: true })
-        economy.addBalance(id, 'Auditee', -500, 'desktop')
+        economy.addBalance(id, 'Auditee', -500, { by: 'desktop', source: 'panel' })
         const clamped = auditMod.query({ actions: ['balance.remove'] }).entries[0]
         if (!clamped) return fail('a clamped removal was not audited')
         if (!clamped.detail?.startsWith('-300 -> 0')) {
@@ -3667,7 +3667,38 @@ export async function runWebSmoke(): Promise<void> {
           return fail('a key-driven balance change was not attributed to the key')
         }
         apikeys.deleteKey(k.key.id)
-        console.log('WEB-SMOKE: balance administration audited (grant/remove/set, refusals, applied delta, per source)')
+
+        // A purchase from the admin panel was not audited, while the same
+        // purchase from the public site was — so whether the action appeared in
+        // the trail depended on which page it was made from.
+        {
+          const prod = economy.upsertProduct(id, {
+            id: '',
+            type: 'item',
+            name: 'AuditBuy',
+            description: '',
+            price: 1,
+            commands: [],
+            rewards: []
+          } as Product)
+          webAuth.setUserMc(owner.id, 'Auditee')
+          economy.addBalance(id, 'Auditee', 10, { by: 'smoke', source: 'panel' })
+          auditMod._reset()
+          rmSync(af, { force: true })
+          const ot2 = ((await (await post('/api/login', { username: 'owner_t', password: 'ownerpass' })).json()) as { token: string }).token
+          const bought = await post('/api/servers/' + id + '/store/buy', { productId: prod.id }, ot2)
+          if (bought.status !== 200) return fail('panel buy expected 200, got ' + bought.status)
+          const buys = auditMod.query({ actions: ['purchase'] }).entries
+          if (!buys.some((e) => e.source === 'webpanel' && e.actor === 'owner_t')) {
+            return fail('a purchase made from the admin panel was not audited')
+          }
+          if (!buys.some((e) => e.detail === 'to Auditee')) {
+            return fail('a panel purchase did not record who it was delivered to')
+          }
+          economy.deleteProduct(id, prod.id)
+          webAuth.setUserMc(owner.id, '')
+        }
+        console.log('WEB-SMOKE: balance administration + panel purchases audited (per source, applied delta, refusals)')
       } finally {
         if (snap == null) rmSync(af, { force: true })
         else writeFileSync(af, snap, 'utf-8')
@@ -4230,8 +4261,8 @@ export async function runWebSmoke(): Promise<void> {
     // record and must not claim a label nothing on the server defines.
     const evSrv = 'cat-smoke-server'
     economy.upsertCategory(evSrv, { id: 'bonus', name: 'Bonus' })
-    economy.addBalance(evSrv, 'Steve', 50, 'tester', 'ok', 'bonus')
-    economy.addBalance(evSrv, 'Steve', 50, 'tester', 'nope', 'not-a-real-category')
+    economy.addBalance(evSrv, 'Steve', 50, { by: 'tester', source: 'panel', reason: 'ok', category: 'bonus' })
+    economy.addBalance(evSrv, 'Steve', 50, { by: 'tester', source: 'panel', reason: 'nope', category: 'not-a-real-category' })
     const recorded = economy.getLedger(evSrv)
     if (recorded[1]?.category !== 'bonus') return fail('a real category should be recorded')
     if (recorded[0]?.category !== undefined) return fail('an invented category must not be recorded')
@@ -4369,7 +4400,7 @@ export async function runWebSmoke(): Promise<void> {
 
       // ...and the resolved animation rides on the purchase result, because the
       // buyer never has the product it came from.
-      economy.addBalance(cs, 'Steve', 100, 'smoke')
+      economy.addBalance(cs, 'Steve', 100, { by: 'smoke', source: 'panel' })
       const bought = economy.purchase(cs, 'Steve', pinned.id)
       if (!bought.ok) return fail('crate purchase failed: ' + String(bought.error))
       if (bought.reward?.animation !== 'spin') {
@@ -4451,7 +4482,7 @@ export async function runWebSmoke(): Promise<void> {
       if (economy.publicStore(sfid).products.some((p) => p.id === secretProduct.id)) {
         return fail('a hidden product was listed')
       }
-      economy.addBalance(sfid, 'Steve', 500, 'smoke')
+      economy.addBalance(sfid, 'Steve', 500, { by: 'smoke', source: 'panel' })
       // ...and it is not buyable by id either.
       const sneak = economy.purchase(sfid, 'Steve', secretProduct.id)
       if (sneak.ok) return fail('a hidden product was bought by id')
@@ -4470,7 +4501,7 @@ export async function runWebSmoke(): Promise<void> {
       const over = economy.purchase(sfid, 'Steve', capped.id)
       if (over.ok || over.error !== 'limit-reached') return fail('per-player limit not enforced')
       // ...and it is per player, not global.
-      economy.addBalance(sfid, 'Alex', 50, 'smoke')
+      economy.addBalance(sfid, 'Alex', 50, { by: 'smoke', source: 'panel' })
       if (!economy.purchase(sfid, 'Alex', capped.id).ok) {
         return fail('one player hitting their limit blocked everybody else')
       }

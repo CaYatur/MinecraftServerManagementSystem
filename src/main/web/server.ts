@@ -20,6 +20,7 @@ import {
   ANALYSIS_METRIC_LIMIT
 } from '@shared/analysis'
 import * as audit from '../core/audit'
+import type { AuditSource } from '@shared/audit'
 import * as economy from '../store/economy'
 import * as site from './site'
 import * as playerAuth from './playerAuth'
@@ -739,6 +740,21 @@ async function handlePanel(req: IncomingMessage, res: ServerResponse): Promise<v
       if (!user.mcName) return sendJson(res, 400, { error: 'no-mc-linked' })
       const b = (await readBody(req).catch(() => ({}))) as { productId?: string }
       const result = economy.purchase(id, user.mcName, b.productId ?? '')
+      // The public site audits its purchases; this route did not, so the same
+      // action was in the trail or absent from it depending on which page it was
+      // made from. Actor is the panel account that clicked Buy, with the
+      // Minecraft name it delivered to in the detail — they are not always the
+      // same person's identity.
+      audit.record({
+        source: 'webpanel',
+        action: 'purchase',
+        actor: user.username,
+        ok: result.ok,
+        ip,
+        serverId: id,
+        target: b.productId ?? '',
+        detail: result.ok ? 'to ' + user.mcName : result.error
+      })
       return sendJson(res, result.ok ? 200 : result.error === 'insufficient' ? 402 : 400, result)
     }
     // ---- admin (store scope) ----
@@ -776,29 +792,19 @@ async function handlePanel(req: IncomingMessage, res: ServerResponse): Promise<v
         category?: string
         mode?: 'add' | 'set'
       }
+      // An API key acting here is not a web-panel session, and "which
+      // integration created a million coins" is the question asked later.
+      const who = {
+        by: user.username,
+        source: (user.apiKey ? 'api' : 'webpanel') as AuditSource,
+        reason: b.reason ?? '',
+        category: b.category
+      }
       try {
         const balance =
           b.mode === 'set'
-            ? economy.setBalance(
-                id,
-                b.mcName ?? '',
-                Number(b.amount) || 0,
-                user.username,
-                b.reason ?? '',
-                b.category,
-                // An API key acting here is not a web-panel session, and "which
-                // integration created a million coins" is the question later.
-                user.apiKey ? 'api' : 'webpanel'
-              )
-            : economy.addBalance(
-                id,
-                b.mcName ?? '',
-                Number(b.amount) || 0,
-                user.username,
-                b.reason ?? '',
-                b.category,
-                user.apiKey ? 'api' : 'webpanel'
-              )
+            ? economy.setBalance(id, b.mcName ?? '', Number(b.amount) || 0, who)
+            : economy.addBalance(id, b.mcName ?? '', Number(b.amount) || 0, who)
         return sendJson(res, 200, { ok: true, balance })
       } catch (e) {
         return sendJson(res, 400, { error: String((e as Error)?.message ?? e) })
