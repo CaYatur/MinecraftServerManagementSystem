@@ -9,6 +9,7 @@ import { bridgePlayers } from '@shared/bridge'
 import {
   clampGrace,
   deliveryDecision,
+  queueReason,
   type DeliveryInputs,
   type HoldReason
 } from '@shared/delivery'
@@ -177,13 +178,24 @@ export function initEconomy(): void {
  * anywhere recording that it had been tried.
  */
 async function runCommands(serverId: string, mcName: string, commands: string[]): Promise<boolean> {
-  const viaRcon = rcon.isConnected(serverId)
-  const viaStdin = processManager.isRunning(serverId)
-  if (!viaRcon && !viaStdin) return false
-  for (const c of commands) {
-    const cmd = c.replace(/\{player\}/g, mcName)
-    if (viaRcon) await rcon.tryCommand(serverId, cmd)
-    else processManager.sendCommand(serverId, cmd)
+  if (!rcon.isConnected(serverId) && !processManager.isRunning(serverId)) return false
+  for (let i = 0; i < commands.length; i++) {
+    const cmd = commands[i].replace(/\{player\}/g, mcName)
+    // `tryCommand` swallows its failure and answers null — it is the "try"
+    // variant, which is right for a fire-and-forget console command and wrong
+    // here. Taking a connected socket as proof the command landed reintroduces
+    // exactly the bug this function was rewritten to close, one layer down: the
+    // caller would dequeue a reward that RCON dropped.
+    const sent = rcon.isConnected(serverId) ? (await rcon.tryCommand(serverId, cmd)) !== null : false
+    if (sent) continue
+    // RCON is the preferred channel, not the only one. A dropped connection to
+    // a process that is still up is a reason to use stdin, not to give up.
+    if (processManager.isRunning(serverId)) {
+      processManager.sendCommand(serverId, cmd)
+      continue
+    }
+    log.warn(`Store: command ${i + 1}/${commands.length} for ${mcName} could not be sent`)
+    return false
   }
   return true
 }
@@ -253,6 +265,7 @@ function isOnlineMode(serverId: string): boolean {
 export function _resetOnlineModeCache(): void {
   onlineModeCache.clear()
   joinedAt.clear()
+  scheduled.clear()
 }
 
 /**
@@ -267,15 +280,27 @@ async function attemptDelivery(
   entry: QueueEntry,
   source: 'purchase' | 'join' | 'manual'
 ): Promise<boolean> {
+  const key = serverId + '|' + entry.id
+  // A retry timer owns this entry until it fires. Without the guard, persisting
+  // a waiting reward (below) would make it visible to `deliverQueued`, and a
+  // join arriving mid-grace would run the same commands a second time.
+  if (scheduled.has(key)) return false
   const decision = deliveryDecision(deliveryInputs(serverId, entry.mcName))
+  // Persist BEFORE anything else, for every decision that is not a hand-over.
+  // A reward that exists only inside a setTimeout closure is lost if the app
+  // quits during the grace — a window the grace deliberately makes as long as a
+  // login plugin needs.
+  const pending = queueReason(decision)
+  if (pending) holdInQueue(serverId, entry, pending)
   if (decision.action === 'wait') {
-    setTimeout(() => void attemptDelivery(serverId, entry, source), decision.ms)
+    scheduled.add(key)
+    setTimeout(() => {
+      scheduled.delete(key)
+      void attemptDelivery(serverId, entry, source)
+    }, decision.ms)
     return false
   }
-  if (decision.action === 'hold') {
-    holdInQueue(serverId, entry, decision.reason)
-    return false
-  }
+  if (decision.action === 'hold') return false
   const ran = await runCommands(serverId, entry.mcName, entry.commands)
   if (!ran) {
     // The channel closed between the decision and the send.
@@ -297,6 +322,13 @@ async function attemptDelivery(
   return true
 }
 
+/**
+ * Entries with a retry timer pending. In memory only, and deliberately so: it
+ * is the *timer* that is not durable, and after a restart there is no timer, so
+ * a persisted `just-joined` entry must be free for the next join to pick up.
+ */
+const scheduled = new Set<string>()
+
 function holdInQueue(serverId: string, entry: QueueEntry, reason: HoldReason): void {
   const st = getStore(serverId)
   const existing = st.queue.find((q) => q.id === entry.id)
@@ -308,7 +340,8 @@ function holdInQueue(serverId: string, entry: QueueEntry, reason: HoldReason): v
     st.queue.push({ ...entry, reason, attempts: 1, lastTryAt: Date.now() })
   }
   save()
-  log.info(`Store: holding "${entry.rewardName}" for ${entry.mcName} (${reason})`)
+  const verb = reason === 'just-joined' ? 'waiting to deliver' : 'holding'
+  log.info(`Store: ${verb} "${entry.rewardName}" for ${entry.mcName} (${reason})`)
 }
 
 function removeFromQueue(serverId: string, id: string): void {

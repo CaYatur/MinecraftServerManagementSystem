@@ -66,7 +66,7 @@ import { getPanelHtml } from './web/panelHtml'
 import { getPublicSiteHtml } from './web/publicSiteHtml'
 import { CRATE_CSS } from '@shared/crateUi'
 import { openApiDocument } from '@shared/openapi'
-import { clampGrace, deliveryDecision } from '@shared/delivery'
+import { clampGrace, deliveryDecision, queueReason, HOLD_REASONS } from '@shared/delivery'
 import { API_PREFIX } from '@shared/apiSurface'
 import { MODERATION_ACTIONS, WORLD_ACTIONS } from '@shared/ops'
 import { removeServer } from './core/serverRegistry'
@@ -5537,23 +5537,44 @@ export async function runWebSmoke(): Promise<void> {
         }
         if (d.action === 'wait' && !(d.ms > 0)) return fail('delivery "' + label + '" waits 0ms')
       }
-      // No input combination may lose the reward.
+      // No input combination may lose the reward. The action being one of three
+      // known strings is not the property that matters — what matters is that
+      // every non-delivery names a queue reason, because that is what makes the
+      // entry survive the process. `wait` is the branch that forgets: it looks
+      // like progress, so it is the one that ends up living in a timer closure
+      // and nowhere durable.
+      let swept = 0
       for (const running of [true, false]) {
         for (const online of [true, false]) {
           for (const bridge of [true, false]) {
             for (const mode of [true, false]) {
               for (const hold of [true, false]) {
-                const d = deliveryDecision({
-                  ...base,
-                  serverRunning: running,
-                  canSend: running,
-                  playerOnline: online,
-                  bridgeInWorld: bridge,
-                  onlineMode: mode,
-                  holdWhenUnverified: hold
-                })
-                if (!['deliver', 'wait', 'hold'].includes(d.action)) {
-                  return fail('delivery produced an unknown action: ' + JSON.stringify(d))
+                for (const joined of [undefined, 0, 5_000, 60_000]) {
+                  const d = deliveryDecision({
+                    ...base,
+                    serverRunning: running,
+                    canSend: running,
+                    playerOnline: online,
+                    bridgeInWorld: bridge,
+                    onlineMode: mode,
+                    holdWhenUnverified: hold,
+                    joinedAgoMs: joined
+                  })
+                  swept++
+                  if (!['deliver', 'wait', 'hold'].includes(d.action)) {
+                    return fail('delivery produced an unknown action: ' + JSON.stringify(d))
+                  }
+                  const q = queueReason(d)
+                  if (d.action === 'deliver') {
+                    if (q !== null) return fail('a delivery still claimed queue reason ' + q)
+                  } else if (q === null) {
+                    return fail(
+                      'a "' + d.action + '" decision named no queue reason, so nothing would persist it: ' +
+                        JSON.stringify({ running, online, bridge, mode, hold, joined })
+                    )
+                  } else if (!HOLD_REASONS.includes(q)) {
+                    return fail('queue reason "' + q + '" is not in HOLD_REASONS')
+                  }
                 }
               }
             }
@@ -5563,7 +5584,9 @@ export async function runWebSmoke(): Promise<void> {
       if (clampGrace(0) < 1000) return fail('the grace clamp allows an instant delivery')
       if (clampGrace('nonsense') !== 20_000) return fail('a junk grace did not fall back to the default')
 
-      console.log('WEB-SMOKE: delivery decision OK (13 rows, no combination drops a paid reward)')
+      console.log(
+        'WEB-SMOKE: delivery decision OK (13 rows, ' + swept + ' combinations, every non-delivery persists)'
+      )
     }
 
     // ---- the documented surface matches the router (#51) ----

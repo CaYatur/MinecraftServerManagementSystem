@@ -25,6 +25,16 @@ export type HoldReason =
   | 'player-offline'
   /** Connected, but nothing proves they are in the world with an inventory. */
   | 'needs-approval'
+  /**
+   * Inside the grace after a join: a retry is already scheduled.
+   *
+   * A `wait` is still a reason to be in the queue. The obvious implementation
+   * keeps a waiting reward in a `setTimeout` closure and nowhere else, which
+   * means quitting the app during the grace loses a reward that was paid for
+   * seconds earlier — the failure this module exists to prevent, moved from the
+   * delivery path into the retry path.
+   */
+  | 'just-joined'
 
 export type DeliveryDecision =
   | { action: 'deliver' }
@@ -105,5 +115,26 @@ export function deliveryDecision(i: DeliveryInputs): DeliveryDecision {
   return withinGrace ? { action: 'wait', ms: i.graceMs - joined! } : { action: 'deliver' }
 }
 
+/**
+ * The queue reason a decision implies, or null when the reward is being handed
+ * over right now.
+ *
+ * This exists so "anything that is not a delivery stays in the queue" is a rule
+ * one function states, rather than a habit each branch of the caller has to
+ * remember. `wait` is the branch that gets forgotten: it looks like progress,
+ * so the obvious code leaves the entry in a `setTimeout` closure and nowhere
+ * durable — and the app quitting during the grace then loses a reward that was
+ * paid for seconds earlier.
+ */
+export function queueReason(d: DeliveryDecision): HoldReason | null {
+  if (d.action === 'deliver') return null
+  return d.action === 'wait' ? 'just-joined' : d.reason
+}
+
 /** Copy for the panel's pending list. Keys, not sentences — the UI translates. */
-export const HOLD_REASONS: HoldReason[] = ['server-down', 'player-offline', 'needs-approval']
+export const HOLD_REASONS: HoldReason[] = [
+  'server-down',
+  'player-offline',
+  'needs-approval',
+  'just-joined'
+]
