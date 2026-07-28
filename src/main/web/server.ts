@@ -63,6 +63,9 @@ import {
 import * as apikeys from './apikeys'
 import { spendKeyToken, resetKeyBuckets } from './rate'
 import { attachWs, closeAllWs, WS_PATH, WS_STREAMS } from './wsHub'
+import { getApiDocsHtml } from './apiDocsHtml'
+import { openApiDocument } from '@shared/openapi'
+import { API_VERSION } from '@shared/apiSurface'
 import {
   consumeToken,
   isOriginAllowed,
@@ -449,12 +452,29 @@ async function handlePanel(req: IncomingMessage, res: ServerResponse): Promise<v
   // to be answered before anything asks who the caller is.
   if (path.startsWith('/api/') && applyCors(req, res)) return
 
-  // The surface's own index, served before authentication: it is a description
-  // of the software, identical on every install, carrying no server name, id or
-  // count. There is nothing in it to withhold, and it is what a client points at
-  // first to find out whether it is talking to something it understands.
+  // The index, the spec and the reference page are served before authentication,
+  // and are the only routes that are. All three are descriptions of the
+  // software — the same bytes on every install, generated from a constant table,
+  // carrying no server name, id or count — so there is nothing in them to
+  // withhold. Requiring a credential would also make the docs page useless to
+  // the thing that needs it most: a browser, which cannot set an Authorization
+  // header on a navigation.
   if (rawPath === '/api/v1' && method === 'GET') {
-    return sendJson(res, 200, { version: 'v1', stream: WS_PATH, streams: WS_STREAMS })
+    return sendJson(res, 200, {
+      version: API_VERSION,
+      openapi: '/api/v1/openapi.json',
+      docs: '/api/v1/docs',
+      stream: WS_PATH,
+      streams: WS_STREAMS
+    })
+  }
+  if (rawPath === '/api/v1/openapi.json' && method === 'GET') {
+    return sendJson(res, 200, openApiDocument())
+  }
+  if (rawPath === '/api/v1/docs' && method === 'GET') {
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' })
+    res.end(getApiDocsHtml())
+    return
   }
 
   // ---- static (admin panel listener) ----

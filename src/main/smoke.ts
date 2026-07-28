@@ -58,6 +58,9 @@ import { runInNewContext } from 'node:vm'
 import { getPanelHtml } from './web/panelHtml'
 import { getPublicSiteHtml } from './web/publicSiteHtml'
 import { CRATE_CSS } from '@shared/crateUi'
+import { openApiDocument } from '@shared/openapi'
+import { API_PREFIX } from '@shared/apiSurface'
+import { MODERATION_ACTIONS, WORLD_ACTIONS } from '@shared/ops'
 import { removeServer } from './core/serverRegistry'
 import * as sf from './core/serverFiles'
 import * as files from './core/serverFiles'
@@ -5411,6 +5414,114 @@ export async function runWebSmoke(): Promise<void> {
         if (snap == null) rmSync(af, { force: true })
         else writeFileSync(af, snap, 'utf-8')
       }
+    }
+
+    // ---- the documented surface matches the router (#51) ----
+    {
+      const doc = openApiDocument()
+      const documented = Object.keys(doc.paths as Record<string, unknown>)
+
+      // The versioned prefix is a rewrite, not a second table: the same route
+      // must answer under both.
+      r = await get('/api/v1/servers', ot)
+      if (r.status !== 200) return fail('/api/v1/servers expected 200, got ' + r.status)
+      const v1List = (await r.json()) as { servers: { id: string }[] }
+      r = await get('/api/servers', ot)
+      const unversioned = (await r.json()) as { servers: { id: string }[] }
+      if (v1List.servers.length !== unversioned.servers.length) {
+        return fail('the versioned and unversioned prefixes disagree')
+      }
+      r = await get('/api/v1/servers/' + id + '/console', ot)
+      if (r.status !== 200) return fail('a nested v1 path expected 200, got ' + r.status)
+      // The rewrite is anchored: a path that merely contains the prefix is not it.
+      r = await get('/api/v2/servers', ot)
+      if (r.status === 200) return fail('/api/v2 answered as if it were v1')
+
+      // The index, the spec and the reference page need no credential — they
+      // describe the software, not this install.
+      r = await fetch(base + '/api/v1')
+      if (r.status !== 200) return fail('the v1 index expected 200 without a credential, got ' + r.status)
+      r = await fetch(base + '/api/v1/openapi.json')
+      if (r.status !== 200) return fail('the spec expected 200 without a credential, got ' + r.status)
+      const served = await r.text()
+      if (served !== JSON.stringify(doc)) return fail('the served spec is not the generated one')
+      // ...and nothing about this install may be in them, or "no credential" is
+      // a disclosure rather than a convenience.
+      const fixtureName = getConfig().servers.find((s) => s.id === id)?.name ?? ''
+      r = await fetch(base + '/api/v1/docs')
+      if (r.status !== 200) return fail('the docs page expected 200, got ' + r.status)
+      const docsHtml = await r.text()
+      for (const [what, text] of [
+        ['spec', served],
+        ['docs page', docsHtml]
+      ] as [string, string][]) {
+        if (text.includes(id)) return fail('the ' + what + ' leaks a server id')
+        if (fixtureName && text.includes(fixtureName)) return fail('the ' + what + ' leaks a server name')
+      }
+      // No CDN: the panel's CSP forbids external assets, and a reference page
+      // that needs the internet is a poor way to document a LAN tool.
+      if (/(src|href)="https?:\/\//.test(docsHtml.replace(/http:\/\/127\.0\.0\.1/g, ''))) {
+        return fail('the docs page pulls in an external asset')
+      }
+
+      /**
+       * Coverage, derived from the ROUTER'S OWN SOURCE rather than from the
+       * table the spec is generated from.
+       *
+       * A test that walks the spec's paths and checks each one exists can only
+       * find routes that were documented and then deleted — never the reverse,
+       * which is the failure that actually happens. So the route literals are
+       * read out of `handlePanel` itself and each one must appear in the table.
+       */
+      const srcPath = join(process.cwd(), 'src', 'main', 'web', 'server.ts')
+      if (!existsSync(srcPath)) return fail('cannot read the router source at ' + srcPath)
+      const whole = readFileSync(srcPath, 'utf-8')
+      const from = whole.indexOf('async function handlePanel')
+      const to = whole.indexOf('export function startWebServer')
+      if (from < 0 || to < 0 || to < from) return fail('could not isolate handlePanel in the source')
+      const router = whole.slice(from, to)
+
+      // `/api/…` literals, mapped onto the versioned form the table uses.
+      for (const m of router.matchAll(/\b(?:raw)?[Pp]ath === '(\/api\/[^']*)'/g)) {
+        const lit = m[1]
+        const want = lit.startsWith('/api/v1') ? lit : API_PREFIX + lit.slice(4)
+        if (!documented.includes(want)) {
+          return fail('the router serves ' + lit + ' and the spec does not document it')
+        }
+      }
+
+      // Sub-paths chosen by string comparison: `sub`, `action`, `rest`.
+      // These are covered by a wildcard segment in the table (the eight
+      // moderation actions, the four world actions) rather than by a path each.
+      const wildcardCovered = new Set<string>([...MODERATION_ACTIONS, ...WORLD_ACTIONS, 'delete'])
+      const segments = new Set<string>()
+      for (const p of documented) for (const seg of p.split('/')) if (seg && !seg.startsWith('{')) segments.add(seg)
+      for (const m of router.matchAll(/\b(?:sub|action|rest) === '([^']+)'/g)) {
+        const token = m[1]
+        if (!token || wildcardCovered.has(token)) continue
+        // `rest` carries multi-segment values like `admin/category/delete`.
+        if (token.split('/').every((seg) => segments.has(seg))) continue
+        return fail('the router handles "' + token + '" and the spec documents no such path')
+      }
+
+      // ...and the other direction: nothing in the table may be invented.
+      for (const p of documented) {
+        const literals = p.slice(API_PREFIX.length).split('/').filter((s) => s && !s.startsWith('{'))
+        const leaf = literals[literals.length - 1]
+        if (!leaf) continue
+        if (!router.includes("'" + leaf) && !router.includes('/' + leaf)) {
+          return fail('the spec documents ' + p + ' and the router has no such route')
+        }
+      }
+
+      // Keep the checked-in copy current. It is a generated artefact, and a
+      // stale one in the repo is worse than none — an integrator reads the file
+      // in the repository, not the one this process would serve.
+      writeFileSync(join(process.cwd(), 'docs', 'openapi.json'), JSON.stringify(doc, null, 2) + '\n', 'utf-8')
+
+      console.log(
+        'WEB-SMOKE: api docs OK (' + documented.length + ' documented paths, router-derived coverage both ways, no install data)'
+      )
     }
 
     // ---- WebSocket frame codec (#27), pure ----
