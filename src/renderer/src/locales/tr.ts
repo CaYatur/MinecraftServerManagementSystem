@@ -704,6 +704,13 @@ const tr: typeof en = {
     discord: 'Discord adresi',
     serverIp: 'Sunucu IP (sitede gösterilir)',
     showStore: 'Sitede mağazayı göster',
+    mapServer: 'Canlı harita sunucusu',
+    showMap: 'Sitede canlı haritayı göster',
+    mapRound: 'Yuvarlama (blok)',
+    mapNames: 'İsimleri göster',
+    mapHeads: 'Oyuncu kafalarını çiz',
+    mapHint:
+      'Ziyaretçiler yuvarlanmış konumları görür, yükseklik gösterilmez — panel haritası yöneticiler içindir, aynı ayrıntı herkese açıkken tüm üslerin listesi olur. Oyuncu kafaları her oyuncunun UUID’sini crafatar.com adresine gönderir.',
     open: 'Siteyi aç',
     posts: 'Haberler',
     addPost: 'Haber ekle',

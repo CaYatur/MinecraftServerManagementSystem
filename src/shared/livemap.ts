@@ -121,6 +121,167 @@ export function toCanvas(p: { x: number; z: number }, b: MapBounds): { x: number
   return { x: (p.x - b.minX) / w, y: (p.z - b.minZ) / h }
 }
 
+// ---- navigation (#104) ----
+
+/**
+ * Where the viewport is looking.
+ *
+ * Centre plus pixels-per-block rather than a rectangle. A rectangle has to be
+ * recomputed whenever the canvas is resized, and every resize would then move
+ * the view — which is how a map ends up jumping when a panel is opened on a
+ * different screen. Centre and scale survive a resize unchanged.
+ */
+export interface MapView {
+  cx: number
+  cz: number
+  /** Pixels per block. Larger is closer in. */
+  scale: number
+}
+
+export interface Viewport {
+  width: number
+  height: number
+}
+
+/** One pixel per fifty blocks, up to eight pixels per block. */
+export const MIN_SCALE = 0.02
+export const MAX_SCALE = 8
+
+export function clampScale(s: number): number {
+  if (!Number.isFinite(s)) return 1
+  return Math.min(MAX_SCALE, Math.max(MIN_SCALE, s))
+}
+
+export function worldToScreen(
+  p: { x: number; z: number },
+  view: MapView,
+  vp: Viewport
+): { x: number; y: number } {
+  return {
+    x: vp.width / 2 + (p.x - view.cx) * view.scale,
+    y: vp.height / 2 + (p.z - view.cz) * view.scale
+  }
+}
+
+/** The inverse. This is the coordinate readout under the cursor. */
+export function screenToWorld(
+  pt: { x: number; y: number },
+  view: MapView,
+  vp: Viewport
+): { x: number; z: number } {
+  return {
+    x: view.cx + (pt.x - vp.width / 2) / view.scale,
+    z: view.cz + (pt.y - vp.height / 2) / view.scale
+  }
+}
+
+/** The view that shows `b` with a little room, used as the starting position. */
+export function fitView(b: MapBounds, vp: Viewport): MapView {
+  const w = Math.max(1, b.maxX - b.minX)
+  const h = Math.max(1, b.maxZ - b.minZ)
+  return {
+    cx: (b.minX + b.maxX) / 2,
+    cz: (b.minZ + b.maxZ) / 2,
+    scale: clampScale(Math.min(vp.width / w, vp.height / h) * 0.9)
+  }
+}
+
+/**
+ * Zoom by `factor`, keeping the world point under `anchor` where it is.
+ *
+ * The naive version scales around the centre, which drags whatever the user was
+ * looking at away from the cursor — so zooming towards a base walks off it, and
+ * the correction is another pan. Anchoring is what makes a wheel feel like a
+ * wheel.
+ */
+export function zoomAt(view: MapView, vp: Viewport, anchor: { x: number; y: number }, factor: number): MapView {
+  const before = screenToWorld(anchor, view, vp)
+  const scale = clampScale(view.scale * factor)
+  const after = screenToWorld(anchor, { ...view, scale }, vp)
+  return { cx: view.cx + (before.x - after.x), cz: view.cz + (before.z - after.z), scale }
+}
+
+/** Drag: the world moves with the pointer, so the centre moves against it. */
+export function panBy(view: MapView, dxPx: number, dyPx: number): MapView {
+  return { ...view, cx: view.cx - dxPx / view.scale, cz: view.cz - dyPx / view.scale }
+}
+
+// ---- what a visitor is allowed to see (#104) ----
+
+/**
+ * A player as the PUBLIC map presents them.
+ *
+ * Deliberately not `LivePlayer`. The panel's map is for operators; the same
+ * payload on a public page is a griefing tool — exact coordinates tell anyone
+ * on the internet where every base is, and `y` additionally says whether
+ * somebody is in a cave, which is when they cannot defend it.
+ *
+ * So the public shape drops `y`, `world` and (by default) `uuid`, and rounds
+ * what is left. A separate type rather than an optional field, because the
+ * difference has to be visible at every call site that returns one.
+ */
+export interface PublicMapPlayer {
+  name?: string
+  dim: string
+  x: number
+  z: number
+  uuid?: string
+}
+
+export interface PublicMapConfig {
+  enabled: boolean
+  /** Which server's map is published. */
+  serverId: string
+  /** Coordinates are snapped to this many blocks. */
+  round: number
+  /** Draw skin heads, which means sending uuids to an avatar service. */
+  heads: boolean
+  names: boolean
+}
+
+/**
+ * 64 blocks — four chunks — is enough to see where the server is busy and not
+ * enough to walk to somebody's door. Off, rounded and named is the default
+ * because publishing is the operator's decision and precision should be one
+ * they make deliberately rather than one they inherit.
+ */
+export const PUBLIC_MAP_DEFAULTS: PublicMapConfig = {
+  enabled: false,
+  serverId: '',
+  round: 64,
+  heads: false,
+  names: true
+}
+
+export const MAX_MAP_ROUND = 512
+
+export function clampRound(n: unknown): number {
+  const v = typeof n === 'number' && Number.isFinite(n) ? Math.floor(n) : PUBLIC_MAP_DEFAULTS.round
+  return Math.min(MAX_MAP_ROUND, Math.max(0, v))
+}
+
+/**
+ * Snap to a grid rather than adding noise.
+ *
+ * Jitter looks more private and is not: a watcher who samples the same player
+ * for a minute averages the noise away and recovers the real position. A grid
+ * is deterministic — every sample of a stationary player returns the same cell,
+ * so there is nothing to average.
+ */
+export function redactPlayers(list: LivePlayer[], cfg: PublicMapConfig): PublicMapPlayer[] {
+  const r = clampRound(cfg.round)
+  const snap = (v: number): number => (r > 0 ? Math.round(v / r) * r : Math.round(v))
+  return list.map((p) => ({
+    ...(cfg.names ? { name: p.name } : {}),
+    dim: p.dim,
+    x: snap(p.x),
+    z: snap(p.z),
+    // Only when heads are on: a uuid is both an identity and the thing that
+    // gets sent to a third-party avatar service.
+    ...(cfg.heads && p.uuid ? { uuid: p.uuid } : {})
+  }))
+}
+
 export interface HeatCell {
   /** Cell origin in block coordinates. */
   x: number
