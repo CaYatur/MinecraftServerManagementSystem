@@ -11,6 +11,11 @@ export type Scope =
   | 'backups' // create/restore backups
   | 'settings' // edit server settings
   | 'store' // manage the store/economy (Phase 6)
+  // Its own scope, not folded into 'players' or 'settings' (#53): deleting or
+  // resetting a world destroys data no backup outside MSMS knows about, and an
+  // integration that needs to read the world list should not have to be trusted
+  // with erasing one.
+  | 'worlds' // activate/rename/clone/reset/delete worlds
 
 export const SCOPES: Scope[] = [
   'view',
@@ -20,7 +25,8 @@ export const SCOPES: Scope[] = [
   'files',
   'backups',
   'settings',
-  'store'
+  'store',
+  'worlds'
 ]
 
 export type WebRole = 'owner' | 'user'

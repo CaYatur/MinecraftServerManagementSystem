@@ -859,7 +859,8 @@ export default {
       files: 'Edit files',
       backups: 'Backups',
       settings: 'Edit settings',
-      store: 'Manage store'
+      store: 'Manage store',
+      worlds: 'Manage worlds (destructive)'
     }
   },
   common: {

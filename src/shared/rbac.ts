@@ -30,7 +30,10 @@ export const BUILTIN_ROLES: RoleDef[] = [
   {
     id: 'operator',
     name: 'Operator',
-    scopes: ['view', 'console', 'power', 'players', 'backups'],
+    // Worlds included here and nowhere else: this is the "runs the server"
+    // role, and world management is destructive enough that a Moderator or a
+    // Builder should not pick it up by implication.
+    scopes: ['view', 'console', 'power', 'players', 'backups', 'worlds'],
     builtin: true
   },
   { id: 'storekeeper', name: 'Storekeeper', scopes: ['view', 'store'], builtin: true }
