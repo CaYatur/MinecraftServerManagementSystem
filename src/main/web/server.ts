@@ -61,11 +61,12 @@ import {
   type AuthUser
 } from './auth'
 import * as apikeys from './apikeys'
+import { spendKeyToken, resetKeyBuckets } from './rate'
+import { attachWs, closeAllWs, WS_PATH, WS_STREAMS } from './wsHub'
 import {
   consumeToken,
   isOriginAllowed,
   newBucket,
-  DEFAULT_KEY_LIMIT,
   type Bucket,
   type KeyServers
 } from '@shared/apikeys'
@@ -164,17 +165,12 @@ function apiKeyToken(req: IncomingMessage): string | undefined {
 }
 
 /**
- * One token bucket per key, in memory. Deliberately not persisted: a restart
- * clearing the buckets is the correct behaviour for a burst brake, and writing
- * a file on every request would cost more than the limit saves.
+ * The buckets live in `./rate` so the WebSocket upgrade path spends from the
+ * same budget. A limiter that only counts HTTP requests is one an integration
+ * can walk around by opening streams instead.
  */
-const keyBuckets = new Map<string, Bucket>()
-
 function keyRateOk(keyId: string, res: ServerResponse): boolean {
-  const now = Date.now()
-  const b = keyBuckets.get(keyId) ?? newBucket(DEFAULT_KEY_LIMIT, now)
-  const r = consumeToken(b, DEFAULT_KEY_LIMIT, now)
-  keyBuckets.set(keyId, r.bucket)
+  const r = spendKeyToken(keyId)
   if (r.allowed) return true
   res.setHeader('Retry-After', String(r.retryAfterSec))
   sendJson(res, 429, { error: 'rate-limited', retryAfter: r.retryAfterSec })
@@ -211,7 +207,7 @@ function publicRateOk(ip: string, res: ServerResponse): boolean {
 
 /** Test seam: the buckets survive a `stopWebServer()`, which smoke runs rely on. */
 export function _resetRateLimits(): void {
-  keyBuckets.clear()
+  resetKeyBuckets()
   ipBuckets.clear()
 }
 
@@ -431,13 +427,35 @@ async function handleSite(req: IncomingMessage, res: ServerResponse): Promise<vo
 // ---- ADMIN PANEL routing ----
 async function handlePanel(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const url = new URL(req.url ?? '/', 'http://localhost')
-  const path = url.pathname
+  const rawPath = url.pathname
+  /**
+   * `/api/v1/...` is the **published** surface (#27); `/api/...` is the same
+   * router, and is what the panel's own page calls.
+   *
+   * One rewrite rather than a second route table. Two tables drift, and the
+   * version that drifts is always the documented one — an integration would
+   * then be reading a spec for a router the app no longer runs.
+   *
+   * The unversioned form stays because the panel bundle uses it and because
+   * breaking it would break every existing key. What `v1` adds is a promise:
+   * this shape does not change under a caller. A `v2` would be a second prefix
+   * here, not an edit to this one.
+   */
+  const path = rawPath.startsWith('/api/v1/') ? '/api' + rawPath.slice(7) : rawPath
   const method = req.method ?? 'GET'
   const ip = req.socket.remoteAddress ?? 'unknown'
 
   // Cross-origin handshake first: a preflight carries no credentials, so it has
   // to be answered before anything asks who the caller is.
   if (path.startsWith('/api/') && applyCors(req, res)) return
+
+  // The surface's own index, served before authentication: it is a description
+  // of the software, identical on every install, carrying no server name, id or
+  // count. There is nothing in it to withhold, and it is what a client points at
+  // first to find out whether it is talking to something it understands.
+  if (rawPath === '/api/v1' && method === 'GET') {
+    return sendJson(res, 200, { version: 'v1', stream: WS_PATH, streams: WS_STREAMS })
+  }
 
   // ---- static (admin panel listener) ----
   if (!path.startsWith('/api/')) {
@@ -1786,13 +1804,22 @@ export function startWebServer(): WebStatus {
   playerAuth.initPlayerAuth()
   site.initSite()
   const host = cfg.bindLan ? '0.0.0.0' : '127.0.0.1'
-  if (cfg.enabled) server = listen(handlePanel, cfg.port, host, 'Web panel')
+  if (cfg.enabled) {
+    server = listen(handlePanel, cfg.port, host, 'Web panel')
+    // Only the admin listener. The public website has no credentials to check
+    // an upgrade against, and nothing on it to stream.
+    if (server) attachWs(server, () => webCfg().apiOrigins ?? [])
+  }
   if (cfg.siteEnabled) siteServer = listen(handleSite, cfg.sitePort, host, 'Website')
   return getWebStatus()
 }
 
 export function stopWebServer(): void {
   if (server) {
+    // Before `close()`: an open upgrade is a socket the http server does not
+    // track, so closing the listener leaves every stream connected and the
+    // callback that waits for "no more connections" never fires.
+    closeAllWs()
     server.close()
     server = null
   }

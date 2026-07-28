@@ -42,6 +42,18 @@ import { createServer } from './core/createServer'
 import { pickForgeRunJar } from './core/serverDetect'
 import { downloadFile } from './core/net'
 import { createServer as httpCreateServer } from 'node:http'
+import { connect as netConnect } from 'node:net'
+import { createHash, randomBytes } from 'node:crypto'
+import {
+  WsParser,
+  WS_GUID,
+  WS_OP,
+  WS_CLOSE,
+  WS_MAX_PAYLOAD,
+  encodeClientFrame,
+  encodeFrame,
+  maskPayload
+} from '@shared/wsframe'
 import { runInNewContext } from 'node:vm'
 import { getPanelHtml } from './web/panelHtml'
 import { getPublicSiteHtml } from './web/publicSiteHtml'
@@ -113,6 +125,132 @@ import { CREATABLE_TYPES, createErrorKey } from '@shared/versions'
 /* eslint-disable no-console */
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
+
+/**
+ * A WebSocket client built from the codec under test, over a raw socket (#27).
+ *
+ * Not the platform `WebSocket`, on purpose. Two reasons: a compliant client
+ * cannot produce the frames the server most needs to refuse — an unmasked one,
+ * an oversized one — and the browser API cannot set an `Authorization` header,
+ * which is half of the auth surface here. Driving the socket by hand tests both,
+ * and reads the handshake itself rather than trusting that it happened.
+ */
+interface WsTestClient {
+  status: number
+  upgraded: boolean
+  acceptOk: boolean
+  protocol: string
+  messages: Record<string, unknown>[]
+  closes: { code: number; reason: string }[]
+  fails: string[]
+  ended: boolean
+  send(value: unknown): void
+  raw(bytes: Uint8Array): void
+  wait(pred: (m: Record<string, unknown>) => boolean, ms?: number): Promise<Record<string, unknown> | null>
+  end(): void
+}
+
+function wsTestConnect(
+  port: number,
+  opts: { path?: string; headers?: Record<string, string>; protocols?: string[] } = {}
+): Promise<WsTestClient> {
+  return new Promise((resolve) => {
+    const key = randomBytes(16).toString('base64')
+    const expected = createHash('sha1').update(key + WS_GUID).digest('base64')
+    // Reading the SERVER side of the conversation, so the masking rule inverts:
+    // server-to-client frames must not be masked.
+    const parser = new WsParser({ requireMask: false })
+    const sock = netConnect({ host: '127.0.0.1', port })
+    let head = Buffer.alloc(0)
+    let upgraded = false
+    let settled = false
+
+    const client: WsTestClient = {
+      status: 0,
+      upgraded: false,
+      acceptOk: false,
+      protocol: '',
+      messages: [],
+      closes: [],
+      fails: [],
+      ended: false,
+      send: (value) => sock.write(encodeClientFrame(WS_OP.text, new TextEncoder().encode(JSON.stringify(value)))),
+      raw: (bytes) => sock.write(Buffer.from(bytes)),
+      wait: async (pred, ms = 3000) => {
+        const until = Date.now() + ms
+        for (;;) {
+          const hit = client.messages.find(pred)
+          if (hit) return hit
+          if (Date.now() > until) return null
+          await sleep(20)
+        }
+      },
+      end: () => sock.destroy()
+    }
+    const settle = (): void => {
+      if (settled) return
+      settled = true
+      resolve(client)
+    }
+
+    const feed = (chunk: Uint8Array): void => {
+      for (const ev of parser.push(chunk)) {
+        if (ev.type === 'text') {
+          try {
+            client.messages.push(JSON.parse(ev.text) as Record<string, unknown>)
+          } catch {
+            client.fails.push('non-json:' + ev.text.slice(0, 40))
+          }
+        } else if (ev.type === 'close') {
+          client.closes.push({ code: ev.code, reason: ev.reason })
+        } else if (ev.type === 'fail') {
+          client.fails.push(ev.reason)
+        }
+      }
+    }
+
+    sock.on('connect', () => {
+      const lines = [
+        `GET ${opts.path ?? '/api/v1/stream'} HTTP/1.1`,
+        `Host: 127.0.0.1:${port}`,
+        'Upgrade: websocket',
+        'Connection: Upgrade',
+        `Sec-WebSocket-Key: ${key}`,
+        'Sec-WebSocket-Version: 13'
+      ]
+      if (opts.protocols?.length) lines.push(`Sec-WebSocket-Protocol: ${opts.protocols.join(', ')}`)
+      for (const [k, v] of Object.entries(opts.headers ?? {})) lines.push(`${k}: ${v}`)
+      sock.write(lines.join('\r\n') + '\r\n\r\n')
+    })
+    sock.on('data', (chunk: Buffer) => {
+      if (!upgraded) {
+        head = Buffer.concat([head, chunk])
+        const at = head.indexOf('\r\n\r\n')
+        if (at < 0) return
+        const text = head.subarray(0, at).toString('utf-8')
+        const rest = head.subarray(at + 4)
+        client.status = Number(text.split(' ')[1]) || 0
+        const accept = /sec-websocket-accept:\s*(\S+)/i.exec(text)?.[1] ?? ''
+        client.acceptOk = accept === expected
+        client.protocol = /sec-websocket-protocol:\s*(\S+)/i.exec(text)?.[1] ?? ''
+        upgraded = true
+        client.upgraded = client.status === 101
+        settle()
+        if (client.upgraded && rest.length) feed(new Uint8Array(rest))
+        return
+      }
+      feed(new Uint8Array(chunk))
+    })
+    sock.on('error', () => {
+      client.ended = true
+      settle()
+    })
+    sock.on('close', () => {
+      client.ended = true
+      settle()
+    })
+  })
+}
 
 /**
  * Build a zip by hand so a malicious entry name survives - adm-zip strips
@@ -5272,6 +5410,273 @@ export async function runWebSmoke(): Promise<void> {
         rmSync(jarAbs + '.disabled', { force: true })
         if (snap == null) rmSync(af, { force: true })
         else writeFileSync(af, snap, 'utf-8')
+      }
+    }
+
+    // ---- WebSocket frame codec (#27), pure ----
+    {
+      const enc = new TextEncoder()
+      const dec = new TextDecoder()
+      const textFrames = (evs: ReturnType<WsParser['push']>): string[] =>
+        evs.filter((e) => e.type === 'text').map((e) => (e as { text: string }).text)
+
+      // A frame delivered in one piece.
+      let p = new WsParser()
+      const hello = encodeClientFrame(WS_OP.text, enc.encode('{"op":"ping"}'))
+      if (textFrames(p.push(hello))[0] !== '{"op":"ping"}') return fail('ws: a whole frame did not decode')
+
+      // ...and the same frame delivered one byte at a time. TCP is a stream: a
+      // parser that only works on whole frames works only in a test.
+      p = new WsParser()
+      let got: string[] = []
+      for (let i = 0; i < hello.length; i++) got = got.concat(textFrames(p.push(hello.subarray(i, i + 1))))
+      if (got.length !== 1 || got[0] !== '{"op":"ping"}') {
+        return fail('ws: a byte-at-a-time frame produced ' + got.length + ' messages')
+      }
+      if (p.pending !== 0) return fail('ws: bytes were left buffered after a complete frame')
+
+      // Three frames in one read, which is what a busy client actually looks like.
+      p = new WsParser()
+      const three = new Uint8Array(hello.length * 3)
+      three.set(hello, 0)
+      three.set(hello, hello.length)
+      three.set(hello, hello.length * 2)
+      if (textFrames(p.push(three)).length !== 3) return fail('ws: three frames in one chunk did not all decode')
+
+      // A fragmented message assembles, and only then.
+      p = new WsParser()
+      const part1 = encodeClientFrame(WS_OP.text, enc.encode('{"a":'), undefined, false)
+      const part2 = encodeClientFrame(WS_OP.continuation, enc.encode('1}'))
+      if (textFrames(p.push(part1)).length !== 0) return fail('ws: a partial message was delivered early')
+      if (textFrames(p.push(part2))[0] !== '{"a":1}') return fail('ws: fragments did not reassemble')
+
+      // Every frame from a client is masked. An unmasked one is not a client.
+      p = new WsParser()
+      const unmasked = encodeFrame(WS_OP.text, enc.encode('hi'))
+      const bad = p.push(unmasked)
+      if (bad[0]?.type !== 'fail' || (bad[0] as { code: number }).code !== WS_CLOSE.protocolError) {
+        return fail('ws: an unmasked client frame was accepted')
+      }
+      // ...and the parser stays shut afterwards rather than resynchronising.
+      if (p.push(hello).length !== 0) return fail('ws: the parser kept reading after a protocol failure')
+
+      // Server-to-client frames must NOT be masked, and must set FIN.
+      if ((unmasked[0] & 0x80) === 0) return fail('ws: an outgoing frame did not set FIN')
+      if ((unmasked[1] & 0x80) !== 0) return fail('ws: an outgoing frame was masked')
+      // The rule is a property of the direction, not of the parser: a client
+      // reading a server accepts unmasked and refuses masked. Both halves are
+      // checked, because a parser that only enforces one of them is a parser
+      // that cannot read the frames this same file encodes.
+      const clientSide = new WsParser({ requireMask: false })
+      if (textFrames(clientSide.push(unmasked))[0] !== 'hi') {
+        return fail('ws: a client-side parser could not read a server frame')
+      }
+      if (new WsParser({ requireMask: false }).push(hello)[0]?.type !== 'fail') {
+        return fail('ws: a masked server frame was accepted by a client-side parser')
+      }
+
+      // The length ladder: 125 (7-bit), 126 (16-bit), 65536 (64-bit).
+      for (const size of [125, 126, 1000, 65535, WS_MAX_PAYLOAD]) {
+        p = new WsParser()
+        const body = 'x'.repeat(size)
+        const round = textFrames(p.push(encodeClientFrame(WS_OP.text, enc.encode(body))))
+        if (round[0] !== body) return fail('ws: a ' + size + '-byte payload did not round-trip')
+      }
+      // One byte past the cap is refused rather than allocated.
+      p = new WsParser()
+      const over = p.push(encodeClientFrame(WS_OP.text, enc.encode('y'.repeat(WS_MAX_PAYLOAD + 1))))
+      if (over[0]?.type !== 'fail' || (over[0] as { code: number }).code !== WS_CLOSE.tooBig) {
+        return fail('ws: an oversized payload was accepted')
+      }
+      // The same cap on the assembled message, or fragments are a way around it.
+      p = new WsParser()
+      const half = encodeClientFrame(WS_OP.text, enc.encode('z'.repeat(WS_MAX_PAYLOAD)), undefined, false)
+      p.push(half)
+      const spill = p.push(encodeClientFrame(WS_OP.continuation, enc.encode('z')))
+      if (spill[0]?.type !== 'fail') return fail('ws: fragments walked past the payload cap')
+
+      // Control frames are never fragmented and never long.
+      p = new WsParser()
+      const longPing = p.push(encodeClientFrame(WS_OP.ping, enc.encode('p'.repeat(126))))
+      if (longPing[0]?.type !== 'fail') return fail('ws: an over-long control frame was accepted')
+      p = new WsParser()
+      const splitPing = p.push(encodeClientFrame(WS_OP.ping, enc.encode('p'), undefined, false))
+      if (splitPing[0]?.type !== 'fail') return fail('ws: a fragmented control frame was accepted')
+
+      // A reserved bit means an extension nobody negotiated.
+      p = new WsParser()
+      const rsv = encodeClientFrame(WS_OP.text, enc.encode('hi'))
+      rsv[0] |= 0x40
+      if (p.push(rsv)[0]?.type !== 'fail') return fail('ws: a reserved bit was ignored')
+
+      // Invalid UTF-8 in a text frame is 1007, not a string of question marks.
+      p = new WsParser()
+      const junk = new Uint8Array([0xc3, 0x28])
+      const utf = p.push(encodeClientFrame(WS_OP.text, junk))
+      if (utf[0]?.type !== 'fail' || (utf[0] as { code: number }).code !== WS_CLOSE.invalidPayload) {
+        return fail('ws: invalid UTF-8 was decoded anyway')
+      }
+
+      // Masking is its own inverse, which is the only reason unmasking in place
+      // is safe.
+      const sample = enc.encode('round trip')
+      const maskKey = new Uint8Array([1, 2, 3, 4])
+      const copy = sample.slice()
+      maskPayload(maskPayload(copy, maskKey), maskKey)
+      if (dec.decode(copy) !== 'round trip') return fail('ws: masking is not its own inverse')
+
+      console.log('WEB-SMOKE: ws codec OK (split reads, fragments, masking, length ladder, protocol refusals)')
+    }
+
+    // ---- WebSocket live stream (#27) ----
+    {
+      const open: WsTestClient[] = []
+      const connect = async (
+        o: { path?: string; headers?: Record<string, string>; protocols?: string[] } = {}
+      ): Promise<WsTestClient> => {
+        const c = await wsTestConnect(8799, o)
+        open.push(c)
+        return c
+      }
+      const streamKey = apikeys.createKey({ label: 'smoke_ws', scopes: ['view'], servers: [id] })
+      try {
+        // No credential at all.
+        let c = await connect()
+        if (c.upgraded) return fail('ws: an unauthenticated upgrade succeeded')
+        if (c.status !== 401) return fail('ws: an unauthenticated upgrade returned ' + c.status)
+
+        // A credential for a path that is not the stream.
+        c = await connect({ path: '/api/v1/nope', headers: { Authorization: 'Bearer ' + ot } })
+        if (c.upgraded) return fail('ws: an upgrade on an unknown path succeeded')
+
+        // An origin the operator has not allowed. Browsers do not apply CORS to
+        // WebSocket, so this check is the only one there is.
+        c = await connect({
+          headers: { Authorization: 'Bearer ' + ot, Origin: 'https://evil.example' }
+        })
+        if (c.upgraded) return fail('ws: a disallowed origin was upgraded')
+        if (c.status !== 403) return fail('ws: a disallowed origin returned ' + c.status)
+
+        // ...but the page this listener itself served is not cross-origin, and
+        // `apiOrigins` is default-deny. Judging an upgrade by the allowlist
+        // alone would refuse the admin panel's own page — the most likely
+        // browser client there is — until an operator thought to allowlist
+        // their own address.
+        c = await connect({
+          headers: { Authorization: 'Bearer ' + ot, Origin: 'http://127.0.0.1:8799' }
+        })
+        if (!c.upgraded) return fail('ws: the panel’s own origin was refused (' + c.status + ')')
+        c.end()
+        // A different port on the same machine is still another origin.
+        c = await connect({
+          headers: { Authorization: 'Bearer ' + ot, Origin: 'http://127.0.0.1:8798' }
+        })
+        if (c.upgraded) return fail('ws: another port on this host was treated as same-origin')
+
+        // Session token by header.
+        c = await connect({ headers: { Authorization: 'Bearer ' + ot } })
+        if (!c.upgraded) return fail('ws: an owner session was refused (' + c.status + ')')
+        if (!c.acceptOk) return fail('ws: the Sec-WebSocket-Accept value is wrong')
+        let msg = await c.wait((m) => m.type === 'hello')
+        if (!msg) return fail('ws: no hello frame after upgrade')
+        if (msg.user !== 'owner_t') return fail('ws: hello named the wrong user')
+        c.end()
+
+        // ...and by subprotocol, which is all a browser can send. The selected
+        // subprotocol must be echoed, and must be the protocol name — never the
+        // element carrying the credential.
+        c = await connect({ protocols: ['msms.v1', 'msms-token.' + ot] })
+        if (!c.upgraded) return fail('ws: subprotocol auth was refused (' + c.status + ')')
+        if (c.protocol !== 'msms.v1') return fail('ws: the echoed subprotocol was ' + c.protocol)
+        c.end()
+
+        // An API key works too, and is limited by the same bucket as HTTP.
+        c = await connect({ headers: { 'X-API-Key': streamKey.secret } })
+        if (!c.upgraded) return fail('ws: an API key was refused (' + c.status + ')')
+        if (!(await c.wait((m) => m.type === 'hello'))) return fail('ws: no hello for a key')
+
+        // Subscribing is scope-checked, on the same `view` the REST reads need.
+        c.send({ op: 'subscribe', serverId: 'no-such-server', streams: ['console'] })
+        if (!(await c.wait((m) => m.error === 'server-not-found'))) {
+          return fail('ws: subscribing to an unknown server was not refused')
+        }
+        c.send({ op: 'subscribe', serverId: id, streams: ['nonsense'] })
+        if (!(await c.wait((m) => m.error === 'no-valid-streams'))) {
+          return fail('ws: an unknown stream name was not refused')
+        }
+        c.send({ op: 'subscribe', serverId: id, streams: ['console', 'status'] })
+        msg = await c.wait((m) => m.type === 'subscribed')
+        if (!msg) return fail('ws: subscribe was not acknowledged')
+
+        // The live path, end to end: a console line emitted by the process
+        // manager reaches a subscriber as a console message.
+        processManager.emit('log', {
+          serverId: id,
+          line: { id: 'x', ts: Date.now(), line: 'ws-smoke-line', stream: 'stdout' }
+        })
+        msg = await c.wait((m) => m.type === 'console')
+        if (!msg) return fail('ws: a console line never reached the subscriber')
+        if (msg.line !== 'ws-smoke-line') return fail('ws: the console line arrived mangled')
+        if (msg.serverId !== id) return fail('ws: the console line lost its server id')
+
+        // A line for a server this socket did not subscribe to must not arrive.
+        const before = c.messages.length
+        processManager.emit('log', {
+          serverId: 'some-other-server',
+          line: { id: 'y', ts: Date.now(), line: 'not-for-you', stream: 'stdout' }
+        })
+        await sleep(150)
+        if (c.messages.slice(before).some((m) => m.line === 'not-for-you')) {
+          return fail('ws: a subscriber received another server’s console')
+        }
+
+        // Unsubscribe means unsubscribe.
+        c.send({ op: 'unsubscribe', serverId: id, streams: ['console'] })
+        if (!(await c.wait((m) => m.type === 'unsubscribed'))) return fail('ws: unsubscribe was not acknowledged')
+        const after = c.messages.length
+        processManager.emit('log', {
+          serverId: id,
+          line: { id: 'z', ts: Date.now(), line: 'after-unsubscribe', stream: 'stdout' }
+        })
+        await sleep(150)
+        if (c.messages.slice(after).some((m) => m.line === 'after-unsubscribe')) {
+          return fail('ws: an unsubscribed stream kept delivering')
+        }
+
+        // The socket is read-only by construction: there is no op that changes
+        // anything, and an unknown one is refused rather than ignored.
+        c.send({ op: 'power', serverId: id, action: 'start' })
+        if (!(await c.wait((m) => m.error === 'unknown-op'))) return fail('ws: an unknown op was not refused')
+
+        // A user with no scope on the server cannot subscribe.
+        for (const u of webAuth.listUsers()) if (u.username === 'nobody_t') webAuth.deleteUser(u.id)
+        webAuth.createUser('nobody_t', 'nobodypass', 'user', {})
+        const nr = await post('/api/login', { username: 'nobody_t', password: 'nobodypass' })
+        const nt = ((await nr.json()) as { token: string }).token
+        const noc = await connect({ headers: { Authorization: 'Bearer ' + nt } })
+        if (!noc.upgraded) return fail('ws: a scopeless user could not even connect')
+        noc.send({ op: 'subscribe', serverId: id, streams: ['console'] })
+        if (!(await noc.wait((m) => m.error === 'forbidden'))) {
+          return fail('ws: a user with no view scope was allowed to subscribe')
+        }
+
+        // Protocol violations close the connection rather than being tolerated.
+        const rude = await connect({ headers: { Authorization: 'Bearer ' + ot } })
+        if (!rude.upgraded) return fail('ws: the protocol-violation client could not connect')
+        await rude.wait((m) => m.type === 'hello')
+        rude.raw(encodeFrame(WS_OP.text, new TextEncoder().encode('unmasked')))
+        await sleep(200)
+        if (!rude.closes.some((x) => x.code === WS_CLOSE.protocolError)) {
+          return fail('ws: an unmasked client frame did not close the connection')
+        }
+
+        console.log(
+          'WEB-SMOKE: ws stream OK (401/403 on upgrade, header + subprotocol auth, scoped subscribe, live console, unmasked frame closed)'
+        )
+      } finally {
+        for (const c of open) c.end()
+        apikeys.deleteKey(streamKey.key.id)
+        for (const u of webAuth.listUsers()) if (u.username === 'nobody_t') webAuth.deleteUser(u.id)
       }
     }
 
