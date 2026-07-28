@@ -396,6 +396,9 @@ function pageStore(){
  setTimeout(loadStore,0);return h}
 function loadStore(){
  api('/api/public/store').then(function(r){STORE=r.j;
+  /* The one page that sells. The shared storefront defaults to preview, so
+     this is the declaration that turns Buy back on (#102). */
+  SF.mode='buy';
   SF.layout=STORE.layout||'crates-first';
   /* sfSetProducts, not an assignment: it also refreshes an open detail, which
      is where the stock and per-player numbers a failed purchase just changed

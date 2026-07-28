@@ -50,6 +50,16 @@ export const STORE_CSS = `
 .sf-price{font-weight:900;font-size:15.5px;color:var(--accent,#dc2727);letter-spacing:-.3px}
 .sf-foot .btn{margin-left:auto}
 .sf-empty{opacity:.6;font-size:13.5px;padding:14px 0}
+/* Preview frame (#102). The admin panel renders the buyer's storefront so an
+   operator can see what they built; it used to render the buyer's Buy button
+   with it, which spends real currency. The frame exists so the grid below it is
+   never mistaken for a shop. */
+.sf-previewbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px;padding:10px 13px;
+  border-radius:12px;font-size:13px;
+  border:1px dashed color-mix(in srgb,var(--accent,#dc2727) 45%,transparent);
+  background:color-mix(in srgb,var(--accent,#dc2727) 8%,transparent)}
+.sf-previewbar b{font-weight:800;letter-spacing:-.2px}
+.sf-previewbar .sf-pv-note{opacity:.72;flex:1;min-width:140px}
 /* detail */
 .sf-modal{position:fixed;inset:0;background:rgba(0,0,0,.74);display:grid;place-items:center;z-index:75;padding:16px;overflow:auto}
 .sf-detail{background:var(--card,var(--panel,#16151b));border:1px solid var(--line,var(--border,rgba(255,255,255,.14)));
@@ -113,15 +123,43 @@ export const CRATE_ICON_SVG =
  * The storefront.
  *
  * The host page must provide:
- *  - `sfBuy(id)`           — what the Buy button does
  *  - `sfCurrency()`        — the currency label
  *  - `sfText(key)`         — a translator; may just return the key
  *  - `sfImg(src)`          — map a stored image source to something loadable
+ *
+ * ...and, depending on `SF.mode`:
+ *  - `'buy'`     — `sfBuy(id)`, what the Buy button does
+ *  - `'preview'` — `sfEdit(id)`, optional; adds an Edit action to each card
+ *
+ * `SF.mode` defaults to `'preview'`, which is the fail-safe direction: a host
+ * that forgets to declare itself gets a storefront that cannot spend anything,
+ * rather than one that can. A page that means to sell says so.
  */
 export const STORE_JS = `
 function sEsc(t){var d=document.createElement('div');d.textContent=(t==null?'':t);return d.innerHTML}
 function sAttr(t){return sEsc(t).replace(/"/g,'&quot;').replace(/'/g,'&#39;')}
-var SF={products:[],layout:'crates-first',text:'',type:'all',sort:'featured',detail:null};
+var SF={products:[],layout:'crates-first',text:'',type:'all',sort:'featured',detail:null,mode:'preview',canEdit:false};
+function sfBuying(){return SF.mode==='buy'}
+/* Authoring is offered only where the host says the viewer may author. The
+   panel's storefront is visible with 'view' and editing needs 'store', so the
+   two are not the same audience — and an Edit button that answers "no access"
+   is worse than no button. */
+function sfEditable(){return !sfBuying()&&!!SF.canEdit&&typeof sfEdit==='function'}
+/* The card and detail action. In preview there is nothing to spend, so a
+   sold-out product stays clickable: an operator checking what they built has
+   more reason to open the one that ran out than the ones that did not. */
+function sfActionLabel(block){return sfBuying()?(block||sfText('store.buy')):sfText('store.preview')}
+function sfAction(id){if(sfBuying())return sfBuy(id);return sfPreview(id)}
+/* Play the product without buying it. A crate rolls its own pool with the
+   animation it is configured to use, so the preview answers the question the
+   operator actually has: what does a player see. */
+function sfPreview(id){var p=sfFind(id);if(!p)return;
+ if(p.type==='crate'&&typeof cratePreview==='function'){
+  sfCloseDetail();
+  cratePreview(p.crateAnimation||'',(p.rewards||[]).map(function(r){return {name:r.name,icon:r.icon}}),
+   sfText('store.previewNote'));
+  return}
+ sfNotice('ok',p.name,sfText('store.previewNote'),p.icon)}
 
 function sfSetFilter(k,v){SF[k]=v;SF._typing=(k==='text');sfRender()}
 function sfMatch(p){
@@ -164,8 +202,10 @@ function sfCard(p){
   '<div class="sf-desc">'+sEsc(p.description||'')+'</div>'+
   (p.type==='crate'?crateContentsHtml(p.rewards,3):'')+
   '<div class="sf-foot"><span class="sf-price">'+p.price+' '+sEsc(sfCurrency())+'</span>'+
-  '<button class="btn primary sm"'+(block?' disabled':'')+' onclick="event.stopPropagation();sfBuy(\\''+p.id+'\\')">'+
-  sEsc(block||sfText('store.buy'))+'</button></div></div></div>'}
+  (sfEditable()
+   ?'<button class="btn sm" onclick="event.stopPropagation();sfEdit(\\''+p.id+'\\')">'+sEsc(sfText('store.edit'))+'</button>':'')+
+  '<button class="btn primary sm"'+(sfBuying()&&block?' disabled':'')+' onclick="event.stopPropagation();sfAction(\\''+p.id+'\\')">'+
+  sEsc(sfActionLabel(block))+'</button></div></div></div>'}
 function sfSectionsFor(list){
  if(SF.layout==='mixed')return [{key:'all',items:list}];
  var crates=list.filter(function(p){return p.type==='crate'});
@@ -178,7 +218,11 @@ function sfSectionsFor(list){
 function sfRender(){
  var box=document.getElementById('sfBox');if(!box)return;
  var all=sfSorted((SF.products||[]).filter(sfMatch));
- var bar='<div class="sf-bar">'+
+ /* Stated, not implied. Everything below looks exactly like the shop, which is
+    the point of a preview and also the reason it needs saying. */
+ var frame=sfBuying()?'':'<div class="sf-previewbar"><b>'+sEsc(sfText('store.previewTitle'))+'</b>'+
+  '<span class="sf-pv-note">'+sEsc(sfText('store.previewLead'))+'</span></div>';
+ var bar=frame+'<div class="sf-bar">'+
   '<input class="sf-search" placeholder="'+sAttr(sfText('store.search'))+'" value="'+sAttr(SF.text)+'" oninput="sfSetFilter(\\'text\\',this.value)"/>'+
   '<select onchange="sfSetFilter(\\'type\\',this.value)">'+
    ['all','crate','item'].map(function(v){return '<option value="'+v+'"'+(SF.type===v?' selected':'')+'>'+sEsc(sfText('store.type_'+v))+'</option>'}).join('')+
@@ -261,8 +305,10 @@ function sfRenderDetail(){
     return '<img class="'+(sImg===hero?'on':'')+'" src="'+sAttr(sfImg(sImg))+'" alt="" onclick="sfShotPick('+i+')"/>'}).join('')+'</div>':'')+
   (p.type==='crate'?'<div style="margin-top:12px"><div class="sf-sec-head" style="font-size:13px">'+sEsc(sfText('store.contents'))+'</div>'+crateContentsHtml(p.rewards)+'</div>':'')+
   (meta.length?'<div class="sf-meta">'+meta.map(function(x){return '<span>'+sEsc(x)+'</span>'}).join('')+'</div>':'')+
-  '<div class="sf-actions"><button class="btn primary"'+(block?' disabled':'')+' onclick="sfBuy(\\''+p.id+'\\')">'+
-  sEsc(block||sfText('store.buy'))+'</button>'+
+  '<div class="sf-actions"><button class="btn primary"'+(sfBuying()&&block?' disabled':'')+' onclick="sfAction(\\''+p.id+'\\')">'+
+  sEsc(sfActionLabel(block))+'</button>'+
+  (sfEditable()
+   ?'<button class="btn" onclick="sfEdit(\\''+p.id+'\\')">'+sEsc(sfText('store.edit'))+'</button>':'')+
   '<button class="btn" onclick="sfCloseDetail()">'+sEsc(sfText('common.close'))+'</button></div></div>';
  m.classList.remove('hidden')}
 `
