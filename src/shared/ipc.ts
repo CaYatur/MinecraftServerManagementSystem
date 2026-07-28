@@ -57,6 +57,7 @@ import type {
 import type { CrateAnimation } from './crate'
 import type { RoleDef } from './rbac'
 import type { ApiKeyView, KeyServers } from './apikeys'
+import type { StoreLayout } from './storefront'
 
 /** request/response channels (renderer -> main via invoke). */
 export const IPC = {
@@ -188,6 +189,7 @@ export const IPC = {
 
   storeGet: 'store:get',
   storeCurrency: 'store:currency',
+  storeLayout: 'store:layout',
   storeUpsert: 'store:upsert',
   storeDelete: 'store:delete',
   storeAddBalance: 'store:add-balance',
@@ -410,6 +412,8 @@ export interface MsmsApi {
     StoreConfig & { balances: Record<string, number>; categories: EconomyCategory[] }
   >
   setStoreCurrency(id: string, currency: string): Promise<void>
+  /** Whether crates or items lead the storefront (#80). */
+  setStoreLayout(id: string, layout: StoreLayout): Promise<StoreLayout>
   upsertStoreProduct(id: string, product: Product): Promise<Product>
   deleteStoreProduct(id: string, productId: string): Promise<void>
   addStoreBalance(

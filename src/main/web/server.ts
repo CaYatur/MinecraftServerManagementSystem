@@ -334,7 +334,11 @@ async function handlePublic(
   const sid = site.siteServerId()
   if (sub === 'store' && method === 'GET') {
     if (!sid || !getServer(sid)) return sendJson(res, 200, { currency: '', products: [] })
-    return sendJson(res, 200, economy.publicStore(sid))
+    // Anonymous visitors get the catalogue; a signed-in one also gets their own
+    // purchase counts, so a per-player limit can be shown as reached instead of
+    // only discovered when the purchase is refused (#81).
+    const who = playerAuth.resolvePlayerSession(bearer(req))
+    return sendJson(res, 200, economy.publicStore(sid, who?.mcName))
   }
 
   // ---- player-token-only endpoints (never satisfied by an admin token) ----
@@ -716,7 +720,7 @@ async function handlePanel(req: IncomingMessage, res: ServerResponse): Promise<v
 
     if (rest === '' && method === 'GET') {
       if (!gate('view')) return
-      return sendJson(res, 200, economy.publicStore(id))
+      return sendJson(res, 200, economy.publicStore(id, user.mcName))
     }
     if (rest === 'balance' && method === 'GET') {
       if (!gate('view')) return
@@ -780,6 +784,33 @@ async function handlePanel(req: IncomingMessage, res: ServerResponse): Promise<v
         return sendJson(res, 200, { ok: true, balance })
       } catch (e) {
         return sendJson(res, 400, { error: String((e as Error)?.message ?? e) })
+      }
+    }
+    if (rest === 'admin/layout' && method === 'POST') {
+      if (!gate('store')) return
+      const b = (await readBody(req).catch(() => ({}))) as { layout?: string }
+      return sendJson(res, 200, { layout: economy.setStoreLayout(id, b.layout) })
+    }
+    if (rest === 'admin/upload' && method === 'POST') {
+      // Its own route rather than reusing /api/site/upload, which is gated on
+      // the `settings` scope for the website's own server. A store manager who
+      // may edit products should be able to give one a picture without also
+      // being handed the keys to the public site.
+      if (!gate('store')) return
+      const mime = String(req.headers['content-type'] || '').split(';')[0].trim()
+      try {
+        const buf = await readRawBody(req, site.MAX_UPLOAD)
+        const name = site.saveImageBuffer(buf, mime)
+        return sendJson(res, 200, { name, src: '/uploads/' + name })
+      } catch (e) {
+        const msg = String((e as Error)?.message ?? e)
+        const code =
+          msg === 'body-too-large' || msg === 'image-too-large'
+            ? 413
+            : msg === 'unsupported-image-type'
+              ? 415
+              : 500
+        return sendJson(res, code, { error: msg })
       }
     }
     if (rest === 'admin/crate-animation' && method === 'POST') {

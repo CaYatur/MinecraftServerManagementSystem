@@ -462,6 +462,7 @@ export function registerIpc(): void {
     economy.deleteCategory(id, categoryId)
   )
   H(IPC.storeCurrency, (_e, id: string, currency: string) => economy.setCurrency(id, currency))
+  H(IPC.storeLayout, (_e, id: string, layout: string) => economy.setStoreLayout(id, layout))
   H(IPC.storeUpsert, (_e, id: string, product: Product) => economy.upsertProduct(id, product))
   H(IPC.storeDelete, (_e, id: string, productId: string) => economy.deleteProduct(id, productId))
   H(

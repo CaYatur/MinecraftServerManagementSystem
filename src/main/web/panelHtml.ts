@@ -1,6 +1,7 @@
 // Self-contained, responsive (mobile-friendly) web panel served by the embedded
 // HTTP server. Vanilla JS; authenticates with a bearer token in localStorage.
 import { CRATE_CSS, CRATE_JS, CRATE_MODAL_HTML } from '@shared/crateUi'
+import { STORE_CSS, STORE_JS, STORE_MODAL_HTML, CRATE_ICON_SVG } from '@shared/storeUi'
 export function getPanelHtml(): string {
   return `<!doctype html><html lang="en"><head>
 <meta charset="utf-8"/>
@@ -118,8 +119,9 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);
 .np-preview .pv-body{white-space:pre-wrap;line-height:1.6;font-size:14px}
 .np-preview .pv-gal{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
 .np-preview .pv-gal img{width:96px;height:72px;object-fit:cover;border-radius:8px}
-/* crate — one implementation, shared with the public site (see crateUi.ts) */
+/* crate + storefront — one implementation, shared with the public site */
 ${CRATE_CSS}
+${STORE_CSS}
 .findings{display:flex;flex-direction:column;gap:8px;margin:10px 0}
 .finding{border:1px solid var(--border);border-left-width:3px;border-radius:9px;padding:9px 11px;background:var(--elev)}
 .finding.info{border-left-color:#60a5fa}
@@ -136,6 +138,8 @@ ${CRATE_CSS}
 .pm-box{background:linear-gradient(160deg,#17151b,#0c0c11);border:1px solid var(--border);border-radius:16px;padding:20px;width:min(560px,95vw);max-height:88vh;overflow:auto;box-shadow:0 30px 70px rgba(0,0,0,.65)}
 .pm-box label{display:block;font-size:12px;color:var(--dim);margin-top:8px}
 .rw-card{border:1px solid var(--border);border-radius:10px;padding:10px;margin:8px 0;background:var(--elev)}
+.pm-thumb{width:38px;height:38px;flex:none;border-radius:8px;border:1px solid var(--border);background:var(--elev);display:grid;place-items:center;overflow:hidden}
+.pm-thumb img{width:100%;height:100%;object-fit:contain;image-rendering:pixelated}
 .title{font-weight:800;font-size:18px;margin:2px 0 12px;display:flex;align-items:center;gap:9px}
 .title::before{content:'';width:4px;height:17px;border-radius:3px;background:var(--accent);box-shadow:0 0 12px var(--glow)}
 h2{margin:8px 0;font-weight:800;letter-spacing:-.4px}
@@ -310,7 +314,7 @@ h2{margin:8px 0;font-weight:800;letter-spacing:-.4px}
     <div id="panelTimeline" class="hidden"><div class="card tight" id="dEvents"></div></div>
     <div id="panelStore" class="hidden">
       <div class="row" style="margin-bottom:10px"><b>Store</b><div class="spacer"></div><span id="dBal" class="badge"></span></div>
-      <div id="dProducts" class="pgrid"></div>
+      <div id="sfBox"></div>
     </div>
     <div id="panelManage" class="hidden">
       <div class="card">
@@ -324,6 +328,9 @@ h2{margin:8px 0;font-weight:800;letter-spacing:-.4px}
           <button class="btn sm" onclick="previewStoreAnimation()">&#9654; Preview</button>
         </div>
         <div class="dim" style="font-size:12px;margin-top:6px">Used by every crate that does not choose its own.</div>
+        <div class="row" style="align-items:flex-end;margin-top:10px">
+          <div style="flex:1;min-width:180px"><div class="dim" style="font-size:12px">Storefront sections</div><select id="mLayout" onchange="saveLayout()"></select></div>
+        </div>
       </div>
       <div class="card">
         <div class="title">Player credits</div>
@@ -368,9 +375,11 @@ h2{margin:8px 0;font-weight:800;letter-spacing:-.4px}
   </div>
 </div>
 
+<input type="file" id="pmFile" accept="image/png,image/jpeg,image/webp,image/gif" style="display:none"/>
 <div id="pmModal" class="pm-modal hidden" onclick="pmBackdrop(event)"><div class="pm-box" id="pmBox"></div></div>
 
 ${CRATE_MODAL_HTML}
+${STORE_MODAL_HTML}
 
 <script>
 var token=localStorage.getItem('msms_token')||'';
@@ -616,14 +625,30 @@ function loadEvents(){
     '<span>'+esc(evText(e))+'</span><span class="when">'+new Date(e.ts).toLocaleString()+'</span></div>'}).join('')})}
 
 /* ---- store ---- */
-function loadStore(){api('/api/servers/'+current.id+'/store').then(function(r){if(!r.ok)return;api('/api/servers/'+current.id+'/store/balance').then(function(b){var bal=b.ok?b.body:{balance:0,mcName:null};document.getElementById('dBal').textContent=(bal.mcName?bal.mcName+': ':'')+(bal.balance||0)+' '+(r.body.currency||'');renderProducts(r.body)})})}
-function renderProducts(store){var el=document.getElementById('dProducts');if(!store.products.length){el.innerHTML='<div class="dim">No products yet.</div>';return}el.innerHTML=store.products.map(function(p){return '<div class="pcard">'+(p.icon?'<img src="'+escAttr(p.icon)+'"/>':'')+'<div class="pname">'+esc(p.name)+(p.type==='crate'?' 🎁':'')+'</div><div class="pdesc">'+esc(p.description||'')+'</div>'+
- /* A crate is the one product you cannot judge by its description, so its
-    contents and odds go on the card itself (#79). */
- (p.type==='crate'?crateContentsHtml(p.rewards,5):'')+
- '<div class="row"><span class="price">'+p.price+' '+esc(store.currency)+'</span><div class="spacer"></div><button class="btn primary sm" onclick="buy(\\''+p.id+'\\')">Buy</button></div></div>'}).join('')}
-function buy(pid){api('/api/servers/'+current.id+'/store/buy',{method:'POST',body:JSON.stringify({productId:pid})}).then(function(r){if(!r.ok){alert(r.body.error==='insufficient'?'Not enough balance':r.body.error==='no-mc-linked'?'No Minecraft name linked to your account':('Error: '+r.body.error));return}loadStore();if(r.body.reward&&r.body.reward.crate){openCrate(r.body.reward,{prefix:'🎉 '})}else{alert('You received: '+(r.body.reward?r.body.reward.name:''))}})}
+function loadStore(){api('/api/servers/'+current.id+'/store').then(function(r){if(!r.ok)return;
+ SF.products=r.body.products||[];SF.layout=r.body.layout||'crates-first';sfCurrencyName=r.body.currency||'';
+ api('/api/servers/'+current.id+'/store/balance').then(function(b){var bal=b.ok?b.body:{balance:0,mcName:null};
+  document.getElementById('dBal').textContent=(bal.mcName?bal.mcName+': ':'')+(bal.balance||0)+' '+(r.body.currency||'');
+  sfRender()})})}
+/* The four hooks the shared storefront calls back into. The panel is English
+   only, so its translator returns a small table and falls back to the key. */
+var sfCurrencyName='';
+function sfCurrency(){return sfCurrencyName}
+function sfImg(src){return src}
+var SF_TEXT={'store.buy':'Buy','store.crate':'Crate','store.search':'Search products…',
+ 'store.empty':'No products yet.','store.noMatch':'Nothing matches that search.',
+ 'store.type_all':'Everything','store.type_crate':'Crates','store.type_item':'Items',
+ 'store.sort_featured':'Featured','store.sort_price-asc':'Price: low to high','store.sort_price-desc':'Price: high to low',
+ 'store.sort_name-asc':'Name: A-Z','store.sort_name-desc':'Name: Z-A',
+ 'store.section_crate':'Crates','store.section_item':'Items','store.contents':'What is inside',
+ 'store.outOfStock':'Sold out','store.limitReached':'Limit reached','store.stockLeft':'{n} left',
+ 'store.limitOf':'Max {n} per player','store.plays':'Opens with','common.close':'Close'};
+function sfText(k){return SF_TEXT[k]||k}
+function sfBuy(pid){buy(pid)}
+function buy(pid){api('/api/servers/'+current.id+'/store/buy',{method:'POST',body:JSON.stringify({productId:pid})}).then(function(r){if(!r.ok){alert(r.body.error==='insufficient'?'Not enough balance':r.body.error==='no-mc-linked'?'No Minecraft name linked to your account':('Error: '+r.body.error));return}loadStore();sfCloseDetail();if(r.body.reward&&r.body.reward.crate){openCrate(r.body.reward,{prefix:'🎉 '})}else{alert('You received: '+(r.body.reward?r.body.reward.name:''))}})}
 ${CRATE_JS}
+${STORE_JS}
+var CRATE_ICON_SVG=${JSON.stringify(CRATE_ICON_SVG)};
 
 /* ---- store admin: configuration (store scope) ---- */
 function escAttr(t){return esc(t).replace(/"/g,'&quot;')}
@@ -632,6 +657,8 @@ function loadManage(){api('/api/servers/'+current.id+'/store/admin').then(functi
  if(!r.ok){document.getElementById('mProducts').innerHTML='<div class="dim">No access.</div>';return}
  mstore=r.body;document.getElementById('mCur').value=mstore.currency||'';
  document.getElementById('mAnim').innerHTML=crateAnimationOptions(mstore.crateAnimation);
+ document.getElementById('mLayout').innerHTML=[['crates-first','Crates first'],['items-first','Items first'],['mixed','One mixed grid']]
+  .map(function(o){return '<option value="'+o[0]+'"'+(mstore.layout===o[0]?' selected':'')+'>'+o[1]+'</option>'}).join('');
  renderMProducts();renderCategories();renderBalances();loadLedger()})}
 function saveStoreAnimation(){var v=document.getElementById('mAnim').value;
  api('/api/servers/'+current.id+'/store/admin/crate-animation',{method:'POST',body:JSON.stringify({animation:v})}).then(function(r){
@@ -640,6 +667,9 @@ function saveStoreAnimation(){var v=document.getElementById('mAnim').value;
      unknown value and the picker must not claim otherwise. */
   mstore.crateAnimation=r.body.animation;
   document.getElementById('mAnim').innerHTML=crateAnimationOptions(mstore.crateAnimation)})}
+function saveLayout(){var v=document.getElementById('mLayout').value;
+ api('/api/servers/'+current.id+'/store/admin/layout',{method:'POST',body:JSON.stringify({layout:v})}).then(function(r){
+  if(r.ok)mstore.layout=r.body.layout})}
 function previewStoreAnimation(){cratePreview(document.getElementById('mAnim').value,null,'Preview - nothing was bought.')}
 function renderBalances(){var el=document.getElementById('mBalances');var bals=mstore.balances||{};var names=Object.keys(bals);
  if(!names.length){el.innerHTML='<div class="dim">No balances yet.</div>';return}
@@ -701,16 +731,18 @@ function saveCurrency(){var c=document.getElementById('mCur').value.trim()||'Coi
  api('/api/servers/'+current.id+'/store/admin/currency',{method:'POST',body:JSON.stringify({currency:c})}).then(function(r){if(!r.ok){alert('Could not save currency');return}loadManage()})}
 function renderMProducts(){var el=document.getElementById('mProducts');var ps=mstore.products||[];
  if(!ps.length){el.innerHTML='<div class="dim">No products yet.</div>';return}
- el.innerHTML=ps.map(function(p){return '<div class="mrow"><span class="ic">'+(p.type==='crate'?'🎁':'📦')+'</span>'+
-  '<div style="flex:1;min-width:0"><div style="font-weight:700">'+esc(p.name)+'</div>'+
+ el.innerHTML=ps.map(function(p){return '<div class="mrow"'+(p.hidden?' style="opacity:.55"':'')+'><span class="ic">'+(p.type==='crate'?'🎁':'📦')+'</span>'+
+  '<div style="flex:1;min-width:0"><div style="font-weight:700">'+esc(p.name)+
+   (p.hidden?' <span class="badge">hidden</span>':'')+
+   (typeof p.stock==='number'?' <span class="badge">'+(p.stock?p.stock+' left':'sold out')+'</span>':'')+'</div>'+
   '<div class="dim" style="font-size:12px">'+(p.price||0)+' '+esc(mstore.currency||'')+' · '+esc(p.description||'')+'</div></div>'+
   '<button class="btn sm" onclick="pmEdit(\\''+p.id+'\\')">Edit</button>'+
   '<button class="btn sm danger" onclick="pmDelete(\\''+p.id+'\\')">🗑</button></div>'}).join('')}
 function pmDelete(id){if(!confirm('Delete this product?'))return;
  api('/api/servers/'+current.id+'/store/admin/delete',{method:'POST',body:JSON.stringify({productId:id})}).then(function(r){if(r.ok)loadManage()})}
-function pmNew(type){pmDraft={id:'',type:type,name:'',description:'',price:100,icon:'',crateAnimation:'',_cmdText:'',rewards:type==='crate'?[{name:'Common',weight:70,icon:'',_ct:''}]:[]};renderPmEditor()}
+function pmNew(type){pmDraft={id:'',type:type,name:'',description:'',price:100,icon:'',images:[],crateAnimation:'',_cmdText:'',rewards:type==='crate'?[{name:'Common',weight:70,icon:'',_ct:''}]:[]};renderPmEditor()}
 function pmEdit(id){var p=null,ps=mstore.products||[];for(var i=0;i<ps.length;i++){if(ps[i].id===id)p=ps[i]}if(!p)return;
- pmDraft={id:p.id,type:p.type==='crate'?'crate':'item',name:p.name||'',description:p.description||'',price:p.price||0,icon:p.icon||'',crateAnimation:p.crateAnimation||'',_cmdText:(p.commands||[]).join('\\n'),
+ pmDraft={id:p.id,type:p.type==='crate'?'crate':'item',name:p.name||'',description:p.description||'',price:p.price||0,icon:p.icon||'',crateAnimation:p.crateAnimation||'',images:(p.images||[]).slice(),hidden:!!p.hidden,stock:p.stock,perPlayerLimit:p.perPlayerLimit,sort:p.sort,_cmdText:(p.commands||[]).join('\\n'),
   rewards:(p.rewards||[]).map(function(r){return {name:r.name||'',weight:r.weight||0,icon:r.icon||'',_ct:(r.commands||[]).join('\\n')}})};renderPmEditor()}
 function pmClose(){document.getElementById('pmModal').classList.add('hidden')}
 function pmBackdrop(e){if(e.target&&e.target.id==='pmModal')pmClose()}
@@ -720,13 +752,60 @@ function pmPct(){var tot=0;(pmDraft.rewards||[]).forEach(function(r){tot+=Math.m
  (pmDraft.rewards||[]).forEach(function(r,i){var b=document.getElementById('pmPct'+i);if(b)b.textContent=Math.round(Math.max(0,Number(r.weight)||0)/tot*100)+'%'})}
 function pmAddReward(){pmDraft.rewards.push({name:'',weight:10,icon:'',_ct:''});renderPmEditor()}
 function pmDelReward(i){pmDraft.rewards.splice(i,1);renderPmEditor()}
+/* A picture chosen by URL or by upload, with a thumbnail of what buyers see.
+   'field' is 'icon', 'images' (with an index) or 'reward' (with an index). */
+function pmImageRow(field,val,idx){
+ var v=val||'';
+ var id='pmimg_'+field+'_'+idx;
+ var setter=field==='images'?'pmSetImage('+idx+',this.value)'
+  :field==='reward'?'pmSetReward('+idx+',\\'icon\\',this.value)'
+  :'pmField(\\'icon\\',this.value)';
+ return '<div class="row" style="gap:8px;align-items:center;margin:4px 0">'+
+  '<span class="pm-thumb">'+(v?'<img src="'+escAttr(v)+'" alt="" onerror="this.style.display=\\'none\\'"/>':'')+'</span>'+
+  '<input id="'+id+'" style="flex:1;min-width:80px" placeholder="https://… or upload" value="'+escAttr(v)+'" oninput="'+setter+'"/>'+
+  '<button class="btn sm" onclick="pmUpload(\\''+field+'\\','+idx+')">Upload</button></div>'}
+function pmAddImage(){pmDraft.images=(pmDraft.images||[]).concat(['']);renderPmEditor()}
+function pmSetImage(i,v){var l=pmDraft.images||[];l[i]=v;
+ /* An emptied slot is removed rather than kept blank, so clearing one is how
+    you delete it - but only once the field loses focus, or the row would
+    vanish from under the cursor mid-edit. */
+ pmDraft.images=l}
+/* Blank stays blank: undefined is "unlimited", 0 is "sold out". */
+function pmNum(f,v){pmDraft[f]=(v===''?undefined:Number(v))}
+function pmUpload(field,idx){
+ var inp=document.getElementById('pmFile');
+ inp.onchange=function(){var f=inp.files&&inp.files[0];if(!f)return;
+  var rd=new FileReader();
+  rd.onload=function(){
+   fetch('/api/servers/'+current.id+'/store/admin/upload',{method:'POST',
+    headers:{'Content-Type':f.type,'Authorization':'Bearer '+token},body:rd.result})
+    .then(function(r){return r.json().then(function(j){return{ok:r.ok,body:j}})})
+    .then(function(r){
+     if(!r.ok){alert(r.body.error==='unsupported-image-type'?'That file type is not an image we serve.':r.body.error==='image-too-large'||r.body.error==='body-too-large'?'That image is too large.':'Upload failed.');return}
+     if(field==='images')pmSetImage(idx,r.body.src);
+     else if(field==='reward')pmSetReward(idx,'icon',r.body.src);
+     else pmDraft.icon=r.body.src;
+     renderPmEditor()})};
+  rd.readAsArrayBuffer(f);inp.value=''};
+ inp.click()}
 function renderPmEditor(){var d=pmDraft;
  var h='<h3 style="margin:0 0 10px">'+(d.id?'Edit ':'New ')+(d.type==='crate'?'crate':'item')+'</h3>';
  h+='<div class="row" style="gap:10px">'+
   '<div style="flex:1;min-width:150px"><label>Name</label><input value="'+escAttr(d.name)+'" oninput="pmField(\\'name\\',this.value)"/></div>'+
   '<div style="width:120px"><label>Price</label><input type="number" value="'+(Number(d.price)||0)+'" oninput="pmField(\\'price\\',Number(this.value))"/></div></div>';
  h+='<label>Description</label><input value="'+escAttr(d.description)+'" oninput="pmField(\\'description\\',this.value)"/>';
- h+='<label>Icon URL (optional)</label><input value="'+escAttr(d.icon)+'" oninput="pmField(\\'icon\\',this.value)"/>';
+ /* URL or upload, with a live thumbnail of what buyers will see (#76). */
+ h+='<label>Icon</label>'+pmImageRow('icon',d.icon,-1);
+ /* Extra pictures for the detail view (#77). Emptying a slot removes it. */
+ h+='<label>Extra images</label><div id="pmImgs">'+(d.images||[]).map(function(im,i){return pmImageRow('images',im,i)}).join('')+'</div>';
+ if((d.images||[]).length<8)h+='<button class="btn sm" onclick="pmAddImage()">+ Add image</button>';
+ /* Availability (#81). Blank is unlimited; 0 is sold out - different things. */
+ h+='<div class="row" style="gap:10px;margin-top:10px">'+
+  '<div style="width:110px"><label>Stock</label><input type="number" min="0" placeholder="unlimited" value="'+(d.stock===''||d.stock===undefined||d.stock===null?'':Number(d.stock))+'" oninput="pmNum(\\'stock\\',this.value)"/></div>'+
+  '<div style="width:140px"><label>Limit per player</label><input type="number" min="0" placeholder="unlimited" value="'+(d.perPlayerLimit===''||d.perPlayerLimit===undefined||d.perPlayerLimit===null?'':Number(d.perPlayerLimit))+'" oninput="pmNum(\\'perPlayerLimit\\',this.value)"/></div>'+
+  '<div style="width:100px"><label>Order</label><input type="number" placeholder="—" value="'+(d.sort===''||d.sort===undefined||d.sort===null?'':Number(d.sort))+'" oninput="pmNum(\\'sort\\',this.value)"/></div>'+
+  '<label class="row" style="gap:6px;align-self:flex-end;font-size:13px;margin-bottom:6px"><input type="checkbox" style="width:auto"'+(d.hidden?' checked':'')+' onchange="pmField(\\'hidden\\',this.checked)"/> Hidden</label></div>';
+ h+='<div class="dim" style="font-size:12px;margin-top:4px">Blank stock or limit means unlimited. Hidden products are never sent to the storefront, so nobody can buy one by guessing its id. Order drives the Featured sort — blank comes after everything numbered.</div>';
  if(d.type==='item'){
   h+='<label>Commands — one per line, {player} = buyer</label><textarea style="min-height:90px" oninput="pmField(\\'_cmdText\\',this.value)">'+esc(d._cmdText)+'</textarea>';
  }else{
@@ -743,7 +822,7 @@ function renderPmEditor(){var d=pmDraft;
    '<input style="width:78px" type="number" placeholder="Weight" value="'+(Number(r.weight)||0)+'" oninput="pmSetReward('+i+',\\'weight\\',Number(this.value))"/>'+
    '<span class="badge" id="pmPct'+i+'"></span>'+
    '<button class="btn sm danger" onclick="pmDelReward('+i+')">✕</button></div>'+
-   '<input placeholder="Icon URL (optional)" value="'+escAttr(r.icon||'')+'" oninput="pmSetReward('+i+',\\'icon\\',this.value)"/>'+
+   pmImageRow('reward',r.icon||'',i)+
    '<textarea style="min-height:48px" placeholder="give {player} minecraft:diamond 3" oninput="pmSetReward('+i+',\\'_ct\\',this.value)">'+esc(r._ct||'')+'</textarea></div>'}).join('');
   h+='<button class="btn sm" onclick="pmAddReward()">＋ Add reward</button>';
  }
@@ -762,6 +841,14 @@ function pmSave(){var d=pmDraft;var split=function(t){return (t||'').split('\\n'
  /* Omitted rather than sent empty: an absent field means "inherit the store
     default", and '' would be a value the server has to guess about. */
  if(d.type==='crate'&&d.crateAnimation)product.crateAnimation=d.crateAnimation;
+ var imgs=(d.images||[]).map(function(x){return (x||'').trim()}).filter(Boolean);
+ if(imgs.length)product.images=imgs;
+ if(d.hidden)product.hidden=true;
+ /* Only sent when actually set - undefined is unlimited and 0 is sold out, so
+    this cannot collapse to a truthiness check. */
+ if(d.stock!==undefined&&d.stock!==null&&d.stock!=='')product.stock=Number(d.stock);
+ if(d.perPlayerLimit!==undefined&&d.perPlayerLimit!==null&&d.perPlayerLimit!=='')product.perPlayerLimit=Number(d.perPlayerLimit);
+ if(d.sort!==undefined&&d.sort!==null&&d.sort!=='')product.sort=Number(d.sort);
  api('/api/servers/'+current.id+'/store/admin/product',{method:'POST',body:JSON.stringify(product)}).then(function(r){if(!r.ok){alert('Could not save product');return}pmClose();loadManage()})}
 function power(a){api('/api/servers/'+current.id+'/power',{method:'POST',body:JSON.stringify({action:a})})}
 function sendCmd(){var i=document.getElementById('dCmd');var v=i.value.trim();if(!v)return;api('/api/servers/'+current.id+'/command',{method:'POST',body:JSON.stringify({command:v})});i.value=''}

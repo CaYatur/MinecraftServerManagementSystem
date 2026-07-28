@@ -11,6 +11,14 @@ import {
   resolveCrateAnimation
 } from '@shared/crate'
 import type { CrateAnimation } from '@shared/crate'
+import {
+  buyBlock,
+  isSafeImageSrc,
+  normalizeLayout,
+  sanitizeImages,
+  MAX_PRODUCT_IMAGES
+} from '@shared/storefront'
+import type { StoreLayout } from '@shared/storefront'
 import type {
   BuyResult,
   CrateReward,
@@ -27,6 +35,8 @@ import type {
 interface StoreState {
   currency: string
   crateAnimation: CrateAnimation
+  /** Section order on the storefront (#80). */
+  layout: StoreLayout
   products: Product[]
   /** Economy categories - independent of `products` (#13). */
   categories: EconomyCategory[]
@@ -60,6 +70,7 @@ function getStore(serverId: string): StoreState {
     stores[serverId] = {
       currency: 'Coins',
       crateAnimation: DEFAULT_CRATE_ANIMATION,
+      layout: 'crates-first',
       products: [],
       categories: DEFAULT_CATEGORIES.map((c) => ({ ...c })),
       balances: {},
@@ -78,6 +89,8 @@ function getStore(serverId: string): StoreState {
   // ...and files that predate configurable crate animations. Normalised on read
   // so a hand-edited json cannot leave the panel with an animation it cannot play.
   stores[serverId].crateAnimation = normalizeCrateAnimation(stores[serverId].crateAnimation)
+  // ...and files that predate the section layout.
+  stores[serverId].layout = normalizeLayout(stores[serverId].layout)
   return stores[serverId]
 }
 
@@ -153,11 +166,19 @@ export function purchase(serverId: string, mcName: string, productId: string): B
   const st = getStore(serverId)
   const p = st.products.find((x) => x.id === productId)
   if (!p) return { ok: false, error: 'no-product' }
+  // Availability before money (#81). A hidden product is not "sold out" and not
+  // "too expensive" - as far as a buyer is concerned it does not exist, which
+  // is also why it is checked server-side rather than hidden in CSS.
+  const block = buyBlock(p, ownedCount(st, mcName, p.id))
+  if (block) return { ok: false, error: block === 'hidden' ? 'no-product' : block }
   const bal = st.balances[mcName] ?? 0
   if (bal < p.price) return { ok: false, error: 'insufficient', balance: bal }
 
-  // Atomic deduct — no await before this completes + persists.
+  // Atomic deduct — no await before this completes + persists. Stock goes in
+  // the same synchronous block for the same reason: two requests arriving
+  // together must not both see the last one in stock.
   st.balances[mcName] = bal - p.price
+  if (typeof p.stock === 'number') p.stock = Math.max(0, p.stock - 1)
 
   let commands: string[]
   let reward: BuyResult['reward']
@@ -235,7 +256,7 @@ function publicRewards(rewards: CrateReward[]): PublicReward[] {
  * for that reason: a new field on `Product` must be opted in, not leaked by
  * default.
  */
-function toPublic(p: Product, storeDefault: CrateAnimation): ProductPublic {
+function toPublic(p: Product, storeDefault: CrateAnimation, owned?: number): ProductPublic {
   return {
     id: p.id,
     type: p.type,
@@ -243,6 +264,11 @@ function toPublic(p: Product, storeDefault: CrateAnimation): ProductPublic {
     description: p.description,
     price: p.price,
     icon: p.icon,
+    ...(p.images?.length ? { images: p.images } : {}),
+    ...(typeof p.stock === 'number' ? { stock: p.stock } : {}),
+    ...(typeof p.perPlayerLimit === 'number' ? { perPlayerLimit: p.perPlayerLimit } : {}),
+    ...(owned !== undefined ? { owned } : {}),
+    ...(typeof p.sort === 'number' ? { sort: p.sort } : {}),
     ...(p.type === 'crate'
       ? {
           rewards: publicRewards(p.rewards),
@@ -251,11 +277,22 @@ function toPublic(p: Product, storeDefault: CrateAnimation): ProductPublic {
       : {})
   }
 }
-export function publicStore(serverId: string): StorePublic {
+/**
+ * @param mcName the signed-in buyer, when there is one. Only used to fill in
+ * how many of each product they already own, so the storefront can grey out a
+ * per-player limit that has been reached instead of failing the purchase.
+ */
+export function publicStore(serverId: string, mcName?: string): StorePublic {
   const st = getStore(serverId)
   return {
     currency: st.currency,
-    products: st.products.map((p) => toPublic(p, st.crateAnimation)),
+    layout: st.layout,
+    // Hidden products are dropped here, at the boundary. Filtering them in the
+    // UI would still ship the name, price and reward list of something the
+    // operator has not launched yet - and leave the id buyable.
+    products: st.products
+      .filter((p) => !p.hidden)
+      .map((p) => toPublic(p, st.crateAnimation, mcName ? ownedCount(st, mcName, p.id) : undefined)),
     crateAnimation: st.crateAnimation
   }
 }
@@ -269,7 +306,23 @@ export function getTxns(serverId: string, mcName: string): Txn[] {
 // ---- admin (trusted: desktop, or web users with 'store' scope) ----
 export function getStoreConfig(serverId: string): StoreConfig {
   const st = getStore(serverId)
-  return { currency: st.currency, products: st.products, crateAnimation: st.crateAnimation }
+  return {
+    currency: st.currency,
+    products: st.products,
+    crateAnimation: st.crateAnimation,
+    layout: st.layout
+  }
+}
+export function setStoreLayout(serverId: string, layout: unknown): StoreLayout {
+  const st = getStore(serverId)
+  st.layout = normalizeLayout(layout)
+  save()
+  return st.layout
+}
+
+/** How many of this product `mcName` has already bought (#81). */
+function ownedCount(st: StoreState, mcName: string, productId: string): number {
+  return st.txns.filter((t) => t.productId === productId && t.mcName === mcName).length
 }
 export function setCurrency(serverId: string, currency: string): void {
   getStore(serverId).currency = currency.trim() || 'Coins'
@@ -289,7 +342,11 @@ export function upsertProduct(serverId: string, product: Product): Product {
     name: product.name || 'Product',
     description: product.description || '',
     price: Math.max(0, Math.floor(product.price) || 0),
-    icon: product.icon,
+    // Any store-scoped web user can set these, and they render for every
+    // visitor. One chokepoint for both admin UIs; a refused source is dropped
+    // rather than rejecting the whole save, so a bad icon does not cost the
+    // operator the rest of their edit.
+    icon: isSafeImageSrc(product.icon) ? product.icon : '',
     commands: Array.isArray(product.commands) ? product.commands : [],
     rewards: Array.isArray(product.rewards) ? product.rewards : [],
     // Only a crate carries one, and only when it was actually set. Storing an
@@ -298,8 +355,25 @@ export function upsertProduct(serverId: string, product: Product): Product {
     // silently stop affecting it.
     ...(product.type === 'crate' && product.crateAnimation
       ? { crateAnimation: normalizeCrateAnimation(product.crateAnimation) }
+      : {}),
+    ...(product.images?.length ? { images: sanitizeImages(product.images, MAX_PRODUCT_IMAGES) } : {}),
+    ...(product.hidden ? { hidden: true } : {}),
+    // `undefined` is "unlimited" and 0 is "sold out" - two different things, so
+    // this cannot collapse to a truthiness check.
+    ...(product.stock === undefined || product.stock === null
+      ? {}
+      : { stock: Math.max(0, Math.floor(Number(product.stock)) || 0) }),
+    ...(product.perPlayerLimit === undefined || product.perPlayerLimit === null
+      ? {}
+      : { perPlayerLimit: Math.max(0, Math.floor(Number(product.perPlayerLimit)) || 0) }),
+    ...(typeof product.sort === 'number' && Number.isFinite(product.sort)
+      ? { sort: Math.floor(product.sort) }
       : {})
   }
+  clean.rewards = clean.rewards.map((r) => ({
+    ...r,
+    icon: isSafeImageSrc(r.icon) ? r.icon : ''
+  }))
   const i = st.products.findIndex((x) => x.id === clean.id)
   if (i >= 0) st.products[i] = clean
   else st.products.push(clean)

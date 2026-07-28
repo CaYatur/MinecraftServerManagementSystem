@@ -19,6 +19,9 @@ import { categoryName, filterLedger, ledgerSummary } from '@shared/economy'
 import { CRATE_ANIMATIONS, DEFAULT_CRATE_ANIMATION, resolveCrateAnimation } from '@shared/crate'
 import type { CrateAnimation } from '@shared/crate'
 import { CratePreview } from '../components/CratePreview'
+import { ImageField, previewSrc } from '../components/ImageField'
+import { MAX_PRODUCT_IMAGES, STORE_LAYOUTS, normalizeLayout } from '@shared/storefront'
+import type { StoreLayout } from '@shared/storefront'
 import type { LedgerKind } from '@shared/economy'
 import type {
   Product,
@@ -53,6 +56,7 @@ export function StoreView(): JSX.Element {
   const [balCategory, setBalCategory] = useState('')
   const [newCat, setNewCat] = useState('')
   const [crateAnim, setCrateAnim] = useState<CrateAnimation>(DEFAULT_CRATE_ANIMATION)
+  const [layout, setLayout] = useState<StoreLayout>('crates-first')
   const [edit, setEdit] = useState<Product | null>(null)
   const [cmdText, setCmdText] = useState('')
   // What the preview modal is playing, and with which rewards. Null = closed.
@@ -73,6 +77,7 @@ export function StoreView(): JSX.Element {
     setData(d)
     setCurrency(d.currency)
     setCrateAnim(d.crateAnimation ?? DEFAULT_CRATE_ANIMATION)
+    setLayout(normalizeLayout(d.layout))
     setLedger(await window.msms.getStoreLedger(id))
   }
   useEffect(() => {
@@ -146,6 +151,17 @@ export function StoreView(): JSX.Element {
       toast('success', 'store.saved')
     } catch (e) {
       setCrateAnim(previous)
+      toast('error', String((e as Error)?.message ?? e))
+    }
+  }
+  const saveLayout = async (next: StoreLayout): Promise<void> => {
+    const previous = layout
+    setLayout(next)
+    try {
+      setLayout(await window.msms.setStoreLayout(id, next))
+      toast('success', 'store.saved')
+    } catch (e) {
+      setLayout(previous)
       toast('error', String((e as Error)?.message ?? e))
     }
   }
@@ -231,6 +247,23 @@ export function StoreView(): JSX.Element {
           >
             <Play size={13} /> {t('store.preview')}
           </button>
+        </div>
+
+        {/* Crates and items are different things to shop for, so the storefront
+            can put them in separate sections (#80). */}
+        <div className="field" style={{ marginTop: 14, marginBottom: 0, maxWidth: 420 }}>
+          <label>{t('store.layout')}</label>
+          <select
+            className="select"
+            value={layout}
+            onChange={(e) => void saveLayout(e.target.value as StoreLayout)}
+          >
+            {STORE_LAYOUTS.map((l) => (
+              <option key={l} value={l}>
+                {t(`store.layout_${l}`)}
+              </option>
+            ))}
+          </select>
         </div>
       </div>
 
@@ -455,10 +488,34 @@ export function StoreView(): JSX.Element {
       ) : (
         <div className="panel" style={{ padding: 0 }}>
           {data.products.map((p) => (
-            <div key={p.id} className="mod-row">
-              {p.type === 'crate' ? <Gift size={16} /> : <Package size={16} />}
+            <div key={p.id} className="mod-row" style={{ opacity: p.hidden ? 0.55 : 1 }}>
+              {p.icon ? (
+                <img
+                  src={previewSrc(p.icon)}
+                  alt=""
+                  style={{
+                    width: 26,
+                    height: 26,
+                    objectFit: 'contain',
+                    imageRendering: 'pixelated',
+                    flex: 'none'
+                  }}
+                />
+              ) : p.type === 'crate' ? (
+                <Gift size={16} />
+              ) : (
+                <Package size={16} />
+              )}
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div className="mod-name">{p.name} <span className="badge">{t(`store.${p.type}`)}</span></div>
+                <div className="mod-name">
+                  {p.name} <span className="badge">{t(`store.${p.type}`)}</span>
+                  {p.hidden && <span className="badge">{t('store.hidden')}</span>}
+                  {typeof p.stock === 'number' && (
+                    <span className={`badge ${p.stock === 0 ? 'error-badge' : ''}`}>
+                      {p.stock === 0 ? t('store.outOfStock') : t('store.stockLeft', { n: p.stock })}
+                    </span>
+                  )}
+                </div>
                 <div className="dim" style={{ fontSize: 11 }}>{p.price} {currency} · {p.description}</div>
               </div>
               <button className="btn ghost sm" onClick={() => openEdit(p)}>{t('common.edit')}</button>
@@ -490,10 +547,95 @@ export function StoreView(): JSX.Element {
                 <label>{t('store.productDesc')}</label>
                 <input className="input" value={edit.description} onChange={(e) => setEdit({ ...edit, description: e.target.value })} />
               </div>
+              <ImageField
+                label={t('store.icon')}
+                value={edit.icon}
+                onChange={(icon) => setEdit({ ...edit, icon })}
+              />
+
+              {/* A rank or a kit is worth more than one picture (#77). */}
               <div className="field">
-                <label>{t('store.icon')}</label>
-                <input className="input" value={edit.icon} onChange={(e) => setEdit({ ...edit, icon: e.target.value })} />
+                <label>{t('store.gallery')}</label>
+                {(edit.images ?? []).map((img, i) => (
+                  <ImageField
+                    key={i}
+                    compact
+                    value={img}
+                    onChange={(next) =>
+                      setEdit({
+                        ...edit,
+                        // An emptied slot is removed rather than kept as a
+                        // blank, so clearing one is how you delete it.
+                        images: (edit.images ?? [])
+                          .map((x, idx) => (idx === i ? next : x))
+                          .filter((x) => x.trim())
+                      })
+                    }
+                  />
+                ))}
+                {(edit.images?.length ?? 0) < MAX_PRODUCT_IMAGES && (
+                  <button
+                    className="btn sm"
+                    onClick={() => setEdit({ ...edit, images: [...(edit.images ?? []), ''] })}
+                  >
+                    <Plus size={13} /> {t('store.addImage')}
+                  </button>
+                )}
               </div>
+
+              {/* Availability (#81). Blank means unlimited; 0 means sold out. */}
+              <div className="row wrap" style={{ gap: 10 }}>
+                <div className="field" style={{ width: 120 }}>
+                  <label>{t('store.stock')}</label>
+                  <input
+                    className="input"
+                    type="number"
+                    min={0}
+                    value={edit.stock ?? ''}
+                    placeholder={t('store.unlimited')}
+                    onChange={(e) =>
+                      setEdit({ ...edit, stock: e.target.value === '' ? undefined : Number(e.target.value) })
+                    }
+                  />
+                </div>
+                <div className="field" style={{ width: 140 }}>
+                  <label>{t('store.perPlayerLimit')}</label>
+                  <input
+                    className="input"
+                    type="number"
+                    min={0}
+                    value={edit.perPlayerLimit ?? ''}
+                    placeholder={t('store.unlimited')}
+                    onChange={(e) =>
+                      setEdit({
+                        ...edit,
+                        perPlayerLimit: e.target.value === '' ? undefined : Number(e.target.value)
+                      })
+                    }
+                  />
+                </div>
+                <div className="field" style={{ width: 110 }}>
+                  <label>{t('store.sortOrder')}</label>
+                  <input
+                    className="input"
+                    type="number"
+                    value={edit.sort ?? ''}
+                    placeholder="—"
+                    onChange={(e) =>
+                      setEdit({ ...edit, sort: e.target.value === '' ? undefined : Number(e.target.value) })
+                    }
+                  />
+                </div>
+                <label className="switch" style={{ alignSelf: 'center', fontSize: 13 }}>
+                  <input
+                    type="checkbox"
+                    checked={!!edit.hidden}
+                    onChange={() => setEdit({ ...edit, hidden: !edit.hidden })}
+                  />
+                  {t('store.hidden')}
+                </label>
+              </div>
+              <p className="hint" style={{ marginTop: 0 }}>{t('store.availabilityHint')}</p>
 
               {edit.type === 'item' ? (
                 <div className="field">
@@ -563,7 +705,9 @@ export function StoreView(): JSX.Element {
                           <span className="badge" title={t('store.weight')}>{Math.round((Math.max(0, r.weight) / totalW) * 100)}%</span>
                           <button className="btn ghost sm danger" onClick={() => setEdit({ ...edit, rewards: edit.rewards.filter((_, idx) => idx !== i) })}><X size={13} /></button>
                         </div>
-                        <input className="input" style={{ marginTop: 6 }} placeholder={t('store.icon')} value={r.icon ?? ''} onChange={(e) => updReward(i, { icon: e.target.value })} />
+                        <div style={{ marginTop: 6 }}>
+                          <ImageField compact value={r.icon} onChange={(icon) => updReward(i, { icon })} />
+                        </div>
                         <textarea className="input" style={{ minHeight: 48, marginTop: 6 }} placeholder="give {player} minecraft:diamond 3" value={r.commands.join('\n')} onChange={(e) => updReward(i, { commands: e.target.value.split('\n').map((s) => s.trim()).filter(Boolean) })} />
                       </div>
                     ))
