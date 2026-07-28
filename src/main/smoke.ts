@@ -5407,6 +5407,40 @@ export async function runWebSmoke(): Promise<void> {
           if (pmap.MAP.view.scale !== 2) return fail('the page zoom did not change scale')
         }
 
+        // #104: the same empty state on the PUBLIC page must not talk about
+        // plugins. A visitor did not come to hear which jar the operator has
+        // not installed, and it is an operator's business told to the internet.
+        {
+          const sctx = site.ctx as Record<string, (...a: unknown[]) => unknown>
+          const smap = site.ctx as { MAP: { data: unknown; bridge: unknown } }
+          smap.MAP.bridge = null
+          smap.MAP.data = {
+            bridge: false,
+            dimension: 'overworld',
+            dimensions: ['overworld'],
+            players: [],
+            bounds: { minX: -64, maxX: 64, minZ: -64, maxZ: 64 },
+            round: 64,
+            heads: false,
+            at: Date.now()
+          }
+          sctx['mapDraw']()
+          const pubEmpty = site.byId('mpEmpty').innerHTML
+          if (/Bridge|plugin/i.test(pubEmpty)) {
+            return fail('the public map told a visitor about the bridge plugin: ' + pubEmpty)
+          }
+          if (/mapInstallBridge/.test(pubEmpty)) return fail('the public map offered a plugin install')
+          if (!pubEmpty) return fail('the public map said nothing at all about being empty')
+          // ...and it hides the two controls its feed cannot honour. A button
+          // that does nothing is worse than no button.
+          if (site.byId('mpHeadsBtn').style.display !== 'none') {
+            return fail('the public map offers a heads toggle its feed refuses')
+          }
+          if (site.byId('mpHeatBtn').style.display !== 'none') {
+            return fail('the public map offers a heatmap toggle with no heatmap')
+          }
+        }
+
         // ...and with players it stops claiming the plugin is missing.
         mapState.MAP.data.bridge = true
         mapState.MAP.data.players = [{ name: 'Alex', dim: 'overworld', x: 10, y: 64, z: 10 }]

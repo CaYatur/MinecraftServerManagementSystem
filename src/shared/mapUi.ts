@@ -44,6 +44,14 @@ export const MAP_CSS = `
 .mp-chip span{opacity:.6;font-weight:600;margin-left:5px}
 `
 
+/**
+ * `#mpCursor` is the coordinate readout, kept outside the canvas so it is text a
+ * reader can select and outside `#mpEmpty` so it survives an empty map.
+ *
+ * No HTML comments in here. The public site embeds this string inside its inline
+ * `<script>`, and `<!--` puts an HTML parser into script-data-escaped state —
+ * harmless today and a trap for whoever adds a `<script` to it later.
+ */
 export const MAP_HTML = `
 <div class="mp-wrap">
   <div class="mp-bar">
@@ -63,8 +71,6 @@ export const MAP_HTML = `
   <div class="mp-canvas-wrap">
     <canvas id="mpCanvas"></canvas>
     <div id="mpEmpty" class="mp-empty"></div>
-    <!-- The readout that makes a map a map. Outside the canvas so it is text a
-         reader can select, and outside #mpEmpty so it survives an empty map. -->
     <div id="mpCursor" class="mp-cursor"></div>
   </div>
   <div class="mp-legend">
@@ -85,6 +91,11 @@ var MAP={data:null,heat:true,timer:null,dim:'overworld',bridge:null,busy:false,m
    the plugin at all. */
 function mapNoBridgeHtml(){
  var b=MAP.bridge;
+ /* A visitor is not an operator. "This server has no MSMS-Bridge plugin" means
+    nothing to somebody who came to look at the map, and publishing which plugin
+    the admin has not installed is an operator's business told to the internet.
+    They get the fact, which is all that is true for them. */
+ if(!mapAdminId())return '<div>Live positions are unavailable right now.</div>';
  var head='<div>No live positions — this server has no MSMS-Bridge plugin.</div>';
  if(MAP.msg)return head+'<div class="mp-note">'+mapEsc(MAP.msg)+'</div>';
  if(!b)return head;
@@ -223,6 +234,15 @@ function mapDraw(){
     dimension changed under it. */
  if(!MAP.view||MAP.fitFor!==d.dimension){MAP.view=mapFit(d.bounds,MAP.vp);MAP.fitFor=d.dimension}
  mapBindNav();
+ /* Hide the controls this feed cannot honour. The public map carries no
+    heatmap — a density map of where people are is the thing the coordinate
+    rounding exists to blur — and refuses heads unless the operator agreed to
+    send uuids to an avatar service. Leaving the buttons visible offers a
+    visitor two switches that do nothing. */
+ var hb=document.getElementById('mpHeatBtn');
+ if(hb)hb.style.display=d.heatmap?'':'none';
+ var db=document.getElementById('mpHeadsBtn');
+ if(db)db.style.display=(d.heads===false)?'none':'';
  var g=cv.getContext('2d');g.clearRect(0,0,w,h);
  var sx=w/MAP.vp.width,sy=h/MAP.vp.height;
  var px=function(x){return mapW2S({x:x,z:0}).x*sx};
