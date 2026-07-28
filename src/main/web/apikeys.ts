@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto'
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
 import { existsSync, readFileSync, writeFileSync, renameSync } from 'node:fs'
 import { join } from 'node:path'
 import { dataDir } from '../paths'
@@ -8,10 +8,27 @@ import type { ApiKeyView, KeyServers } from '@shared/apikeys'
 import type { Scope } from '@shared/web'
 
 /**
- * API keys, stored the same way passwords are: scrypt over a random salt, with
- * only the hash on disk. The raw key is returned once at creation and cannot be
- * recovered afterwards - a store that can show you the key again is a store
- * that leaks every integration credential when the file does.
+ * API keys: salted SHA-256, only the hash on disk. The raw key is returned once
+ * at creation and cannot be recovered afterwards - a store that can show you
+ * the key again is a store that leaks every integration credential when the
+ * file does.
+ *
+ * Deliberately NOT scrypt, which is what `auth.ts` uses for passwords.
+ *
+ * A slow KDF exists to make guessing a *low-entropy human secret* expensive. A
+ * key here is 32 bytes from `randomBytes` - 256 bits - so there is no guessing
+ * surface for a KDF to protect, and nothing to gain. What it would cost is
+ * severe: unlike a password, a key is verified on *every request*. Measured on
+ * this machine, `scryptSync` is ~32 ms a call, so a single integration doing a
+ * 120-request burst would block the event loop for nearly four seconds - the
+ * whole app, including the desktop UI, the console feed and metrics, because
+ * Node is single-threaded. The rate limiter cannot help: the hash happens while
+ * deciding *who is calling*, before there is a key id to charge a bucket
+ * against. That is a self-inflicted denial of service bought for no security.
+ *
+ * The salt stays because it is free, and it stops one precomputed table from
+ * covering two installs. `timingSafeEqual` stays because comparing digests with
+ * `===` leaks their prefix through timing.
  */
 interface StoredKey extends ApiKeyView {
   salt: string
@@ -44,7 +61,7 @@ function save(): void {
 }
 
 function hash(secret: string, salt: string): string {
-  return scryptSync(secret, salt, 64).toString('hex')
+  return createHash('sha256').update(salt).update('.').update(secret).digest('hex')
 }
 
 const view = (k: StoredKey): ApiKeyView => ({

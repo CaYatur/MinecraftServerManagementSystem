@@ -157,9 +157,38 @@ function keyRateOk(keyId: string, res: ServerResponse): boolean {
   return false
 }
 
+/**
+ * Per-IP budget for the unauthenticated public API (#50). Far larger than the
+ * per-key one because a single visitor's browser polls the storefront, and
+ * because a shared NAT puts a whole household behind one address.
+ */
+const PUBLIC_IP_LIMIT = { capacity: 300, refillPerSec: 10 }
+const ipBuckets = new Map<string, Bucket>()
+
+function publicRateOk(ip: string, res: ServerResponse): boolean {
+  const now = Date.now()
+  const b = ipBuckets.get(ip) ?? newBucket(PUBLIC_IP_LIMIT, now)
+  const r = consumeToken(b, PUBLIC_IP_LIMIT, now)
+  ipBuckets.set(ip, r.bucket)
+  // A public listener sees unbounded distinct addresses, so this map has to be
+  // swept. A bucket that has refilled to capacity is indistinguishable from a
+  // fresh one, which makes dropping it free rather than a reset of someone's
+  // budget.
+  if (ipBuckets.size > 4096) {
+    for (const [k, v] of ipBuckets) {
+      if (v.tokens >= PUBLIC_IP_LIMIT.capacity) ipBuckets.delete(k)
+    }
+  }
+  if (r.allowed) return true
+  res.setHeader('Retry-After', String(r.retryAfterSec))
+  sendJson(res, 429, { error: 'rate-limited', retryAfter: r.retryAfterSec })
+  return false
+}
+
 /** Test seam: the buckets survive a `stopWebServer()`, which smoke runs rely on. */
 export function _resetRateLimits(): void {
   keyBuckets.clear()
+  ipBuckets.clear()
 }
 
 /**
@@ -361,7 +390,13 @@ async function handleSite(req: IncomingMessage, res: ServerResponse): Promise<vo
     res.end(getPublicSiteHtml())
     return
   }
-  if (path.startsWith('/api/public/')) return handlePublic(path, method, req, res, ip)
+  if (path.startsWith('/api/public/')) {
+    // Unauthenticated and internet-reachable when the operator opts into LAN,
+    // so it is limited by address (#50). The panel API is limited per key
+    // instead, which is the sharper signal once there is a credential.
+    if (!publicRateOk(ip, res)) return
+    return handlePublic(path, method, req, res, ip)
+  }
   sendJson(res, 404, { error: 'not-found' })
 }
 

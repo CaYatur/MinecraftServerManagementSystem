@@ -4032,6 +4032,33 @@ export async function runWebSmoke(): Promise<void> {
         return fail('the allowlist leaked headers to an origin that is not on it')
       }
 
+      // The unauthenticated public API is limited per address (#50).
+      _resetRateLimits()
+      const pub: Response[] = []
+      for (let sent = 0; sent < 1200 && !pub.some((x) => x.status === 429); sent += 30) {
+        pub.push(...(await Promise.all(Array.from({ length: 30 }, () => sget('/api/public/site')))))
+      }
+      if (!pub.some((x) => x.status === 429)) return fail('the public API was never rate limited')
+      _resetRateLimits()
+      if ((await sget('/api/public/site')).status !== 200) {
+        return fail('the public API did not recover after its buckets were cleared')
+      }
+
+      // Resolving a key must stay cheap: it happens on every request, on the
+      // same thread that runs the UI, and before there is a key id to charge a
+      // rate-limit bucket against. A slow KDF here is a self-inflicted DoS, not
+      // a hardening measure - the secret is 256 random bits, so there is no
+      // guessing surface for one to protect.
+      {
+        const perf = apikeys.createKey({ label: 'smoke_perf', scopes: ['view'], servers: 'all' })
+        const n = 200
+        const started = Date.now()
+        for (let i = 0; i < n; i++) apikeys.resolveKey(perf.secret)
+        const each = (Date.now() - started) / n
+        apikeys.deleteKey(perf.key.id)
+        if (each > 2) return fail('key resolution costs ' + each.toFixed(1) + ' ms per request')
+      }
+
       apikeys.deleteKey(issued.key.id)
       apikeys.deleteKey(elsewhere.key.id)
       console.log(
