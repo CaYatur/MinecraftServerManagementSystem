@@ -3736,7 +3736,22 @@ function runPageScript(html: string, seed: Record<string, unknown> = {}): PageRu
       // paths throw asynchronously, and an unhandled rejection in the test
       // output is how a real one later goes unnoticed — so the shapes they
       // destructure on startup are answered plausibly.
-      const body: Record<string, unknown> = path.includes('/api/public/site')
+      // The map feed, so `mapRefresh` can be exercised end to end through each
+      // page's own api() (#115). Answering the generic `{servers:[],...}` here
+      // would make the refresh bail on a missing `dimension` and hide exactly
+      // the failure the assertion is for.
+      const body: Record<string, unknown> = /\/map(\?|$)/.test(path)
+        ? {
+            bridge: false,
+            dimension: 'overworld',
+            dimensions: ['overworld'],
+            players: [],
+            bounds: { minX: -64, maxX: 64, minZ: -64, maxZ: 64 },
+            heatmap: [],
+            cell: 16,
+            at: Date.now()
+          }
+        : path.includes('/api/public/site')
         ? {
             siteName: 'Test',
             tagline: '',
@@ -5641,6 +5656,40 @@ export async function runWebSmoke(): Promise<void> {
           cell: 16,
           at: Date.now()
         }
+        // #115: BOTH pages must be able to fetch a frame with their own api().
+        // The assertions below seed MAP.data and call mapDraw directly, which is
+        // exactly why they missed the real bug: the shared module read `r.body`,
+        // which is the panel's response shape, so on the public site every poll
+        // threw on `undefined.dimension` and the map never drew at all. Nothing
+        // that skips mapRefresh can see that.
+        for (const [label, page] of [['panel', panel], ['site', site]] as const) {
+          const pctx = page.ctx as Record<string, (...a: unknown[]) => unknown>
+          const pm = page.ctx as { MAP: { data: unknown } }
+          pm.MAP.data = null
+          let threw = ''
+          const onErr = (e: unknown): void => {
+            threw = String(e)
+          }
+          process.on('unhandledRejection', onErr)
+          try {
+            await (pctx['mapRefresh']() as unknown as Promise<void> | undefined)
+            await sleep(20)
+          } finally {
+            process.off('unhandledRejection', onErr)
+          }
+          if (threw) return fail('the ' + label + ' map threw while refreshing: ' + threw)
+          if (!pm.MAP.data) {
+            return fail('the ' + label + ' map got no frame from its own api() — see #115')
+          }
+          // ...and the status came from the response rather than staying on its
+          // initial text, which is what "Bridge not connected" forever looked
+          // like.
+          const state = page.byId('mpState').textContent
+          if (!/Bridge (live|not connected)/.test(state)) {
+            return fail('the ' + label + ' map did not set a bridge state: ' + JSON.stringify(state))
+          }
+        }
+
         const mapState = panel.ctx as {
           MAP: { data: { bridge: boolean; players: unknown[] }; bridge: unknown; msg: string }
         }

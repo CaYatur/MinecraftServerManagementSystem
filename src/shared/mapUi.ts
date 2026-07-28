@@ -81,6 +81,25 @@ export const MAP_HTML = `
   <div id="mpList" class="mp-list"></div>
 </div>`
 
+/**
+ * The map engine.
+ *
+ * The host page must provide:
+ *  - `mapGet(url)`        — resolve to the parsed body, or null on any failure
+ *  - `mapPost(url)`       — the same, for a body-less POST
+ *  - `mapFeedUrl(dim,cell)`
+ *  - `mapAvatarUrl(name)`
+ *  - `mapServerId()`      — the admin server id, or '' on a public page
+ *
+ * `mapGet`/`mapPost` exist because this module must not know how either host
+ * wraps a response, and it did: it read `r.body`, which is the panel's shape.
+ * The public site's `api()` answers `{ok, s, j}`, so every call there evaluated
+ * `undefined.dimension` and threw before anything was assigned — the map never
+ * drew and the status pill sat on "Bridge not connected" while the bridge was
+ * live. The store and crate modules never had this problem because they never
+ * fetch for themselves; this was the first shared module that did, and it
+ * inherited one page's convention as if it were universal.
+ */
 export const MAP_JS = `
 var MAP={data:null,heat:true,timer:null,dim:'overworld',bridge:null,busy:false,msg:'',
  view:null,vp:{width:640,height:400},fitFor:null,drag:null,cursor:null,headsOn:false};
@@ -114,18 +133,18 @@ function mapBridgeCheck(){
  /* Once per tab open, not on the 2s position poll: the answer changes when
     somebody installs a jar, and the check reaches GitHub. */
  if(!mapAdminId())return;
- api('/api/servers/'+mapAdminId()+'/bridge').then(function(r){
-  MAP.bridge=r.ok?r.body:null;mapDraw()})}
+ mapGet('/api/servers/'+mapAdminId()+'/bridge').then(function(b){
+  MAP.bridge=b;mapDraw()})}
 function mapInstallBridge(){
  if(MAP.busy||!mapAdminId())return;
  MAP.busy=true;MAP.msg='';mapDraw();
- api('/api/servers/'+mapAdminId()+'/bridge/install',{method:'POST'}).then(function(r){
+ mapPost('/api/servers/'+mapAdminId()+'/bridge/install').then(function(b){
   MAP.busy=false;
   /* "Installed" is not "working". Bukkit loads plugins at startup, so the jar
      does nothing until a restart — an operator watching a still-empty map
      would otherwise read that as a failed install. */
-  MAP.msg=r.ok?('Installed '+(r.body.version||'')+'. Restart the server to load it.')
-   :('Install failed: '+((r.body&&r.body.error)||r.status));
+  MAP.msg=(b&&b.ok)?('Installed '+(b.version||'')+'. Restart the server to load it.')
+   :('Install failed: '+((b&&b.error)||'request failed'));
   mapBridgeCheck();mapDraw()})}
 function mapEsc(t){var d=document.createElement('div');d.textContent=(t==null?'':t);return d.innerHTML}
 function mapToggleHeat(){MAP.heat=!MAP.heat;
@@ -138,23 +157,27 @@ function mapRefresh(){
  var sel=document.getElementById('mpDim');
  var dim=sel&&sel.value?sel.value:MAP.dim;
  var cell=document.getElementById('mpCell').value||'16';
- api(mapFeedUrl(dim,cell)).then(function(r){
-  if(!r.ok)return;MAP.data=r.body;MAP.dim=r.body.dimension;
+ mapGet(mapFeedUrl(dim,cell)).then(function(d){
+  /* null is "the request did not produce a map" — refused, offline, or a body
+     that is not one. Keeping the last good frame beats blanking the canvas on
+     one dropped poll. */
+  if(!d||typeof d.dimension!=='string')return;
+  MAP.data=d;MAP.dim=d.dimension;
   var dot=document.getElementById('mpDot'),state=document.getElementById('mpState');
-  dot.className='mp-dot'+(r.body.bridge?' on':'');
-  state.textContent=r.body.bridge?'Bridge live':'Bridge not connected';
+  dot.className='mp-dot'+(d.bridge?' on':'');
+  state.textContent=d.bridge?'Bridge live':'Bridge not connected';
   /* The dimension list comes from who is actually online, so it changes as
      people travel. Rebuilt only when it differs, or the select would reset
      mid-choice on every poll. */
-  var dims=(r.body.dimensions||[]);
-  if(dims.indexOf(r.body.dimension)<0)dims=dims.concat([r.body.dimension]);
-  var want=dims.map(function(d){return '<option value="'+mapEsc(d)+'"'+(d===r.body.dimension?' selected':'')+'>'+mapEsc(d)+'</option>'}).join('');
+  var dims=(d.dimensions||[]);
+  if(dims.indexOf(d.dimension)<0)dims=dims.concat([d.dimension]);
+  var want=dims.map(function(x){return '<option value="'+mapEsc(x)+'"'+(x===d.dimension?' selected':'')+'>'+mapEsc(x)+'</option>'}).join('');
   if(sel.innerHTML!==want)sel.innerHTML=want;
   /* Said plainly, where the map is. A visitor comparing a dot to their own F3
      screen and finding it 40 blocks out should know the map is rounding, not
      that it is broken. */
   var note=document.getElementById('mapRoundNote');
-  if(note)note.textContent=(r.body.round>0&&typeof T==='function')?T('map.rounded').replace('{n}',r.body.round):'';
+  if(note)note.textContent=(d.round>0&&typeof T==='function')?T('map.rounded').replace('{n}',d.round):'';
   mapDraw()})}
 /* ---- navigation (#104) ----
    The same maths as shared/livemap.ts, which cannot be imported into a page

@@ -730,6 +730,13 @@ ${MAP_JS}
 function mapServerId(){return current?current.id:''}
 function mapFeedUrl(dim,cell){
  return '/api/servers/'+mapServerId()+'/map?dim='+encodeURIComponent(dim)+'&cell='+encodeURIComponent(cell)}
+/* The map engine does not know how this page wraps a response, and must not:
+   the two pages disagree, and it used to assume this one (#115). */
+function mapGet(u){return api(u).then(function(r){return r.ok?r.body:null}).catch(function(){return null})}
+function mapPost(u){return api(u,{method:'POST'}).then(function(r){
+ /* A refusal still has a body worth showing — "no jar available" is the answer,
+    not a failure to get one. */
+ return r.body||null}).catch(function(){return null})}
 /* The avatar service, by uuid. Named here rather than hardcoded in the shared
    map so an operator running an air-gapped panel can point it elsewhere, and so
    the public site can refuse to draw heads at all (#104). */
