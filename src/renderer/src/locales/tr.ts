@@ -115,6 +115,18 @@ const tr: typeof en = {
     settings: 'Ayarlar',
     openFolder: 'Klasörü aç'
   },
+  map: {
+    title: 'Canlı harita',
+    live: 'Bridge bağlı',
+    noBridge: 'Bridge bağlı değil',
+    heatmap: 'Isı haritası',
+    cellChunk: 'Chunk (16)',
+    cellBlocks: '{{n}} blok',
+    shown: '{{n}} gösteriliyor',
+    emptyDimension: 'Şu anda bu boyutta kimse yok.',
+    needsBridge:
+      'Henüz canlı konum yok. MSMS-Bridge eklentisini sunucunun plugins klasörüne koyup yeniden başlat — konumlar sunucu konsolu üzerinden geliyor, ek bir port açılmıyor.'
+  },
   audit: {
     title: 'Denetim kaydı',
     modeLog: 'Kayıt',
@@ -388,6 +400,7 @@ const tr: typeof en = {
     xp: 'XP seviyesi',
     position: 'Konum',
     inventory: 'Envanter',
+    enderChest: 'Ender sandığı',
     inventorySoon: 'Canlı envanter görüntüleyici sonraki güncellemede gelecek.',
     noInventory: 'Kayıtlı envanter yok (oyuncu giriş yapmış ve dünya kaydedilmiş olmalı). Simgeler çevrimiçi kaynaktan yüklenir.',
     clickHint: 'Ayrıntılar ve işlemler için bir oyuncu kartına tıklayın.',

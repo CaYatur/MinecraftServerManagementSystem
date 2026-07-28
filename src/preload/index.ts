@@ -58,6 +58,7 @@ const api: MsmsApi = {
   writeRawProperties: (id, raw) => ipcRenderer.invoke(IPC.propsWriteRaw, id, raw),
 
   getPlayers: (id) => ipcRenderer.invoke(IPC.playersList, id),
+  getLivePlayers: (id) => ipcRenderer.invoke(IPC.playersLive, id),
   setOp: (id, player, on) => ipcRenderer.invoke(IPC.playerOp, id, player, on),
   setWhitelist: (id, player, on) => ipcRenderer.invoke(IPC.playerWhitelist, id, player, on),
   setBan: (id, player, on, reason) => ipcRenderer.invoke(IPC.playerBan, id, player, on, reason),

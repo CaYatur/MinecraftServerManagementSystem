@@ -306,6 +306,8 @@ export interface PlayerInfo {
   playtimeHours?: number
   ip?: string
   inventory?: InventoryItem[]
+  /** Ender chest contents, read from the same player .dat (#49). */
+  enderChest?: InventoryItem[]
 }
 
 export interface InventoryItem {

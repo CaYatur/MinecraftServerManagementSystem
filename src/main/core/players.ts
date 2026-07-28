@@ -6,7 +6,7 @@ import { readProperties } from './serverFiles'
 import { processManager } from './processManager'
 import * as rcon from './rcon'
 import { log } from '../logger'
-import type { PlayerInfo } from '@shared/types'
+import type { InventoryItem, PlayerInfo } from '@shared/types'
 
 function readJson<T>(file: string): T | null {
   try {
@@ -41,6 +41,22 @@ function tag(v: any): any {
   return v?.value
 }
 
+/**
+ * Item compounds to our shape. Handles both NBT spellings: pre-1.20.5 wrote
+ * `Slot`/`Count`, 1.20.5+ writes `slot`/`count`, and a world upgraded across
+ * that boundary can contain both.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function items(list: any[]): InventoryItem[] {
+  return list
+    .map((it) => ({
+      slot: tag(it.Slot) ?? tag(it.slot) ?? -1,
+      id: String(tag(it.id) ?? '').replace('minecraft:', ''),
+      count: tag(it.Count) ?? tag(it.count) ?? 1
+    }))
+    .filter((x) => x.id)
+}
+
 async function readPlayerData(file: string, p: PlayerInfo): Promise<void> {
   try {
     const { parsed } = await nbt.parse(readFileSync(file))
@@ -62,15 +78,12 @@ async function readPlayerData(file: string, p: PlayerInfo): Promise<void> {
     // 1.20.5+ (count) shapes.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const inv = v?.Inventory?.value?.value as any[]
-    if (Array.isArray(inv)) {
-      p.inventory = inv
-        .map((it) => ({
-          slot: tag(it.Slot) ?? tag(it.slot) ?? -1,
-          id: String(tag(it.id) ?? '').replace('minecraft:', ''),
-          count: tag(it.Count) ?? tag(it.count) ?? 1
-        }))
-        .filter((x) => x.id)
-    }
+    if (Array.isArray(inv)) p.inventory = items(inv)
+    // The ender chest lives in the same file under its own tag, and is the
+    // half of a player's belongings the desktop viewer never showed (#49).
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const ender = v?.EnderItems?.value?.value as any[]
+    if (Array.isArray(ender)) p.enderChest = items(ender)
     p.lastSeen = statSync(file).mtimeMs
   } catch {
     /* ignore unreadable */

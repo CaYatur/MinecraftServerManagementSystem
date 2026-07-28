@@ -32,6 +32,8 @@ import * as economy from '../store/economy'
 import * as site from '../web/site'
 import * as roles from '../web/roles'
 import * as apikeys from '../web/apikeys'
+import { bridgeFresh, bridgePlayers } from '@shared/bridge'
+import { livePlayers } from '@shared/livemap'
 import { log } from '../logger'
 import { SCOPES } from '@shared/web'
 import type {
@@ -244,6 +246,14 @@ export function registerIpc(): void {
 
   // --- players + world controls ---
   H(IPC.playersList, (_e, id: string) => players.getPlayers(id))
+  H(IPC.playersLive, (_e, id: string) => {
+    const rt = processManager.getRuntime(id)
+    const now = Date.now()
+    return {
+      bridge: rt ? bridgeFresh(rt.bridge, now) : false,
+      players: rt ? livePlayers(bridgePlayers(rt.bridge, now)) : []
+    }
+  })
   H(IPC.playerOp, (_e, id: string, p: PlayerInfo, on: boolean) => players.setOp(id, p, on))
   H(IPC.playerWhitelist, (_e, id: string, p: PlayerInfo, on: boolean) =>
     players.setWhitelist(id, p, on)

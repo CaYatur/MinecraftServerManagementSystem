@@ -60,6 +60,12 @@ import {
   isValidWorldName,
   sanitizeCommandArg
 } from '@shared/ops'
+import {
+  heatmap,
+  livePlayers,
+  mapBounds,
+  normalizeDimension
+} from '@shared/livemap'
 import { listJavaInstalls, _resetJavaCache } from './core/javaScan'
 import { checkJava, javaRequirement } from '@shared/javaCompat'
 import {
@@ -861,7 +867,9 @@ export async function runBridgeSmoke(): Promise<void> {
       intervalMs: BRIDGE_DEFAULT_INTERVAL_MS,
       lastTs: now - 1000,
       tps: 19.5,
-      mspt: 4.0
+      mspt: 4.0,
+      players: [],
+      playersTs: 0
     }
     const r1 = reconcileTps(fresh, 20, null, now)
     if (!r1.bridge || r1.tps !== 19.5 || r1.mspt !== 4.0) {
@@ -3258,6 +3266,11 @@ interface StubNode {
   addEventListener(): void
   focus(): void
   setSelectionRange(): void
+  width: number
+  height: number
+  getBoundingClientRect(): { width: number; height: number; top: number; left: number }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  getContext(): any
 }
 
 interface PageRun {
@@ -3298,7 +3311,30 @@ function runPageScript(html: string, seed: Record<string, unknown> = {}): PageRu
       appendChild: () => {},
       addEventListener: () => {},
       focus: () => {},
-      setSelectionRange: () => {}
+      setSelectionRange: () => {},
+      // Enough of a canvas for the map to run its drawing pass. Nothing is
+      // rasterised — what is being asserted is the wiring and the text around
+      // it, not the pixels.
+      width: 0,
+      height: 0,
+      getBoundingClientRect: () => ({ width: 640, height: 400, top: 0, left: 0 }),
+      getContext: () => ({
+        clearRect: () => {},
+        beginPath: () => {},
+        moveTo: () => {},
+        lineTo: () => {},
+        stroke: () => {},
+        arc: () => {},
+        fill: () => {},
+        fillRect: () => {},
+        fillText: () => {},
+        set font(_v: string) {},
+        set fillStyle(_v: string) {},
+        set strokeStyle(_v: string) {},
+        set lineWidth(_v: number) {},
+        set textAlign(_v: string) {},
+        set textBaseline(_v: string) {}
+      })
     }
     return n
   }
@@ -4730,7 +4766,135 @@ export async function runWebSmoke(): Promise<void> {
         if (!detail.includes('5%')) return fail('the detail view did not list the crate odds')
         if (detail.includes('onerror="alert(1)"')) return fail('the detail view escaped nothing')
       }
-      console.log('WEB-SMOKE: panel + site scripts parse; crate picker, storefront sections, search, detail and escaping OK')
+      // #26: the map tab draws from a feed, on a canvas the stub cannot paint —
+      // so this asserts the wiring and the empty-state copy, which is what a
+      // reader with no bridge installed actually sees.
+      {
+        const ctx = panel.ctx as Record<string, (...a: unknown[]) => unknown>
+        ;(panel.ctx as { MAP: { data: unknown } }).MAP.data = {
+          bridge: false,
+          dimension: 'overworld',
+          dimensions: ['overworld'],
+          players: [],
+          bounds: { minX: -64, maxX: 64, minZ: -64, maxZ: 64 },
+          heatmap: [],
+          cell: 16,
+          at: Date.now()
+        }
+        ctx['mapDraw']()
+        const empty = panel.byId('mpEmpty').textContent
+        if (!/MSMS-Bridge/.test(empty)) {
+          return fail('the map does not tell a reader why it is empty: ' + JSON.stringify(empty))
+        }
+        // ...and with players it stops claiming the plugin is missing.
+        ;(panel.ctx as { MAP: { data: { bridge: boolean; players: unknown[] } } }).MAP.data.bridge = true
+        ;(panel.ctx as { MAP: { data: { players: unknown[] } } }).MAP.data.players = [
+          { name: 'Alex', dim: 'overworld', x: 10, y: 64, z: 10 }
+        ]
+        ctx['mapDraw']()
+        if (panel.byId('mpEmpty').textContent !== '') return fail('the map showed an empty state with a player on it')
+        if (!panel.byId('mpList').innerHTML.includes('Alex')) return fail('the map did not list a live player')
+        if (!panel.byId('mpCount').innerHTML.includes('1')) return fail('the map did not count its players')
+      }
+      console.log('WEB-SMOKE: panel + site scripts parse; crate picker, storefront, map tab, detail and escaping OK')
+    }
+
+    // ---- player detail + live map (#49, #26) ----
+    {
+      // Pure map math first.
+      if (normalizeDimension('minecraft:the_nether') !== 'nether') return fail('dimension not normalised')
+      if (normalizeDimension('NORMAL') !== 'overworld') return fail('NORMAL is the overworld')
+      if (normalizeDimension('') !== 'overworld') return fail('a missing dimension is not the overworld')
+      // An unknown (modded) dimension is kept, not dropped: hiding those players
+      // loses them from the one screen you would look for them on.
+      if (normalizeDimension('twilightforest:twilight') !== 'twilightforest:twilight') {
+        return fail('a modded dimension was rewritten')
+      }
+
+      // A position the plugin could not read must not plot at the origin.
+      const feed = [
+        { name: 'Alex', x: 100, y: 64, z: -40, dim: 'normal' },
+        { name: 'Steve', x: 108, y: 70, z: -36, dim: 'NORMAL' },
+        { name: 'Ghost', dim: 'normal' },
+        { name: '', x: 1, y: 1, z: 1 },
+        { name: 'Nether', x: 12, y: 40, z: 12, dim: 'the_nether' }
+      ]
+      const live = livePlayers(feed)
+      if (live.length !== 3) return fail('livePlayers kept ' + live.length + ', expected 3')
+      if (live.some((p) => p.name === 'Ghost')) return fail('a player with no position was plotted')
+      if (live.some((p) => !p.name)) return fail('a nameless entry was plotted')
+
+      // Bounds never collapse to a point, or every scale derived from them
+      // divides by zero and one player renders infinitely magnified.
+      const one = mapBounds([{ name: 'A', dim: 'overworld', x: 0, y: 0, z: 0 }])
+      if (one.maxX - one.minX < 64) return fail('bounds collapsed for a single player')
+      if (Math.abs((one.maxX + one.minX) / 2) > 0.001) return fail('bounds did not grow around the centre')
+      const none = mapBounds([])
+      if (!(none.maxX > none.minX && none.maxZ > none.minZ)) return fail('empty bounds are degenerate')
+
+      // Heatmap buckets by chunk, busiest first, and emits nothing for empty cells.
+      const heat = heatmap(
+        [
+          { x: 0, z: 0 },
+          { x: 5, z: 5 },
+          { x: 15, z: 15 },
+          { x: 100, z: 0 }
+        ],
+        16
+      )
+      if (heat.length !== 2) return fail('heatmap produced ' + heat.length + ' cells, expected 2')
+      if (heat[0].count !== 3) return fail('heatmap did not put the busiest cell first')
+      if (heatmap([{ x: 1, z: 1 }], 0).length !== 0) return fail('a zero cell size should produce nothing')
+      // Negative coordinates must floor toward -inf, or the cell left of spawn
+      // and the cell right of it merge into one.
+      const neg = heatmap([{ x: -1, z: -1 }, { x: 1, z: 1 }], 16)
+      if (neg.length !== 2) return fail('negative coordinates shared a cell with positive ones')
+
+      // ---- the endpoints ----
+      // The map feed is view-gated and honest about the bridge being absent.
+      r = await get('/api/servers/' + id + '/map', ft)
+      if (r.status !== 200) return fail('map feed expected 200 for a view user, got ' + r.status)
+      const mapBody = (await r.json()) as {
+        bridge: boolean
+        players: unknown[]
+        bounds: { minX: number; maxX: number }
+        dimension: string
+      }
+      if (mapBody.bridge !== false) return fail('the map claimed a live bridge with no plugin running')
+      if (mapBody.players.length !== 0) return fail('the map invented players')
+      if (!(mapBody.bounds.maxX > mapBody.bounds.minX)) return fail('the map served degenerate bounds')
+      if (mapBody.dimension !== 'overworld') return fail('the map defaulted to the wrong dimension')
+
+      // Detail is gated harder than the roster: it is one person's inventory,
+      // ender chest and coordinates, not "who plays here".
+      r = await get('/api/servers/' + id + '/players/Rosterd', ft)
+      if (r.status !== 403) return fail('player detail without players scope expected 403, got ' + r.status)
+      r = await get('/api/servers/' + id + '/players/no', ot)
+      if (r.status !== 400) return fail('an invalid name expected 400, got ' + r.status)
+      r = await get('/api/servers/' + id + '/players/NoSuchPlayer', ot)
+      if (r.status !== 404) return fail('an unknown player expected 404, got ' + r.status)
+
+      // Seed a roster entry the way the server itself would, then read it back.
+      {
+        const srv = getConfig().servers.find((s) => s.id === id)
+        const cache = join(srv?.path ?? '', 'usercache.json')
+        writeFileSync(cache, JSON.stringify([{ uuid: 'cccc-dddd', name: 'Detailed' }]), 'utf-8')
+        r = await get('/api/servers/' + id + '/players/detailed', ot)
+        if (r.status !== 200) return fail('player detail expected 200, got ' + r.status + ' ' + (await r.text()))
+        const body = (await r.json()) as {
+          player: { name: string }
+          live: unknown
+          liveSource: string | null
+        }
+        if (body.player.name !== 'Detailed') return fail('detail returned the wrong player')
+        // No bridge running, so the live half must say so rather than quietly
+        // presenting the last saved position as a current one.
+        if (body.live !== null || body.liveSource !== null) {
+          return fail('detail reported a live position with no bridge: ' + JSON.stringify(body.live))
+        }
+        rmSync(cache, { force: true })
+      }
+      console.log('WEB-SMOKE: player detail + live map OK (scope split, no-bridge honest, map math)')
     }
 
     // ---- operations API: moderation / worlds / backups (#53) ----

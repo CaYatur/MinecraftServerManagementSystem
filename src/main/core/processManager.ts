@@ -246,10 +246,14 @@ export class ProcessManager extends EventEmitter {
         break
       case 'players':
         b.lastTs = now
-        // The plugin's own count is authoritative; positions are folded in a
-        // later slice (a per-world store), so they are accepted but not stored.
+        // The plugin's own count is authoritative.
         mp.players.online = msg.online
         if (msg.list.length) mp.players.names = msg.list.map((p) => p.name)
+        // Positions are stored now (#26, #49). Replaced wholesale rather than
+        // merged: a player missing from this heartbeat has logged out or
+        // changed world, and merging would keep them on the map forever.
+        b.players = msg.list
+        b.playersTs = now
         break
       case 'event':
         // World/event ingestion (save spikes, chunk load storms) lands in a
@@ -260,6 +264,10 @@ export class ProcessManager extends EventEmitter {
         b.connected = false
         b.tps = null
         b.mspt = null
+        // The feed is gone, so the positions are too. Leaving them would show
+        // a map full of players who are no longer being reported.
+        b.players = []
+        b.playersTs = 0
         this.systemLine(mp, `[MSMS] Bridge disconnected`)
         break
     }
