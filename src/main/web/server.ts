@@ -16,6 +16,7 @@ import * as playersMod from '../core/players'
 import * as worldsMod from '../core/worlds'
 import * as backupsMod from '../core/backups'
 import * as mods from '../core/mods'
+import * as bridgeInstall from '../core/bridgeInstall'
 import { listJavaInstalls } from '../core/javaScan'
 import { installJava } from '../core/javaProvision'
 import {
@@ -1155,6 +1156,39 @@ async function handlePanel(req: IncomingMessage, res: ServerResponse): Promise<v
       }
     }
 
+    return sendJson(res, 404, { error: 'not-found' })
+  }
+
+  // ---- the Bridge plugin (#103) ----
+  //
+  // `files` for the same reason as the mods routes: installing it writes a jar
+  // into the server directory, which `files` already permits outright. Status is
+  // gated too rather than left on `view` — it names the installed version and
+  // whether a release check reached GitHub, which is inventory, not a dashboard
+  // number.
+  const bm = path.match(/^\/api\/servers\/([^/]+)\/bridge(?:\/(install))?$/)
+  if (bm) {
+    const id = decodeURIComponent(bm[1])
+    if (!getServer(id)) return sendJson(res, 404, { error: 'server-not-found' })
+    if (!can(user, id, 'files')) return sendJson(res, 403, { error: 'forbidden', need: 'files' })
+    try {
+      if (!bm[2] && method === 'GET') {
+        return sendJson(res, 200, await bridgeInstall.bridgeStatus(id))
+      }
+      if (bm[2] === 'install' && method === 'POST') {
+        // No body is read. The caller asks for "the bridge on this server" and
+        // the app resolves what that means — a version or a URL crossing this
+        // boundary would turn a `files` request into "write a file of my
+        // choosing into your server folder".
+        const out = await bridgeInstall.installBridge(id, {
+          by: user.username,
+          source: user.apiKey ? 'api' : 'webpanel'
+        })
+        return sendJson(res, out.ok ? 200 : 409, out)
+      }
+    } catch (e) {
+      return sendJson(res, 500, { error: String(e) })
+    }
     return sendJson(res, 404, { error: 'not-found' })
   }
 

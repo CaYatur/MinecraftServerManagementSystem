@@ -77,6 +77,15 @@ import * as playersMod from './core/players'
 import * as backupsMod from './core/backups'
 import * as schedulerMod from './core/scheduler'
 import * as modsMod from './core/mods'
+import * as bridgeInstallMod from './core/bridgeInstall'
+import {
+  bridgeNeed,
+  bridgeVersionOf,
+  compareBridgeVersions,
+  pickBridgeAsset,
+  sha256Of
+} from '@shared/bridgeRelease'
+import type { GhRelease } from '@shared/bridgeRelease'
 import * as rcon from './core/rcon'
 import * as metrics from './core/metrics'
 import * as eventsMod from './core/events'
@@ -128,7 +137,7 @@ import { filterAudit, type AuditEntry } from '@shared/audit'
 import { aggregateJoins, type JoinRecord } from '@shared/joins'
 import * as auditMod from './core/audit'
 import type { UptimeReport } from '@shared/uptime'
-import type { JavaArgsConfig, MetricSeries, ServerConfig, ServerEvent } from '@shared/types'
+import type { JavaArgsConfig, MetricSeries, ServerConfig, ServerEvent, ServerType } from '@shared/types'
 import { alertsPath, uploadsDir, auditDir, dataDir } from './paths'
 import { analyzeCrash } from './core/crash'
 import { CREATABLE_TYPES, createErrorKey } from '@shared/versions'
@@ -926,6 +935,134 @@ export async function runModUpdateSmoke(): Promise<void> {
       return fail('planModSwap did not sanitise the new filename')
     }
     console.log('MODUPDATE-SMOKE: update swap OK (case-collision safe, disabled stays disabled, traversal stripped)')
+
+    // ---- the Bridge plugin installer (#103) ----
+    {
+      const rel = (
+        assets: { name: string; url?: string; digest?: string }[],
+        extra: Partial<GhRelease> = {}
+      ): GhRelease => ({
+        tag_name: 'v9',
+        published_at: '2026-01-01T00:00:00Z',
+        assets: assets.map((a) => ({
+          name: a.name,
+          browser_download_url:
+            a.url ?? 'https://github.com/CaYatur/MinecraftServerManagementSystem/releases/download/v9/' + a.name,
+          ...(a.digest ? { digest: a.digest } : {})
+        })),
+        ...extra
+      })
+
+      // The asset picker takes the newest MATCHING jar, and nothing else on the
+      // release. A release carries whatever its author uploaded — installers,
+      // checksums, a screenshot — and "contains MSMS-Bridge" is not a filter.
+      const picked = pickBridgeAsset([
+        rel([{ name: 'CaYaDev Server Manager-0.1.0-portable.exe' }, { name: 'MSMS-Bridge-1.0.0.jar' }]),
+        rel([{ name: 'MSMS-Bridge-1.2.0.jar' }]),
+        rel([{ name: 'MSMS-Bridge-1.1.0.jar' }])
+      ])
+      if (picked?.version !== '1.2.0') return fail('the newest bridge jar was not picked: ' + picked?.version)
+      if (picked.name !== 'MSMS-Bridge-1.2.0.jar') return fail('picked the wrong asset name')
+
+      // Ordered by the jar's own version, not by publication date: that is the
+      // number the update check compares against what is installed, and sorting
+      // by one while comparing the other lets a re-published older jar read as
+      // an upgrade.
+      const republished = pickBridgeAsset([
+        rel([{ name: 'MSMS-Bridge-1.0.0.jar' }], { published_at: '2026-06-01T00:00:00Z' }),
+        rel([{ name: 'MSMS-Bridge-2.0.0.jar' }], { published_at: '2025-01-01T00:00:00Z' })
+      ])
+      if (republished?.version !== '2.0.0') return fail('a re-published older jar outranked a newer one')
+
+      for (const bad of [
+        'MSMS-Bridge.jar',
+        'MSMS-Bridge-1.0.0.jar.txt',
+        'my-MSMS-Bridge-1.0.0.jar',
+        'MSMS-Bridge-1.0.0.zip',
+        'MSMS-Bridge-notes.jar'
+      ]) {
+        if (pickBridgeAsset([rel([{ name: bad }])])) return fail('accepted a non-bridge asset: ' + bad)
+      }
+      // A matching NAME on a URL somewhere else is the interesting one: the name
+      // is what the picker matches, and the URL is what gets downloaded.
+      if (pickBridgeAsset([rel([{ name: 'MSMS-Bridge-1.0.0.jar', url: 'https://evil.example/x.jar' }])])) {
+        return fail('accepted a bridge asset hosted off GitHub')
+      }
+      if (pickBridgeAsset([rel([{ name: 'MSMS-Bridge-1.0.0.jar', url: 'http://github.com/x.jar' }])])) {
+        return fail('accepted a bridge asset over plain http')
+      }
+      // Drafts and pre-releases: clicking "install" on a warning is not opting
+      // into a test build.
+      if (pickBridgeAsset([rel([{ name: 'MSMS-Bridge-3.0.0.jar' }], { prerelease: true })])) {
+        return fail('a pre-release was offered as the newest bridge')
+      }
+      if (pickBridgeAsset([rel([{ name: 'MSMS-Bridge-3.0.0.jar' }], { draft: true })])) {
+        return fail('a draft release was offered as the newest bridge')
+      }
+      if (pickBridgeAsset([])) return fail('an empty release list produced an asset')
+
+      // Only a sha256 digest is accepted. GitHub publishes `sha256:<hex>`; a
+      // sha1 or a truncated hex would otherwise be handed to the downloader as
+      // if it were one, and the download would fail with a checksum error that
+      // blames the file.
+      const good = 'a'.repeat(64)
+      if (sha256Of('sha256:' + good) !== good) return fail('a valid sha256 digest was rejected')
+      for (const bad of ['sha1:' + 'a'.repeat(40), good, 'sha256:' + 'a'.repeat(63), '', null]) {
+        if (sha256Of(bad)) return fail('accepted a bad digest: ' + String(bad))
+      }
+      const digested = pickBridgeAsset([
+        rel([{ name: 'MSMS-Bridge-1.0.0.jar', digest: 'sha256:' + good }])
+      ])
+      if (digested?.sha256 !== good) return fail('the published digest did not reach the asset')
+
+      // The version comparison is numeric, unlike the Modrinth one — this string
+      // comes out of a filename this project publishes in a format it defines,
+      // so reading it is not the guess that sorting someone else's is.
+      if (compareBridgeVersions('1.10.0', '1.9.0') <= 0) return fail('1.10.0 must beat 1.9.0')
+      if (compareBridgeVersions('1.0', '1.0.0') !== 0) return fail('1.0 and 1.0.0 are the same version')
+      if (compareBridgeVersions('2.0.0', '10.0.0') >= 0) return fail('10.0.0 must beat 2.0.0')
+
+      // The decision an operator sees.
+      const need = (type: ServerType, installed: string | null, latest: string | null): string =>
+        bridgeNeed({ type, installed, latest }).state
+      if (need('paper', null, '1.0.0') !== 'missing') return fail('paper with no jar should be "missing"')
+      if (need('paper', '1.0.0', '1.0.0') !== 'ok') return fail('paper with the current jar should be "ok"')
+      if (need('paper', '1.0.0', '1.1.0') !== 'outdated') return fail('an older jar should be "outdated"')
+      if (need('paper', '2.0.0', '1.0.0') !== 'ok') return fail('a newer jar than published is not outdated')
+      // Nothing to offer is not a warning: a button that does nothing is worse
+      // than silence.
+      if (bridgeNeed({ type: 'paper', installed: null, latest: null }).actionable) {
+        return fail('offered an install with no jar available anywhere')
+      }
+      if (need('paper', '1.0.0', null) !== 'ok') return fail('an installed jar with no known latest is fine')
+      for (const t of ['vanilla', 'fabric', 'forge', 'velocity', 'bukkit'] as ServerType[]) {
+        if (need(t, null, '1.0.0') !== 'unsupported') return fail(t + ' should not be told to install the bridge')
+      }
+      for (const t of ['paper', 'purpur', 'folia', 'spigot'] as ServerType[]) {
+        if (need(t, null, '1.0.0') !== 'missing') return fail(t + ' should be offered the bridge')
+      }
+
+      // The jar that ships with the app, which is the whole offline story. An
+      // absent one would make every assertion above true and the feature
+      // useless on the box a server manager actually runs on.
+      const bundled = bridgeInstallMod.bundledBridge()
+      if (!bundled) return fail('no bridge jar ships with the app')
+      if (!bridgeVersionOf(bundled.name)) return fail('the bundled jar is not named like one: ' + bundled.name)
+      // ...and it is the jar the sources describe. A committed build output can
+      // drift from the code it was built from, and nothing else would notice.
+      const declared = /^version:\s*(.+)$/m.exec(
+        readFileSync(join(process.cwd(), 'bridge', 'src', 'main', 'resources', 'plugin.yml'), 'utf-8')
+      )?.[1]?.trim()
+      if (declared !== bundled.version) {
+        return fail('the bundled jar is ' + bundled.version + ' but plugin.yml declares ' + declared)
+      }
+      if (!bridgeInstallMod.bundledBridgeSha256()) return fail('the bundled jar could not be hashed')
+
+      console.log(
+        'MODUPDATE-SMOKE: bridge installer OK (asset picked by version, off-GitHub/http/draft/prerelease refused, ' +
+          'digest sha256-only, need table, bundled ' + bundled.version + ' matches plugin.yml)'
+      )
+    }
 
     console.log('MODUPDATE-SMOKE: PASS')
     app.exit(0)
@@ -5164,18 +5301,40 @@ export async function runWebSmoke(): Promise<void> {
           cell: 16,
           at: Date.now()
         }
+        const mapState = panel.ctx as {
+          MAP: { data: { bridge: boolean; players: unknown[] }; bridge: unknown; msg: string }
+        }
         ctx['mapDraw']()
-        const empty = panel.byId('mpEmpty').textContent
+        const empty = panel.byId('mpEmpty').innerHTML
         if (!/MSMS-Bridge/.test(empty)) {
           return fail('the map does not tell a reader why it is empty: ' + JSON.stringify(empty))
         }
-        // ...and with players it stops claiming the plugin is missing.
-        ;(panel.ctx as { MAP: { data: { bridge: boolean; players: unknown[] } } }).MAP.data.bridge = true
-        ;(panel.ctx as { MAP: { data: { players: unknown[] } } }).MAP.data.players = [
-          { name: 'Alex', dim: 'overworld', x: 10, y: 64, z: 10 }
-        ]
+        // #103: the empty state offers to fix it. The warning lives here rather
+        // than in a global banner because this is where the operator finds out
+        // positions are missing.
+        if (/mapInstallBridge/.test(empty)) {
+          return fail('the map offered an install before the status was known')
+        }
+        mapState.MAP.bridge = { state: 'missing', latest: '1.0.0', actionable: true, source: 'bundled' }
         ctx['mapDraw']()
-        if (panel.byId('mpEmpty').textContent !== '') return fail('the map showed an empty state with a player on it')
+        const offered = panel.byId('mpEmpty').innerHTML
+        if (!/mapInstallBridge/.test(offered)) return fail('a paper server with no bridge was offered nothing')
+        if (!/1\.0\.0/.test(offered)) return fail('the install offer does not say which version')
+        // A server type that cannot run it is told so, and offered nothing.
+        mapState.MAP.bridge = { state: 'unsupported', actionable: false, source: null }
+        ctx['mapDraw']()
+        const unsupported = panel.byId('mpEmpty').innerHTML
+        if (/mapInstallBridge/.test(unsupported)) {
+          return fail('a server type that cannot run the bridge was offered it anyway')
+        }
+        if (!/cannot run/.test(unsupported)) return fail('an unsupported server was told nothing')
+        mapState.MAP.bridge = null
+
+        // ...and with players it stops claiming the plugin is missing.
+        mapState.MAP.data.bridge = true
+        mapState.MAP.data.players = [{ name: 'Alex', dim: 'overworld', x: 10, y: 64, z: 10 }]
+        ctx['mapDraw']()
+        if (panel.byId('mpEmpty').innerHTML !== '') return fail('the map showed an empty state with a player on it')
         if (!panel.byId('mpList').innerHTML.includes('Alex')) return fail('the map did not list a live player')
         if (!panel.byId('mpCount').innerHTML.includes('1')) return fail('the map did not count its players')
       }
@@ -5391,6 +5550,44 @@ export async function runWebSmoke(): Promise<void> {
         const modList = (await r.json()) as { mods: { path: string; enabled: boolean }[] }
         if (!modList.mods.some((mo) => mo.path === jarRel)) {
           return fail('the seeded jar is missing from the mod list')
+        }
+
+        // ---- the bridge plugin (#103) ----
+        {
+          const bBase = '/api/servers/' + id + '/bridge'
+          r = await get(bBase, ft)
+          if (r.status !== 403) return fail('bridge status without files scope expected 403, got ' + r.status)
+          r = await post(bBase + '/install', {}, ft)
+          if (r.status !== 403) return fail('bridge install without files scope expected 403, got ' + r.status)
+          r = await kget(bBase, modKey.secret)
+          if (r.status !== 200) return fail('bridge status expected 200, got ' + r.status)
+          const st = (await r.json()) as { state: string; source: string | null }
+          // The fixture is a plain server folder with no recognised jar, so the
+          // honest answer is that its type cannot run the plugin.
+          if (!['unsupported', 'missing', 'ok', 'outdated'].includes(st.state)) {
+            return fail('bridge status returned an unknown state: ' + st.state)
+          }
+          // The install route reads NO body. A version or a URL crossing this
+          // boundary would turn a `files` request into "write a file of my
+          // choosing into your server folder", so a caller supplying either
+          // must not be able to change the outcome.
+          const withJunk = await kpost(
+            bBase + '/install',
+            { url: 'https://evil.example/x.jar', version: '9.9.9', name: '../../evil.jar' },
+            modKey.secret
+          )
+          const plain = await kpost(bBase + '/install', {}, modKey.secret)
+          if (withJunk.status !== plain.status) {
+            return fail(
+              'the bridge install answered differently when the caller named a url/version: ' +
+                withJunk.status + ' vs ' + plain.status
+            )
+          }
+          if (existsSync(join(fixture.path, 'plugins', 'evil.jar'))) {
+            return fail('a caller-supplied name reached the filesystem')
+          }
+          r = await kget(bBase + '/nonsense', modKey.secret)
+          if (r.status !== 404) return fail('an unknown bridge sub-route expected 404, got ' + r.status)
         }
 
         // Missing parameters are refused before anything reaches Modrinth, so

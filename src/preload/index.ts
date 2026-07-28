@@ -78,6 +78,9 @@ const api: MsmsApi = {
   checkModUpdates: (id) => ipcRenderer.invoke(IPC.modCheckUpdates, id),
   applyModUpdate: (id, path, versionId) => ipcRenderer.invoke(IPC.modApplyUpdate, id, path, versionId),
 
+  bridgeStatus: (id) => ipcRenderer.invoke(IPC.bridgeStatus, id),
+  installBridge: (id) => ipcRenderer.invoke(IPC.bridgeInstall, id),
+
   listJava: (refresh) => ipcRenderer.invoke(IPC.javaList, refresh),
   resolveJava: (override) => ipcRenderer.invoke(IPC.javaResolve, override),
   installJava: (major) => ipcRenderer.invoke(IPC.javaInstall, major),

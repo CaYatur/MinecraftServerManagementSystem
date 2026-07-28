@@ -2653,6 +2653,94 @@
         }
       }
     },
+    "/api/v1/servers/{id}/bridge": {
+      "get": {
+        "operationId": "getServersIdBridge",
+        "summary": "Whether this server needs the MSMS Bridge plugin, and where one would come from.",
+        "description": "Scope `files` on the server.\n\nAnswers `state: unsupported` for a server type that cannot run it, and `offline: true` when the GitHub release check failed — the bundled jar still installs.",
+        "tags": [
+          "mods"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Server id, as returned by GET /servers.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{id}/bridge/install": {
+      "post": {
+        "operationId": "postServersIdBridgeInstall",
+        "summary": "Install the newest Bridge plugin jar, replacing any older one.",
+        "description": "Scope `files` on the server.\n\nTakes no body. The version and the download URL are resolved by the app from this project's own GitHub releases, falling back to the jar shipped with it; a caller naming either would turn a `files` request into an arbitrary write.",
+        "tags": [
+          "mods"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Server id, as returned by GET /servers.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      }
+    },
     "/api/v1/servers/{id}/store/admin": {
       "get": {
         "operationId": "getServersIdStoreAdmin",
