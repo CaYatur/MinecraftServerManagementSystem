@@ -3605,6 +3605,75 @@ export async function runWebSmoke(): Promise<void> {
     r = await post(balUrl, { mcName: 'Tester', amount: 50, mode: 'set', reason: 'test set' }, ot)
     if (r.status !== 200) return fail('set expected 200, got ' + r.status)
 
+    // ---- balance administration is in the audit trail (#68) ----
+    // A player spending currency was audited as `purchase`; an admin creating
+    // currency out of nothing was not, which left the higher-privilege action
+    // of the two out of the global trail.
+    {
+      const af = join(auditDir(), 'audit.jsonl')
+      const snap = existsSync(af) ? readFileSync(af, 'utf-8') : null
+      try {
+        rmSync(af, { force: true })
+        auditMod._reset()
+
+        // web panel: grant, remove, set — all three, all attributed
+        await post(balUrl, { mcName: 'Auditee', amount: 500, reason: 'event' }, ot)
+        await post(balUrl, { mcName: 'Auditee', amount: -200 }, ot)
+        await post(balUrl, { mcName: 'Auditee', amount: 42, mode: 'set' }, ot)
+        // ...and a refusal, which is itself interesting
+        const badName = await post(balUrl, { mcName: 'no', amount: 1 }, ot)
+        if (badName.status !== 400) return fail('an invalid mc name expected 400, got ' + badName.status)
+
+        const entries = auditMod.query({ actions: ['balance.grant', 'balance.remove', 'balance.set'] }).entries
+        const kinds = new Set(entries.map((e) => e.action))
+        for (const k of ['balance.grant', 'balance.remove', 'balance.set']) {
+          if (!kinds.has(k)) return fail('no audit entry for ' + k)
+        }
+        if (!entries.every((e) => e.actor === 'owner_t')) {
+          return fail('a balance audit entry lost its actor: ' + entries.map((e) => e.actor).join(','))
+        }
+        if (!entries.every((e) => e.serverId === id)) return fail('a balance audit entry lost its server')
+        if (!entries.some((e) => e.ok === false && e.detail === 'invalid-mcname')) {
+          return fail('a refused balance change was not audited')
+        }
+        if (!entries.some((e) => e.source === 'webpanel')) return fail('web balance change not sourced webpanel')
+
+        // The recorded delta must be what was APPLIED, not what was asked for:
+        // addBalance clamps at zero, so removing more than the balance holds
+        // removes only what is there.
+        economy.setBalance(id, 'Auditee', 300, 'desktop')
+        auditMod._reset()
+        rmSync(af, { force: true })
+        economy.addBalance(id, 'Auditee', -500, 'desktop')
+        const clamped = auditMod.query({ actions: ['balance.remove'] }).entries[0]
+        if (!clamped) return fail('a clamped removal was not audited')
+        if (!clamped.detail?.startsWith('-300 -> 0')) {
+          return fail('audit recorded the requested amount, not the applied one: ' + clamped.detail)
+        }
+        if (clamped.source !== 'panel') return fail('a desktop balance change was not sourced panel')
+
+        // An API key doing it is distinguishable from a human session.
+        const k = apikeys.createKey({ label: 'smoke_bal', scopes: ['store'], servers: [id] })
+        auditMod._reset()
+        rmSync(af, { force: true })
+        const viaKey = await fetch(base + balUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-API-Key': k.secret },
+          body: JSON.stringify({ mcName: 'Auditee', amount: 7 })
+        })
+        if (viaKey.status !== 200) return fail('key balance grant expected 200, got ' + viaKey.status)
+        const keyEntries = auditMod.query({ actions: ['balance.grant'] }).entries
+        if (!keyEntries.some((e) => e.source === 'api' && e.actor.startsWith('key:'))) {
+          return fail('a key-driven balance change was not attributed to the key')
+        }
+        apikeys.deleteKey(k.key.id)
+        console.log('WEB-SMOKE: balance administration audited (grant/remove/set, refusals, applied delta, per source)')
+      } finally {
+        if (snap == null) rmSync(af, { force: true })
+        else writeFileSync(af, snap, 'utf-8')
+      }
+    }
+
     r = await get('/api/servers/' + id + '/store/admin/ledger', ot)
     const led = ((await r.json()) as { ledger: { by: string; kind: string }[] }).ledger
     for (const kind of ['grant', 'remove', 'set', 'purchase']) {

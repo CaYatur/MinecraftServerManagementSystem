@@ -779,8 +779,26 @@ async function handlePanel(req: IncomingMessage, res: ServerResponse): Promise<v
       try {
         const balance =
           b.mode === 'set'
-            ? economy.setBalance(id, b.mcName ?? '', Number(b.amount) || 0, user.username, b.reason ?? '', b.category)
-            : economy.addBalance(id, b.mcName ?? '', Number(b.amount) || 0, user.username, b.reason ?? '', b.category)
+            ? economy.setBalance(
+                id,
+                b.mcName ?? '',
+                Number(b.amount) || 0,
+                user.username,
+                b.reason ?? '',
+                b.category,
+                // An API key acting here is not a web-panel session, and "which
+                // integration created a million coins" is the question later.
+                user.apiKey ? 'api' : 'webpanel'
+              )
+            : economy.addBalance(
+                id,
+                b.mcName ?? '',
+                Number(b.amount) || 0,
+                user.username,
+                b.reason ?? '',
+                b.category,
+                user.apiKey ? 'api' : 'webpanel'
+              )
         return sendJson(res, 200, { ok: true, balance })
       } catch (e) {
         return sendJson(res, 400, { error: String((e as Error)?.message ?? e) })

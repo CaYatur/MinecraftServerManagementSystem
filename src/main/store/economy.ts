@@ -4,6 +4,8 @@ import { storePath } from '../paths'
 import { processManager } from '../core/processManager'
 import * as rcon from '../core/rcon'
 import { log } from '../logger'
+import * as audit from '../core/audit'
+import type { AuditSource } from '@shared/audit'
 import { DEFAULT_CATEGORIES } from '@shared/economy'
 import {
   DEFAULT_CRATE_ANIMATION,
@@ -415,6 +417,64 @@ export function deleteProduct(serverId: string, productId: string): void {
   delete st.purchases[productId]
   save()
 }
+/**
+ * Write the audit entry for a balance change (#68).
+ *
+ * Recorded here rather than at the two call sites, because this is the only
+ * place that knows what actually happened: `addBalance` clamps at zero, so an
+ * admin asking to remove 500 from a balance of 300 removes 300, and an audit
+ * entry claiming 500 would be wrong.
+ *
+ * The ledger keeps its own copy and is NOT replaced. The two answer different
+ * questions - the ledger is per-server balance history that renders without a
+ * join, the audit trail is the global record of privileged actions - and #68 is
+ * a discoverability gap, not an attribution one.
+ */
+function auditBalance(
+  serverId: string,
+  source: AuditSource,
+  actor: string,
+  mcName: string,
+  kind: 'grant' | 'remove' | 'set',
+  delta: number,
+  balanceAfter: number,
+  reason: string
+): void {
+  audit.record({
+    source,
+    action: 'balance.' + kind,
+    actor,
+    target: mcName,
+    serverId,
+    ok: true,
+    detail:
+      (delta >= 0 ? '+' : '') + delta + ' -> ' + balanceAfter + (reason ? ' (' + reason + ')' : '')
+  })
+}
+
+/**
+ * A refused change is worth recording too: an admin action aimed at a name that
+ * is not a valid Minecraft username is either a typo or someone probing.
+ */
+function auditBalanceRefused(
+  serverId: string,
+  source: AuditSource,
+  actor: string,
+  mcName: string,
+  kind: 'grant' | 'remove' | 'set',
+  why: string
+): void {
+  audit.record({
+    source,
+    action: 'balance.' + kind,
+    actor,
+    target: mcName,
+    serverId,
+    ok: false,
+    detail: why
+  })
+}
+
 /** Add (or, with a negative amount, remove) balance. Audited. */
 export function addBalance(
   serverId: string,
@@ -422,23 +482,30 @@ export function addBalance(
   amount: number,
   by = 'desktop',
   reason = '',
-  category?: string
+  category?: string,
+  source: AuditSource = 'panel'
 ): number {
-  if (!MC_NAME.test(mcName)) throw new Error('invalid-mcname')
+  const kind = Math.floor(amount) < 0 ? 'remove' : 'grant'
+  if (!MC_NAME.test(mcName)) {
+    auditBalanceRefused(serverId, source, by, mcName, kind, 'invalid-mcname')
+    throw new Error('invalid-mcname')
+  }
   const st = getStore(serverId)
   const before = st.balances[mcName] ?? 0
   const delta = Math.floor(amount)
   st.balances[mcName] = Math.max(0, before + delta)
+  const applied = st.balances[mcName] - before
   pushLedger(st, {
     mcName,
-    delta: st.balances[mcName] - before,
+    delta: applied,
     balanceAfter: st.balances[mcName],
     reason,
     by,
-    kind: delta < 0 ? 'remove' : 'grant',
+    kind,
     ...cat(st, category)
   })
   save()
+  auditBalance(serverId, source, by, mcName, kind, applied, st.balances[mcName], reason)
   return st.balances[mcName]
 }
 
@@ -449,9 +516,13 @@ export function setBalance(
   amount: number,
   by = 'desktop',
   reason = '',
-  category?: string
+  category?: string,
+  source: AuditSource = 'panel'
 ): number {
-  if (!MC_NAME.test(mcName)) throw new Error('invalid-mcname')
+  if (!MC_NAME.test(mcName)) {
+    auditBalanceRefused(serverId, source, by, mcName, 'set', 'invalid-mcname')
+    throw new Error('invalid-mcname')
+  }
   const st = getStore(serverId)
   const before = st.balances[mcName] ?? 0
   st.balances[mcName] = Math.max(0, Math.floor(amount))
@@ -465,6 +536,7 @@ export function setBalance(
     ...cat(st, category)
   })
   save()
+  auditBalance(serverId, source, by, mcName, 'set', st.balances[mcName] - before, st.balances[mcName], reason)
   return st.balances[mcName]
 }
 
