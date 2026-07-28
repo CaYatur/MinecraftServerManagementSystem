@@ -88,7 +88,15 @@ import {
 } from '@shared/bridgeRelease'
 import type { GhRelease } from '@shared/bridgeRelease'
 import { publicVerifyReply, verifyDecision } from '@shared/playerVerify'
-import { canSee, redactProfile, PROFILE_PUBLISHING_DEFAULTS } from '@shared/profile'
+import {
+  avatarUrl,
+  canSee,
+  itemIconId,
+  itemIconUrl,
+  itemLabel,
+  redactProfile,
+  PROFILE_PUBLISHING_DEFAULTS
+} from '@shared/profile'
 import type { FullProfile, ProfileField, ProfilePublishing, ProfileViewer } from '@shared/profile'
 import * as rcon from './core/rcon'
 import * as metrics from './core/metrics'
@@ -4507,6 +4515,44 @@ export async function runWebSmoke(): Promise<void> {
       }
       if ((ownView.hidden as string[]).length !== 0) return fail('an owner was told something was withheld')
 
+      // ---- heads and item icons (#116) ----
+      {
+        // Keyed by NAME. Keyed by uuid, every head on an offline-mode server
+        // was a broken image, because the uuid MSMS holds there is the derived
+        // offline one and no skin service has ever seen it. A uuid must not be
+        // able to masquerade as a name and end up in the URL.
+        const offlineUuid = 'f84c6a79-0a4e-45e0-879b-cd49ebd4c4e2'
+        if (avatarUrl(offlineUuid).includes(offlineUuid)) {
+          return fail('a uuid reached the avatar URL — heads are keyed by name')
+        }
+        if (!avatarUrl('CaYatur').includes('CaYatur')) return fail('the avatar URL lost the name')
+        // A name is interpolated into a URL path, so anything that is not one
+        // has to become the fallback face rather than escape the path.
+        for (const bad of ['../../etc/passwd', 'a b', '', 'x'.repeat(40), 'Steve?x=1']) {
+          const u = avatarUrl(bad)
+          if (!u.includes('/Steve/')) return fail('a bad name was not replaced: ' + JSON.stringify(bad))
+          if (/[?#]|\.\./.test(u.slice('https://minotar.net/helm/'.length))) {
+            return fail('a bad name escaped the URL path: ' + JSON.stringify(bad))
+          }
+        }
+        // Sizes are clamped: the value reaches a path segment.
+        if (!/\/512\.png$/.test(avatarUrl('Steve', 99999))) return fail('avatar size was not clamped')
+
+        // Item ids come out of a player's NBT, which a modded or hand-edited
+        // item can put anything into.
+        if (itemIconId('minecraft:water_bucket') !== 'water_bucket') return fail('the namespace was not stripped')
+        for (const bad of ['../evil', 'a b', 'x/y', '', 'a'.repeat(80)]) {
+          if (itemIconId(bad) !== '') return fail('a bad item id was accepted: ' + JSON.stringify(bad))
+          if (itemIconUrl(bad) !== '') return fail('a bad item id produced a URL: ' + JSON.stringify(bad))
+        }
+        // ...and the fallback text is always available, which is what the slot
+        // shows when the picture cannot be fetched.
+        if (itemLabel('minecraft:netherite_ingot') !== 'Netherite Ingot') {
+          return fail('the item label is not readable: ' + itemLabel('minecraft:netherite_ingot'))
+        }
+        if (itemLabel('') !== '?') return fail('an empty item id has no label')
+      }
+
       console.log('WEB-SMOKE: profile visibility OK (' + checked + ' checks, omitted not hidden, per-field toggles)')
 
       // ---- and over HTTP ----
@@ -5672,7 +5718,33 @@ export async function runWebSmoke(): Promise<void> {
           cell: 16,
           at: Date.now()
         }
-        // #115: BOTH pages must be able to fetch a frame with their own api().
+        // #116: the pages carry their own copies of the avatar and item helpers,
+      // embedded by stringifying the function. That only holds while each one is
+      // self-contained: a stringified function that calls another throws a
+      // ReferenceError in the page the moment the bundler renames the callee,
+      // and the source it was compiled from stays perfectly valid — so nothing
+      // else in the build would notice. Checked by calling the PAGE's copies.
+      for (const [label, page] of [['panel', panel], ['site', site]] as const) {
+        const pctx = page.ctx as Record<string, (...a: unknown[]) => unknown>
+        if (typeof pctx['avatarUrl'] !== 'function') {
+          return fail('the ' + label + ' page has no embedded avatarUrl')
+        }
+        for (const n of ['CaYatur', '../../etc/passwd', 'Steve']) {
+          if (pctx['avatarUrl'](n, 32) !== avatarUrl(n, 32)) {
+            return fail('the ' + label + ' page avatarUrl disagrees for ' + JSON.stringify(n))
+          }
+        }
+        // Only the site embeds the item helpers; the panel has no inventory.
+        if (typeof pctx['itemIconUrl'] === 'function') {
+          for (const idv of ['minecraft:water_bucket', '../evil', '']) {
+            if (pctx['itemIconUrl'](idv) !== itemIconUrl(idv)) {
+              return fail('the ' + label + ' page itemIconUrl disagrees for ' + JSON.stringify(idv))
+            }
+          }
+        }
+      }
+
+      // #115: BOTH pages must be able to fetch a frame with their own api().
         // The assertions below seed MAP.data and call mapDraw directly, which is
         // exactly why they missed the real bug: the shared module read `r.body`,
         // which is the panel's response shape, so on the public site every poll
@@ -6957,8 +7029,18 @@ export async function runWebSmoke(): Promise<void> {
         const again = redactPlayers(exact, { ...PUBLIC_MAP_DEFAULTS, enabled: true, serverId: 's' })
         if (again[0].x !== pub[0].x || again[0].z !== pub[0].z) return fail('redaction is not deterministic')
         // Opt-ins.
-        const withHeads = redactPlayers(exact, { ...PUBLIC_MAP_DEFAULTS, enabled: true, serverId: 's', heads: true })
-        if (withHeads[0].uuid !== 'u-1') return fail('heads on should carry the uuid')
+        // Heads are drawn from the name since #116, so heads-on must publish
+        // the name even when names are off — a recognisable face identifies a
+        // player exactly as well as their name, and claiming otherwise would be
+        // a lie. The uuid is gone from the payload entirely: it keyed the old
+        // avatar lookup and nothing else ever asked for it.
+        const withHeads = redactPlayers(exact, {
+          ...PUBLIC_MAP_DEFAULTS, enabled: true, serverId: 's', heads: true, names: false
+        })
+        if (withHeads[0].name !== 'Alex') return fail('heads on should carry the name to draw one')
+        if ('uuid' in (withHeads[0] as unknown as Record<string, unknown>)) {
+          return fail('the public map payload still carries a uuid')
+        }
         const noNames = redactPlayers(exact, { ...PUBLIC_MAP_DEFAULTS, enabled: true, serverId: 's', names: false })
         if ('name' in (noNames[0] as unknown as Record<string, unknown>)) {
           return fail('names off still published a name')

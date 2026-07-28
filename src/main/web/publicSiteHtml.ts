@@ -5,6 +5,7 @@ import { pickSiteLang } from './siteLang'
 import { CRATE_CSS, CRATE_JS, CRATE_MODAL_HTML } from '@shared/crateUi'
 import { STORE_CSS, STORE_JS, STORE_MODAL_HTML, CRATE_ICON_SVG } from '@shared/storeUi'
 import { MAP_CSS, MAP_HTML, MAP_JS } from '@shared/mapUi'
+import { avatarUrl, itemIconId, itemIconUrl, itemLabel } from '@shared/profile'
 
 export function getPublicSiteHtml(): string {
   return `<!doctype html><html lang="en"><head>
@@ -103,19 +104,58 @@ main{min-height:52vh;flex:1 0 auto}
 /* Player profile (#107). A head is pixel art: smoothing 8x8 pixels up to 48
    is mush, so every one of them is rendered without interpolation. */
 .phead{image-rendering:pixelated;border-radius:6px;vertical-align:middle}
-.whoami{display:inline-flex;align-items:center;gap:8px;margin-right:10px;font-size:14px;
-  color:var(--text);text-decoration:none;opacity:.85}
-.whoami:hover{opacity:1}
+/* An account chip, not a bare name. A head image followed by loose text, with
+   no framing, read as debug output next to a styled button (#116). */
+.whoami{display:inline-flex;align-items:center;gap:9px;margin-right:10px;padding:5px 12px 5px 6px;
+  border-radius:999px;font-size:14px;font-weight:600;text-decoration:none;color:var(--text);
+  border:1px solid var(--line);background:color-mix(in srgb,var(--card) 70%,transparent);
+  transition:border-color .16s ease,background .16s ease}
+.whoami:hover{border-color:var(--accent);background:color-mix(in srgb,var(--card) 95%,transparent)}
+.whoami .phead{border-radius:50%}
+.phero{display:flex;align-items:center;gap:20px;margin-bottom:24px}
+.phero .big{width:96px;height:96px;border-radius:14px;border:1px solid var(--line);
+  background:color-mix(in srgb,var(--card) 70%,transparent);padding:6px}
+.pid h2{margin:0 0 6px;font-size:32px;letter-spacing:-.8px}
+.prow{display:flex;align-items:center;gap:8px;font-size:13.5px;color:var(--dim)}
+.pdot{width:9px;height:9px;border-radius:50%;background:var(--dim);display:inline-block}
+.pdot.on{background:#4ade80;box-shadow:0 0 0 3px color-mix(in srgb,#4ade80 25%,transparent)}
 .pmeta{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:8px}
 .pmeta>div{display:flex;flex-direction:column;gap:2px;padding:10px 14px;border-radius:12px;
   border:1px solid var(--line);background:color-mix(in srgb,var(--card) 70%,transparent);min-width:120px}
 .pmeta span{font-size:12px}
 .pmeta b{font-size:15px;font-weight:800}
-.inv{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:8px;margin-bottom:8px}
-.slot{position:relative;padding:10px 8px;border-radius:10px;border:1px solid var(--line);
-  background:color-mix(in srgb,var(--card) 70%,transparent);font-size:11.5px;overflow:hidden}
-.slot .iname{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.slot .icount{position:absolute;right:6px;bottom:5px;font-weight:800;font-size:12px;color:var(--accent)}
+/* Health and food are fractions of a known maximum, so they get a bar. A bare
+   "20" says nothing about whether that is full. */
+.pbars{display:flex;flex-wrap:wrap;gap:14px;margin-bottom:8px}
+.pbar{flex:1;min-width:180px}
+.pbl{display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:5px}
+.pbl span{color:var(--dim)}
+.ptrack{height:8px;border-radius:999px;background:color-mix(in srgb,var(--card) 60%,transparent);
+  border:1px solid var(--line);overflow:hidden}
+.ptrack i{display:block;height:100%;border-radius:999px}
+.ptrack .hp{background:linear-gradient(90deg,#e0524a,#ff8a80)}
+.ptrack .food{background:linear-gradient(90deg,#c98b34,#e8c07d)}
+.pcoords{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px}
+.pcoords>div{display:flex;flex-direction:column;gap:2px;padding:8px 16px;border-radius:10px;
+  border:1px solid var(--line);background:color-mix(in srgb,var(--card) 70%,transparent)}
+.pcoords span{font-size:11px}
+.pcoords b{font-size:15px;font-variant-numeric:tabular-nums}
+.phid{margin-top:20px;font-size:13px}
+/* An inventory should look like one: square slots, the picture at item size,
+   pixelated, with the name underneath as the fallback when there is none. */
+.inv{display:grid;grid-template-columns:repeat(auto-fill,minmax(84px,1fr));gap:8px;margin-bottom:8px}
+.slot{position:relative;display:flex;flex-direction:column;align-items:center;gap:6px;
+  padding:10px 6px 8px;border-radius:10px;border:1px solid var(--line);
+  background:color-mix(in srgb,var(--card) 70%,transparent);font-size:11px;text-align:center}
+.slot .iicon{width:36px;height:36px;object-fit:contain;image-rendering:pixelated}
+.slot .iicon.gone{display:none}
+.slot .iname{display:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
+/* The name shows when there is no picture — either the id was not one we can
+   build a URL for, or the fetch failed and onerror marked the slot. */
+.slot.noimg .iname,.slot:not(:has(.iicon)) .iname{display:block}
+.slot.noimg{padding-top:20px;padding-bottom:18px}
+.slot .icount{position:absolute;right:6px;bottom:4px;font-weight:800;font-size:12px;color:var(--accent);
+  text-shadow:0 1px 2px rgba(0,0,0,.8)}
 .grid{display:grid;gap:18px}
 .grid.c3{grid-template-columns:repeat(auto-fill,minmax(300px,1fr))}
 .grid.c4{grid-template-columns:repeat(auto-fill,minmax(225px,1fr))}
@@ -319,7 +359,7 @@ function renderChrome(){
  sel.innerHTML=codes.map(function(c){return '<option value="'+c+'"'+(c===LANG?' selected':'')+'>'+c.toUpperCase()+'</option>'}).join('');
  document.getElementById('accBtn').innerHTML=ptoken
   ? (S.showProfiles
-      ? '<a href="#/profile" class="whoami" title="'+escAttr(T('profile.title'))+'">'+headImg(puuid,24)+'<span>'+esc(pname)+'</span></a>'
+      ? '<a href="#/profile" class="whoami" title="'+escAttr(T('profile.title'))+'">'+headImg(pname,28)+'<span>'+esc(pname)+'</span></a>'
       /* No server behind the site means no profile to link to: the page would
          load and say "no such player" about the visitor themselves. */
       : '<span class="muted" style="margin-right:10px;font-size:14px">'+esc(pname)+'</span>')+
@@ -454,8 +494,8 @@ function mapPost(u){return api(u,{}).then(function(r){return r.j||null}).catch(f
    operator's, and a visitor offered it would get a 404. */
 function mapServerId(){return ''}
 /* Only ever called when the feed said heads are on, which is only when the
-   operator agreed to send uuids to a third party. */
-function mapAvatarUrl(uuid){return 'https://crafatar.com/avatars/'+encodeURIComponent(uuid)+'?size=32&overlay'}
+   operator agreed to send player names to a third party. */
+function mapAvatarUrl(name){return avatarUrl(name,32)}
 /* ---------- player profile (#107) ----------
    The head, the dates, and whatever server data the operator has published.
    What comes back is decided on the server: a field the viewer may not see is
@@ -480,35 +520,69 @@ function staleSession(){
  ptoken='';pname='';puuid='';whoamiTried=false;
  localStorage.removeItem('msms_ptoken');localStorage.removeItem('msms_pname');localStorage.removeItem('msms_puuid');
  renderChrome();openAuth()}
-function headImg(uuid,size){
- return uuid?('<img class="phead" width="'+size+'" height="'+size+'" src="https://crafatar.com/avatars/'+
-  encodeURIComponent(uuid)+'?size='+size+'&overlay" alt="" loading="lazy"/>'):''}
+/* By name, not uuid: on an offline-mode server the uuid MSMS holds is the
+   derived offline one, which no skin service has ever seen — every head was a
+   broken image on exactly the servers this app is most used on (#116). */
+var avatarUrl=${avatarUrl.toString()};
+var itemIconUrl=${itemIconUrl.toString()};
+var itemIconId=${itemIconId.toString()};
+var itemLabel=${itemLabel.toString()};
+function headImg(name,size,cls){
+ return '<img class="phead '+(cls||'')+'" width="'+size+'" height="'+size+'" src="'+
+  escAttr(avatarUrl(name,size))+'" alt="" loading="lazy"/>'}
+/* An item as a picture, falling back to its name when the picture cannot be
+   fetched. The fallback is not politeness: an offline LAN server is a normal
+   place to run this, and without it the grid is broken-image icons. */
+function itemHtml(i){
+ var label=itemLabel(i.id);var src=itemIconUrl(i.id);
+ return '<div class="slot" title="'+escAttr(label+(i.count>1?' x'+i.count:''))+'">'+
+  (src?'<img class="iicon" src="'+escAttr(src)+'" alt="" loading="lazy" '+
+    'onerror="this.classList.add(\\'gone\\');this.parentNode.classList.add(\\'noimg\\')"/>':'')+
+  '<span class="iname">'+esc(label)+'</span>'+
+  (i.count>1?'<span class="icount">'+esc(String(i.count))+'</span>':'')+'</div>'}
 function invHtml(items){
  if(!items||!items.length)return '<p class="muted">'+esc(T('profile.empty'))+'</p>';
- return '<div class="inv">'+items.map(function(i){
-  var short=String(i.id||'').replace(/^minecraft:/,'');
-  return '<div class="slot" title="'+escAttr(short)+'"><span class="iname">'+esc(short)+'</span>'+
-   (i.count>1?'<span class="icount">'+i.count+'</span>':'')+'</div>'}).join('')+'</div>'}
+ return '<div class="inv">'+items.map(itemHtml).join('')+'</div>'}
 function profDate(ms){return ms?new Date(ms).toLocaleDateString():'—'}
+function statBar(cls,value,max,label,text){
+ var pct=Math.max(0,Math.min(100,(value/max)*100));
+ return '<div class="pbar"><div class="pbl"><span>'+esc(label)+'</span><b>'+esc(text)+'</b></div>'+
+  '<div class="ptrack"><i class="'+cls+'" style="width:'+pct.toFixed(1)+'%"></i></div></div>'}
 function profileHtml(p){
- var rows=[[T('profile.registered'),profDate(p.registeredAt)],
-  [T('profile.lastSeen'),profDate(p.lastSeen)],
-  [T('profile.playtime'),(typeof p.playtimeHours==='number')?(p.playtimeHours+' h'):'—']];
- var h='<div class="section-head"><h2>'+headImg(p.uuid,48)+' '+esc(p.mcName)+'</h2>'+
-  (p.online?'<span class="pill">'+esc(T('status.online'))+'</span>':'')+'</div>'+
-  '<div class="pmeta">'+rows.map(function(r){
-   return '<div><span class="muted">'+esc(r[0])+'</span><b>'+esc(String(r[1]))+'</b></div>'}).join('')+'</div>';
- if(p.stats)h+='<h3>'+esc(T('profile.stats'))+'</h3><div class="pmeta">'+
-  '<div><span class="muted">HP</span><b>'+esc(String(p.stats.health==null?'—':Math.round(p.stats.health)))+'</b></div>'+
-  '<div><span class="muted">XP</span><b>'+esc(String(p.stats.xpLevel==null?'—':p.stats.xpLevel))+'</b></div></div>';
- if(p.location)h+='<h3>'+esc(T('profile.location'))+'</h3><p class="muted">'+
-  esc(Math.round(p.location.x)+', '+Math.round(p.location.y)+', '+Math.round(p.location.z))+'</p>';
+ /* A hero: the head large, the name and presence together. Three grey boxes
+    and a list of ids was a debug view, not a profile (#116). */
+ var h='<div class="phero">'+headImg(p.mcName,96,'big')+
+  '<div class="pid"><h2>'+esc(p.mcName)+'</h2>'+
+  '<div class="prow">'+(p.online
+   ?'<span class="pdot on"></span>'+esc(T('status.online'))
+   :'<span class="pdot"></span>'+esc(T('status.offline')))+'</div></div></div>'+
+  '<div class="pmeta">'+
+  [[T('profile.registered'),profDate(p.registeredAt)],
+   [T('profile.lastSeen'),profDate(p.lastSeen)],
+   [T('profile.playtime'),(typeof p.playtimeHours==='number')?(p.playtimeHours+' h'):'—']]
+  .map(function(r){return '<div><span class="muted">'+esc(r[0])+'</span><b>'+esc(String(r[1]))+'</b></div>'}).join('')+
+  '</div>';
+ /* Health and food as bars, because they are fractions of a known maximum and
+    a bare "20" says nothing about that. */
+ if(p.stats){
+  h+='<h3>'+esc(T('profile.stats'))+'</h3><div class="pbars">';
+  if(p.stats.health!=null)h+=statBar('hp',p.stats.health,20,T('profile.health'),Math.round(p.stats.health)+' / 20');
+  if(p.stats.food!=null)h+=statBar('food',p.stats.food,20,T('profile.food'),Math.round(p.stats.food)+' / 20');
+  if(p.stats.xpLevel!=null)h+='<div class="pbar"><div class="pbl"><span>'+esc(T('profile.xp'))+
+   '</span><b>'+esc(String(p.stats.xpLevel))+'</b></div></div>';
+  h+='</div>'}
+ if(p.location)h+='<h3>'+esc(T('profile.location'))+'</h3><div class="pcoords">'+
+  ['X','Y','Z'].map(function(ax,n){
+   var v=[p.location.x,p.location.y,p.location.z][n];
+   return '<div><span class="muted">'+ax+'</span><b>'+esc(String(Math.round(v)))+'</b></div>'}).join('')+
+  (p.location.dimension?'<div><span class="muted">'+esc(T('profile.dimension'))+'</span><b>'+
+    esc(String(p.location.dimension).replace(/^minecraft:/,''))+'</b></div>':'')+'</div>';
  if(p.inventory)h+='<h3>'+esc(T('profile.inventory'))+'</h3>'+invHtml(p.inventory);
  if(p.enderChest)h+='<h3>'+esc(T('profile.enderChest'))+'</h3>'+invHtml(p.enderChest);
  /* Say what is missing and why. A profile that simply stops after the dates
     reads as broken; "the server has not published this" reads as a choice. */
  var hid=(p.hidden||[]).filter(function(k){return k!=='dates'&&k!=='playtime'&&k!=='identity'});
- if(hid.length)h+='<p class="muted" style="margin-top:18px;font-size:13px">'+esc(T('profile.hidden'))+'</p>';
+ if(hid.length)h+='<p class="muted phid">'+esc(T('profile.hidden'))+'</p>';
  return h}
 function pageServers(){
  return '<section class="section"><div class="wrap"><div class="section-head"><h2>'+esc(T('servers.title'))+'</h2></div>'+

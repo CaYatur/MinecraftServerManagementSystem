@@ -2,6 +2,7 @@
 // HTTP server. Vanilla JS; authenticates with a bearer token in localStorage.
 import { CRATE_CSS, CRATE_JS, CRATE_MODAL_HTML } from '@shared/crateUi'
 import { STORE_CSS, STORE_JS, STORE_MODAL_HTML, CRATE_ICON_SVG } from '@shared/storeUi'
+import { avatarUrl } from '@shared/profile'
 import { MAP_CSS, MAP_HTML, MAP_JS } from '@shared/mapUi'
 export function getPanelHtml(): string {
   return `<!doctype html><html lang="en"><head>
@@ -737,10 +738,13 @@ function mapPost(u){return api(u,{method:'POST'}).then(function(r){
  /* A refusal still has a body worth showing — "no jar available" is the answer,
     not a failure to get one. */
  return r.body||null}).catch(function(){return null})}
-/* The avatar service, by uuid. Named here rather than hardcoded in the shared
-   map so an operator running an air-gapped panel can point it elsewhere, and so
-   the public site can refuse to draw heads at all (#104). */
-function mapAvatarUrl(uuid){return 'https://crafatar.com/avatars/'+encodeURIComponent(uuid)+'?size=32&overlay'}
+/* The avatar service, by name (#116 — the uuid is the offline-mode one on a
+   cracked server and no skin service knows it). Named here rather than
+   hardcoded in the shared map so an operator running an air-gapped panel can
+   point it elsewhere, and so the public site can refuse to draw heads at
+   all (#104). */
+var avatarUrl=${avatarUrl.toString()};
+function mapAvatarUrl(name){return avatarUrl(name,32)}
 var CRATE_ICON_SVG=${JSON.stringify(CRATE_ICON_SVG)};
 
 /* ---- store admin: configuration (store scope) ---- */
