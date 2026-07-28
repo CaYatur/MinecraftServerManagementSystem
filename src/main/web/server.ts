@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse, type Server } 
 import { networkInterfaces } from 'node:os'
 import { createReadStream, existsSync } from 'node:fs'
 import { join, extname, resolve, sep } from 'node:path'
-import { getConfig } from '../config'
+import { getConfig, updateConfig } from '../config'
 import { uploadsDir } from '../paths'
 import { log } from '../logger'
 import { listServers, getServer } from '../core/serverRegistry'
@@ -14,6 +14,9 @@ import { getPlayers } from '../core/players'
 import * as playersMod from '../core/players'
 import * as worldsMod from '../core/worlds'
 import * as backupsMod from '../core/backups'
+import * as mods from '../core/mods'
+import { listJavaInstalls } from '../core/javaScan'
+import { installJava } from '../core/javaProvision'
 import {
   isModerationAction,
   isGamemode,
@@ -22,7 +25,8 @@ import {
   localOnlyJavaFields,
   moderationAuditAction,
   needsConfirm,
-  sanitizeCommandArg
+  sanitizeCommandArg,
+  sanitizeTelemetryPatch
 } from '@shared/ops'
 import type { PlayerInfo } from '@shared/types'
 import { bridgeFresh, bridgePlayers } from '@shared/bridge'
@@ -538,6 +542,66 @@ async function handlePanel(req: IncomingMessage, res: ServerResponse): Promise<v
       if (!gate('view')) return
       return sendJson(res, 200, serverSummary(user, id))
     }
+    // Deregister a server (#53 part 3). Owner session only, and the files stay.
+    //
+    // `removeServer(id, true)` is a recursive delete of a directory tree and
+    // `addServer(path)` takes a host filesystem path chosen by the caller —
+    // the same class of thing `javaPath` was refused for in #93. An HTTP caller
+    // does not name paths on the host and does not erase directories. Forgetting
+    // is recoverable (the folder is untouched and a rescan finds it again),
+    // which is exactly why this half can be exposed and the other half cannot.
+    //
+    // `role !== 'owner'` is session-only by construction: `principalForKey`
+    // always builds `role: 'user'`, deliberately — a key carries scopes, never a
+    // role — so no API key can reach this however it is scoped.
+    if (!sub && method === 'DELETE') {
+      if (user.role !== 'owner') return sendJson(res, 403, { error: 'forbidden', need: 'owner' })
+      const target = getServer(id)
+      const forgetTrail = (ok: boolean, detail: string): void => {
+        audit.record({
+          source: user.apiKey ? 'api' : 'webpanel',
+          action: 'server.forget',
+          actor: user.username,
+          ok,
+          ip,
+          serverId: id,
+          target: target?.name ?? id,
+          detail
+        })
+      }
+      if (url.searchParams.get('confirm') !== 'true') {
+        forgetTrail(false, 'confirm-required')
+        return sendJson(res, 400, { error: 'confirm-required', op: 'server.forget' })
+      }
+      // Dropping a running server from the registry would orphan the process:
+      // every lookup that reaches for its config to stop it would 404.
+      if (processManager.isRunning(id)) {
+        forgetTrail(false, 'server-running')
+        return sendJson(res, 409, { error: 'server-running' })
+      }
+      // `filesKept: true` on its own would be a half-truth. `removeServer` also
+      // calls `metrics.dropServer` and `events.dropServer` — a recursive delete
+      // of this server's metric folder and its event log. Those are MSMS's own
+      // records, not the server's files, and nothing brings them back: a rescan
+      // re-adds the folder under a NEW id, with no history attached. So the
+      // response says what was destroyed, rather than only what was spared.
+      //
+      // `alerts.dropServer` is a separate call because `removeServer` does not
+      // make it — the desktop handler in `ipc/register.ts` pairs them by hand,
+      // and this route has to as well. Left out, the rules for a server that no
+      // longer exists stay in the store until the next launch, when initAlerts
+      // sweeps them.
+      const rulesDropped = alerts.listRules(id).length
+      registry.removeServer(id, false)
+      alerts.dropServer(id)
+      forgetTrail(true, `files kept; history + ${rulesDropped} alert rule(s) dropped`)
+      return sendJson(res, 200, {
+        ok: true,
+        filesKept: true,
+        historyDropped: true,
+        alertRulesRemoved: rulesDropped
+      })
+    }
     if (sub === 'console' && method === 'GET') {
       if (!gate('view')) return
       const history = processManager.getLogHistory(id).slice(-250)
@@ -920,6 +984,177 @@ async function handlePanel(req: IncomingMessage, res: ServerResponse): Promise<v
     }
 
     return sendJson(res, 404, { error: 'not-found' })
+  }
+
+  // ---- plugins / mods over HTTP (#53 part 3) ----
+  //
+  // Gated on `files`, not a new `mods` scope. Installing a plugin writes a jar
+  // into the server directory and deleting one removes a file from it — both are
+  // things `files` already permits outright. A separate scope would be a strict
+  // subset of one the caller must already hold to do the same work by hand: it
+  // would look like a boundary while being none.
+  const mm = path.match(/^\/api\/servers\/([^/]+)\/mods(?:\/([\w-]+))?$/)
+  if (mm) {
+    const id = decodeURIComponent(mm[1])
+    const action = mm[2] ?? ''
+    if (!getServer(id)) return sendJson(res, 404, { error: 'server-not-found' })
+    if (!can(user, id, 'files')) return sendJson(res, 403, { error: 'forbidden', need: 'files' })
+    const trail = (op: string, target: string, ok: boolean, detail?: string): void => {
+      audit.record({
+        source: user.apiKey ? 'api' : 'webpanel',
+        action: op,
+        actor: user.username,
+        ok,
+        ip,
+        serverId: id,
+        target,
+        ...(detail ? { detail } : {})
+      })
+    }
+    try {
+      if (!action && method === 'GET') {
+        return sendJson(res, 200, { mods: mods.listMods(id) })
+      }
+      if (action === 'search' && method === 'GET') {
+        const q = (url.searchParams.get('q') ?? '').trim()
+        if (!q) return sendJson(res, 400, { error: 'query-required' })
+        return sendJson(res, 200, { hits: await mods.searchModrinth(id, q) })
+      }
+      if (action === 'updates' && method === 'GET') {
+        return sendJson(res, 200, await mods.checkUpdates(id))
+      }
+      if (action === 'detail' && method === 'GET') {
+        const pid = (url.searchParams.get('projectId') ?? '').trim()
+        if (!pid) return sendJson(res, 400, { error: 'projectId-required' })
+        return sendJson(res, 200, await mods.modrinthDetail(id, pid))
+      }
+      if (action === 'install' && method === 'POST') {
+        const b = (await readBody(req).catch(() => ({}))) as {
+          projectId?: string
+          versionId?: string
+        }
+        if (!b.projectId) return sendJson(res, 400, { error: 'projectId-required' })
+        // The download URL is resolved server-side from the project's own
+        // version list; the caller names a project, never a file.
+        const file = await mods.installModrinth(id, b.projectId, b.versionId)
+        trail('mod.install', file, true, b.projectId)
+        return sendJson(res, 200, { file })
+      }
+      if (action === 'update' && method === 'POST') {
+        const b = (await readBody(req).catch(() => ({}))) as { rel?: string; versionId?: string }
+        if (!b.rel || !b.versionId) {
+          return sendJson(res, 400, { error: 'rel-and-versionId-required' })
+        }
+        const file = await mods.applyUpdate(id, b.rel, b.versionId)
+        trail('mod.update', file, true, b.rel)
+        return sendJson(res, 200, { file })
+      }
+      if (action === 'toggle' && method === 'POST') {
+        const b = (await readBody(req).catch(() => ({}))) as { rel?: string; enable?: boolean }
+        if (!b.rel) return sendJson(res, 400, { error: 'rel-required' })
+        mods.toggleMod(id, b.rel, !!b.enable)
+        trail('mod.toggle', b.rel, true, b.enable ? 'enabled' : 'disabled')
+        return sendJson(res, 200, { ok: true })
+      }
+      if (!action && method === 'DELETE') {
+        const rel = url.searchParams.get('rel') ?? ''
+        // Shape first, then intent: a call with no `rel` at all is malformed,
+        // and auditing it as a refused delete of "" records a decision nobody
+        // made.
+        if (!rel) return sendJson(res, 400, { error: 'rel-required' })
+        if (url.searchParams.get('confirm') !== 'true') {
+          trail('mod.delete', rel, false, 'confirm-required')
+          return sendJson(res, 400, { error: 'confirm-required', op: 'mod.delete' })
+        }
+        mods.deleteMod(id, rel)
+        trail('mod.delete', rel, true)
+        return sendJson(res, 200, { ok: true })
+      }
+    } catch (e) {
+      const msg = String((e as Error)?.message ?? e)
+      if (method !== 'GET') trail('mod.' + (action || 'delete'), '', false, msg)
+      // `invalid-mod-path` is the caller naming something outside plugins/ or
+      // mods/ — a malformed request, not a conflict with the server's state.
+      return sendJson(res, msg === 'invalid-mod-path' ? 400 : 409, { error: msg })
+    }
+    return sendJson(res, 404, { error: 'not-found' })
+  }
+
+  // ---- host-wide settings: Java runtimes, telemetry (#53 part 3) ----
+  //
+  // None of these belong to one server, so a per-server scope cannot express
+  // them and they are owner-only. Note what that means for keys: `principalForKey`
+  // always builds a principal with `role: 'user'`, deliberately — a key carries
+  // scopes, never a role — so every `role !== 'owner'` check below is
+  // session-only by construction. There is no such thing as an owner key.
+  if (path === '/api/java' && method === 'GET') {
+    if (user.role !== 'owner') return sendJson(res, 403, { error: 'forbidden', need: 'owner' })
+    const refresh = url.searchParams.get('refresh') === 'true'
+    return sendJson(res, 200, { installs: await listJavaInstalls(refresh) })
+  }
+  if (path === '/api/java/install' && method === 'POST') {
+    if (user.role !== 'owner') return sendJson(res, 403, { error: 'forbidden', need: 'owner' })
+    const b = (await readBody(req).catch(() => ({}))) as { major?: number }
+    const major = Number(b.major)
+    // The major version is the only input, and it selects from Adoptium's own
+    // release list — the caller never names a URL or a path.
+    if (!Number.isInteger(major) || major < 8 || major > 64) {
+      return sendJson(res, 400, { error: 'invalid-major' })
+    }
+    try {
+      const info = await installJava(major)
+      audit.record({
+        source: 'webpanel',
+        action: 'java.install',
+        actor: user.username,
+        ok: true,
+        ip,
+        target: String(major),
+        detail: info.path
+      })
+      return sendJson(res, 200, info)
+    } catch (e) {
+      const msg = String((e as Error)?.message ?? e)
+      audit.record({
+        source: 'webpanel',
+        action: 'java.install',
+        actor: user.username,
+        ok: false,
+        ip,
+        target: String(major),
+        detail: msg
+      })
+      return sendJson(res, 400, { error: msg })
+    }
+  }
+  if (path === '/api/telemetry' && (method === 'GET' || method === 'POST')) {
+    if (user.role !== 'owner') return sendJson(res, 403, { error: 'forbidden', need: 'owner' })
+    if (method === 'GET') return sendJson(res, 200, metrics.telemetryConfig())
+    const parsed = sanitizeTelemetryPatch(await readBody(req).catch(() => null))
+    if (!parsed.ok) {
+      audit.record({
+        source: 'webpanel',
+        action: 'telemetry.config',
+        actor: user.username,
+        ok: false,
+        ip,
+        target: parsed.field ?? '',
+        detail: parsed.error
+      })
+      return sendJson(res, 400, { error: parsed.error, ...(parsed.field ? { field: parsed.field } : {}) })
+    }
+    updateConfig((c) => {
+      c.telemetry = { ...metrics.telemetryConfig(), ...parsed.patch }
+    })
+    audit.record({
+      source: 'webpanel',
+      action: 'telemetry.config',
+      actor: user.username,
+      ok: true,
+      ip,
+      target: Object.keys(parsed.patch).join(',')
+    })
+    return sendJson(res, 200, metrics.telemetryConfig())
   }
 
   // ---- operations: moderation / worlds / backups (#53) ----
