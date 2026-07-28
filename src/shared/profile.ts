@@ -178,8 +178,14 @@ export function itemIconId(rawId: string): string {
  * is tracked with the block-colour work, which needs exactly the same textures.
  */
 export function itemIconUrl(rawId: string): string {
-  const id = itemIconId(rawId)
-  return id ? 'https://mc.nerothe.com/img/1.21.4/minecraft_' + id + '.png' : ''
+  // Deliberately NOT calling `itemIconId`. Both pages embed this function by
+  // stringifying it, and a stringified function that calls another one only
+  // works for as long as the bundler does not rename the callee — the page
+  // would then throw a ReferenceError that nothing in the build catches,
+  // because the source it was compiled from is still perfectly valid.
+  const id = String(rawId || '').replace(/^minecraft:/, '').trim().toLowerCase()
+  if (!/^[a-z0-9_]{1,64}$/.test(id)) return ''
+  return 'https://mc.nerothe.com/img/1.21.4/minecraft_' + id + '.png'
 }
 
 /** `netherite_ingot` -> `Netherite Ingot`. The fallback, and every tooltip. */

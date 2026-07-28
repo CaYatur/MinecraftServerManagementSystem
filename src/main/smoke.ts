@@ -5718,7 +5718,33 @@ export async function runWebSmoke(): Promise<void> {
           cell: 16,
           at: Date.now()
         }
-        // #115: BOTH pages must be able to fetch a frame with their own api().
+        // #116: the pages carry their own copies of the avatar and item helpers,
+      // embedded by stringifying the function. That only holds while each one is
+      // self-contained: a stringified function that calls another throws a
+      // ReferenceError in the page the moment the bundler renames the callee,
+      // and the source it was compiled from stays perfectly valid — so nothing
+      // else in the build would notice. Checked by calling the PAGE's copies.
+      for (const [label, page] of [['panel', panel], ['site', site]] as const) {
+        const pctx = page.ctx as Record<string, (...a: unknown[]) => unknown>
+        if (typeof pctx['avatarUrl'] !== 'function') {
+          return fail('the ' + label + ' page has no embedded avatarUrl')
+        }
+        for (const n of ['CaYatur', '../../etc/passwd', 'Steve']) {
+          if (pctx['avatarUrl'](n, 32) !== avatarUrl(n, 32)) {
+            return fail('the ' + label + ' page avatarUrl disagrees for ' + JSON.stringify(n))
+          }
+        }
+        // Only the site embeds the item helpers; the panel has no inventory.
+        if (typeof pctx['itemIconUrl'] === 'function') {
+          for (const idv of ['minecraft:water_bucket', '../evil', '']) {
+            if (pctx['itemIconUrl'](idv) !== itemIconUrl(idv)) {
+              return fail('the ' + label + ' page itemIconUrl disagrees for ' + JSON.stringify(idv))
+            }
+          }
+        }
+      }
+
+      // #115: BOTH pages must be able to fetch a frame with their own api().
         // The assertions below seed MAP.data and call mapDraw directly, which is
         // exactly why they missed the real bug: the shared module read `r.body`,
         // which is the panel's response shape, so on the public site every poll
