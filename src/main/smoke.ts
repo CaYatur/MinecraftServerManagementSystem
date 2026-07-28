@@ -5557,6 +5557,22 @@ export async function runWebSmoke(): Promise<void> {
         if (c.upgraded) return fail('ws: a disallowed origin was upgraded')
         if (c.status !== 403) return fail('ws: a disallowed origin returned ' + c.status)
 
+        // ...but the page this listener itself served is not cross-origin, and
+        // `apiOrigins` is default-deny. Judging an upgrade by the allowlist
+        // alone would refuse the admin panel's own page — the most likely
+        // browser client there is — until an operator thought to allowlist
+        // their own address.
+        c = await connect({
+          headers: { Authorization: 'Bearer ' + ot, Origin: 'http://127.0.0.1:8799' }
+        })
+        if (!c.upgraded) return fail('ws: the panel’s own origin was refused (' + c.status + ')')
+        c.end()
+        // A different port on the same machine is still another origin.
+        c = await connect({
+          headers: { Authorization: 'Bearer ' + ot, Origin: 'http://127.0.0.1:8798' }
+        })
+        if (c.upgraded) return fail('ws: another port on this host was treated as same-origin')
+
         // Session token by header.
         c = await connect({ headers: { Authorization: 'Bearer ' + ot } })
         if (!c.upgraded) return fail('ws: an owner session was refused (' + c.status + ')')

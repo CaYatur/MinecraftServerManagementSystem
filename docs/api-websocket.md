@@ -72,7 +72,12 @@ is a poor home for a long-lived credential.
 
 An upgrade carrying an `Origin` the operator has not allowed is refused with
 `403`, using the same allowlist as the REST CORS check (`apiOrigins` in web
-settings).
+settings) — **plus** the request's own origin, which is always accepted. A page
+served by this listener is exactly as trusted as the listener; the allowlist
+exists for *cross*-origin callers, and applying it alone would refuse the admin
+panel's own page until an operator thought to allowlist their own address. The
+comparison is against the request's `Host`, which carries the port, so another
+service on the same machine is still cross-origin.
 
 This matters more here than on the REST side: **browsers do not apply CORS to
 WebSocket.** Any page on any origin can open one to `127.0.0.1` and read

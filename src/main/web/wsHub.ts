@@ -122,10 +122,17 @@ interface Credential {
 }
 
 /**
- * Resolve the caller. Returns null for "no usable credential" — the caller
- * answers 401 without saying which of the several ways it failed.
+ * Resolve the caller.
+ *
+ * `null` is "no usable credential" — answered 401 without saying which of the
+ * several ways it failed. `'rate-limited'` is kept distinct on purpose: telling
+ * a client its credential is invalid when it has merely been too quick is how an
+ * integration ends up rotating a key that was never the problem.
  */
-function authenticate(req: IncomingMessage, protocols: string[]): Credential | null {
+function authenticate(
+  req: IncomingMessage,
+  protocols: string[]
+): Credential | 'rate-limited' | null {
   const auth = header(req, 'authorization')
   const bearer = auth?.startsWith('Bearer ') ? auth.slice(7).trim() : undefined
   const fromHeader = header(req, 'x-api-key') ?? (bearer && apikeys.looksLikeKey(bearer) ? bearer : undefined)
@@ -136,7 +143,7 @@ function authenticate(req: IncomingMessage, protocols: string[]): Credential | n
     if (!key) return null
     // The same bucket the REST path spends from: opening streams is not a way
     // around the request limit.
-    if (!spendKeyToken(key.id).allowed) return null
+    if (!spendKeyToken(key.id).allowed) return 'rate-limited'
     apikeys.touchKey(key.id)
     return { user: principalForKey(key), principal: 'key:' + key.id }
   }
@@ -145,6 +152,31 @@ function authenticate(req: IncomingMessage, protocols: string[]): Credential | n
   if (!sessionToken) return null
   const user = resolveSession(sessionToken)
   return user ? { user, principal: 'user:' + user.username } : null
+}
+
+/**
+ * Is this Origin the page this very server served?
+ *
+ * The allowlist (`apiOrigins`) exists for **cross**-origin callers and is
+ * default-deny, which is right for REST: a same-origin XHR never consults CORS
+ * at all, so the panel's own page is unaffected by an empty list. An upgrade has
+ * no such exemption — the check here is the whole check — so applying the
+ * allowlist alone would refuse the admin panel's own page, the single most
+ * likely browser client, until an operator thought to allowlist their own
+ * address. A page that came from this listener is exactly as trusted as the
+ * listener.
+ *
+ * Compared against the request's own `Host`, which carries the port, so a
+ * different service on the same machine is still cross-origin.
+ */
+function isSameOrigin(req: IncomingMessage, origin: string): boolean {
+  const host = header(req, 'host')
+  if (!host) return false
+  try {
+    return new URL(origin).host.toLowerCase() === host.trim().toLowerCase()
+  } catch {
+    return false
+  }
 }
 
 /**
@@ -170,7 +202,7 @@ export function attachWs(httpServer: Server, allowedOrigins: () => string[]): vo
       // Browsers do not apply CORS to WebSocket. Without this a page on any
       // origin could open a stream to a panel running on the visitor's machine.
       const origin = header(req, 'origin')
-      if (origin && !isOriginAllowed(origin, allowedOrigins())) {
+      if (origin && !isSameOrigin(req, origin) && !isOriginAllowed(origin, allowedOrigins())) {
         return refuse(duplex, 403, 'Forbidden')
       }
 
@@ -179,6 +211,7 @@ export function attachWs(httpServer: Server, allowedOrigins: () => string[]): vo
         .map((p) => p.trim())
         .filter(Boolean)
       const cred = authenticate(req, protocols)
+      if (cred === 'rate-limited') return refuse(duplex, 429, 'Too Many Requests')
       if (!cred) return refuse(duplex, 401, 'Unauthorized')
 
       if (clients.size >= MAX_CONNECTIONS) return refuse(duplex, 503, 'Service Unavailable')
