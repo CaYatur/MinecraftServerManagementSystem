@@ -82,6 +82,7 @@ import {
   bridgeNeed,
   bridgeVersionOf,
   compareBridgeVersions,
+  installPlan,
   pickBridgeAsset,
   sha256Of
 } from '@shared/bridgeRelease'
@@ -1041,6 +1042,27 @@ export async function runModUpdateSmoke(): Promise<void> {
       for (const t of ['paper', 'purpur', 'folia', 'spigot'] as ServerType[]) {
         if (need(t, null, '1.0.0') !== 'missing') return fail(t + ' should be offered the bridge')
       }
+
+      // What the install actually tries, in order. Committing to one source
+      // makes the bundled jar a fallback for exactly one failure — GitHub's API
+      // being unreachable — and leaves the commoner one uncovered: the API
+      // answering while the asset download fails, which would refuse the
+      // install with a perfectly good jar sitting on disk.
+      const plan = (r: string | null, b: string | null): string =>
+        installPlan({
+          remote: r ? { version: r } : null,
+          bundled: b ? { version: b } : null
+        }).join(',')
+      if (plan('1.2.0', '1.0.0') !== 'github,bundled') {
+        return fail('a failed download would not fall back to the bundled jar: ' + plan('1.2.0', '1.0.0'))
+      }
+      if (plan('1.0.0', '1.0.0') !== 'github,bundled') return fail('equal versions should still fall back')
+      // Downloading a jar older than the one on disk is work done to arrive
+      // somewhere worse.
+      if (plan('0.9.0', '1.0.0') !== 'bundled') return fail('an older release should not be downloaded')
+      if (plan('1.0.0', null) !== 'github') return fail('with no bundled jar there is nothing to fall back to')
+      if (plan(null, '1.0.0') !== 'bundled') return fail('with no release the bundled jar is the plan')
+      if (plan(null, null) !== '') return fail('with nothing available the plan must be empty')
 
       // The jar that ships with the app, which is the whole offline story. An
       // absent one would make every assertion above true and the feature

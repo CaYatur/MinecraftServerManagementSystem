@@ -24,6 +24,7 @@ import {
   bridgeSupported,
   bridgeVersionOf,
   compareBridgeVersions,
+  installPlan,
   isGithubAssetUrl,
   pickBridgeAsset,
   type BridgeAsset,
@@ -48,19 +49,24 @@ function pluginsDir(serverId: string): string {
  * and the operator sees "MSMS-Bridge could not be enabled" with no hint that
  * the cause is the jar they installed sitting next to the one they already had.
  */
-function installedJars(serverId: string): { name: string; version: string }[] {
+function installedJars(serverId: string): { name: string; version: string; enabled: boolean }[] {
   const dir = pluginsDir(serverId)
   if (!existsSync(dir)) return []
-  const out: { name: string; version: string }[] = []
+  const out: { name: string; version: string; enabled: boolean }[] = []
   for (const name of readdirSync(dir)) {
-    const version = bridgeVersionOf(name)
-    if (version) out.push({ name, version })
+    // A `.jar.disabled` is not loaded by Bukkit, so it is not installed as far
+    // as the status is concerned — but it IS a stale copy, and leaving one next
+    // to a newly installed jar means the folder accumulates a bridge per
+    // version an operator ever turned off.
+    const enabled = !/\.disabled$/i.test(name)
+    const version = bridgeVersionOf(enabled ? name : name.replace(/\.disabled$/i, ''))
+    if (version) out.push({ name, version, enabled })
   }
   return out.sort((a, b) => compareBridgeVersions(b.version, a.version))
 }
 
 export function installedBridgeVersion(serverId: string): string | null {
-  return installedJars(serverId)[0]?.version ?? null
+  return installedJars(serverId).find((j) => j.enabled)?.version ?? null
 }
 
 // ---- the copy that ships with the app ----
@@ -141,19 +147,11 @@ export async function bridgeStatus(serverId: string): Promise<BridgeStatus> {
   const bundled = bundledBridge()
   const offline = remote === null
 
-  let source: 'github' | 'bundled' | null = null
-  let latest: string | null = null
-  if (remote && bundled) {
-    const useRemote = compareBridgeVersions(remote.version, bundled.version) >= 0
-    source = useRemote ? 'github' : 'bundled'
-    latest = useRemote ? remote.version : bundled.version
-  } else if (remote) {
-    source = 'github'
-    latest = remote.version
-  } else if (bundled) {
-    source = 'bundled'
-    latest = bundled.version
-  }
+  // The same ordering the install will actually use, so the version the warning
+  // names is the version the button delivers.
+  const first = installPlan({ remote, bundled })[0] ?? null
+  const source = first
+  const latest = first === 'github' ? (remote?.version ?? null) : (bundled?.version ?? null)
 
   const need = bridgeNeed({ type: s.type, installed, latest })
   return { serverId, ...need, source: need.actionable ? source : null, ...(offline ? { offline: true } : {}) }
@@ -180,43 +178,55 @@ export async function installBridge(
 
   const remote = await latestBridge()
   const bundled = bundledBridge()
-  const preferRemote =
-    !!remote && (!bundled || compareBridgeVersions(remote.version, bundled.version) >= 0)
-  if (!remote && !bundled) return refuse(serverId, who, 'no-jar-available')
+  const plan = installPlan({ remote, bundled })
+  if (!plan.length) return refuse(serverId, who, 'no-jar-available')
 
   const dir = pluginsDir(serverId)
   mkdirSync(dir, { recursive: true })
 
-  let version: string
-  let written: string
-  let from: 'github' | 'bundled'
+  let version = ''
+  let written = ''
+  let from: 'github' | 'bundled' | null = null
+  let lastError = 'no-jar-available'
 
-  if (preferRemote && remote) {
-    // Re-checked here and not only where the asset was picked. This is the last
-    // line before a URL from a response body is handed to the downloader, and
-    // the two checks are cheap next to what passing a bad one would cost.
-    if (!isGithubAssetUrl(remote.url)) return refuse(serverId, who, 'bad-asset-url')
-    if (!BRIDGE_JAR_RE.test(remote.name)) return refuse(serverId, who, 'bad-asset-name')
-    written = join(dir, remote.name)
-    try {
-      await downloadFile(remote.url, written, {
-        ...(remote.sha256 ? { sha256: remote.sha256 } : {}),
-        timeoutMs: 60_000
-      })
-    } catch (e) {
-      rmSync(written, { force: true })
-      return refuse(serverId, who, 'download-failed: ' + String(e))
+  for (const step of plan) {
+    if (step === 'github' && remote) {
+      // Re-checked here and not only where the asset was picked. This is the
+      // last line before a URL from a response body is handed to the
+      // downloader, and the two checks are cheap next to what passing a bad one
+      // would cost. A refusal here does NOT abandon the install — it falls to
+      // the bundled jar like any other failure of this step.
+      if (!isGithubAssetUrl(remote.url) || !BRIDGE_JAR_RE.test(remote.name)) {
+        lastError = 'bad-asset'
+        continue
+      }
+      const dest = join(dir, remote.name)
+      try {
+        await downloadFile(remote.url, dest, {
+          ...(remote.sha256 ? { sha256: remote.sha256 } : {}),
+          timeoutMs: 60_000
+        })
+      } catch (e) {
+        // A half-written or hash-mismatched file must not be left behind: the
+        // next status check would read its name and report it as installed.
+        rmSync(dest, { force: true })
+        lastError = 'download-failed: ' + String(e)
+        continue
+      }
+      version = remote.version
+      written = dest
+      from = 'github'
+      break
     }
-    version = remote.version
-    from = 'github'
-  } else if (bundled) {
-    written = join(dir, bundled.name)
-    copyFileSync(bundled.path, written)
-    version = bundled.version
-    from = 'bundled'
-  } else {
-    return refuse(serverId, who, 'no-jar-available')
+    if (step === 'bundled' && bundled) {
+      written = join(dir, bundled.name)
+      copyFileSync(bundled.path, written)
+      version = bundled.version
+      from = 'bundled'
+      break
+    }
   }
+  if (!from) return refuse(serverId, who, lastError)
 
   // Only after the new jar is on disk. Removing first would leave a server with
   // no bridge at all if the download failed halfway.
