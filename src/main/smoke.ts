@@ -87,6 +87,7 @@ import {
   sha256Of
 } from '@shared/bridgeRelease'
 import type { GhRelease } from '@shared/bridgeRelease'
+import { publicVerifyReply, verifyDecision } from '@shared/playerVerify'
 import * as rcon from './core/rcon'
 import * as metrics from './core/metrics'
 import * as eventsMod from './core/events'
@@ -4253,6 +4254,148 @@ export async function runWebSmoke(): Promise<void> {
     r = await spost('/api/public/register/verify', { mcName: 'Offliney', code: '000000', password: 'pw12' })
     if (r.status === 200) return fail('verify with a wrong/absent code should fail')
 
+    // ---- who may claim a name, and how (#105) ----
+    {
+      // Every combination, with the expected verdict written out here rather
+      // than computed by calling the function under test. A table that derives
+      // its own answers passes whatever the code happens to do.
+      const D = (i: {
+        purpose: 'register' | 'reset'
+        validName?: boolean
+        onlineMode?: boolean
+        serverUp?: boolean
+        playerOnline?: boolean
+        accountExists?: boolean
+        rateLimited?: boolean
+      }): string => {
+        const d = verifyDecision({
+          purpose: i.purpose,
+          validName: i.validName !== false,
+          onlineMode: i.onlineMode !== false,
+          serverUp: i.serverUp !== false,
+          playerOnline: i.playerOnline !== false,
+          accountExists: !!i.accountExists,
+          rateLimited: !!i.rateLimited
+        })
+        return d.action === 'refuse' ? 'refuse:' + d.reason : d.action
+      }
+      const rows: [string, Parameters<typeof D>[0], string][] = [
+        ['a normal registration', { purpose: 'register' }, 'issue'],
+        ['a normal reset', { purpose: 'reset', accountExists: true }, 'issue'],
+        // THE point of the issue. On a cracked server anyone can join as
+        // anyone, so the whisper proves nothing and a human decides.
+        ['reset on a cracked server', { purpose: 'reset', accountExists: true, onlineMode: false }, 'approve'],
+        // ...and the same gate on registration, or the easier door stays open:
+        // registration overwrites an existing account's password, so it IS a
+        // reset by another name.
+        ['registration on a cracked server', { purpose: 'register', onlineMode: false }, 'approve'],
+        ['a bad name', { purpose: 'register', validName: false }, 'refuse:invalid-name'],
+        // Rate limiting outranks everything that reads state, so probing cannot
+        // enumerate anything faster than the limit allows.
+        ['a rate-limited bad name', { purpose: 'register', validName: false, rateLimited: true }, 'refuse:invalid-name'],
+        ['a rate-limited reset', { purpose: 'reset', accountExists: true, rateLimited: true }, 'refuse:rate-limited'],
+        ['a rate-limited cracked reset', { purpose: 'reset', accountExists: true, onlineMode: false, rateLimited: true }, 'refuse:rate-limited'],
+        ['reset for a name with no account', { purpose: 'reset' }, 'refuse:no-account'],
+        // ...and a missing account is decided AFTER the server checks, so a
+        // reset for a name nobody owns is indistinguishable from any other
+        // request that could not be started.
+        ['no account and the server is down', { purpose: 'reset', serverUp: false }, 'refuse:server-offline'],
+        ['no account and nobody online', { purpose: 'reset', playerOnline: false }, 'refuse:not-online'],
+        ['server down', { purpose: 'register', serverUp: false }, 'refuse:server-offline'],
+        ['player not online', { purpose: 'register', playerOnline: false }, 'refuse:not-online'],
+        // Offline mode does not rescue a player who is not there: the code is
+        // whispered in game either way.
+        ['cracked and not online', { purpose: 'register', onlineMode: false, playerOnline: false }, 'refuse:not-online']
+      ]
+      for (const [label, input, expected] of rows) {
+        const got = D(input)
+        if (got !== expected) return fail('verify "' + label + '" gave ' + got + ', expected ' + expected)
+      }
+
+      // The exhaustive sweep, checking the one invariant that matters: the
+      // in-game code is NEVER issued on its own when the server cannot say who
+      // is holding the keyboard.
+      let swept = 0
+      for (const purpose of ['register', 'reset'] as const) {
+        for (const validName of [true, false]) {
+          for (const onlineMode of [true, false]) {
+            for (const serverUp of [true, false]) {
+              for (const playerOnline of [true, false]) {
+                for (const accountExists of [true, false]) {
+                  for (const rateLimited of [true, false]) {
+                    const d = verifyDecision({
+                      purpose, validName, onlineMode, serverUp, playerOnline, accountExists, rateLimited
+                    })
+                    swept++
+                    if (d.action === 'issue' && !onlineMode) {
+                      return fail(
+                        'a code was issued on a cracked server: ' +
+                          JSON.stringify({ purpose, playerOnline, accountExists })
+                      )
+                    }
+                    if (d.action !== 'refuse' && !validName) return fail('an invalid name got past the gate')
+                    if (d.action !== 'refuse' && rateLimited) return fail('a rate-limited request got past the gate')
+                    if (d.action !== 'refuse' && !playerOnline) {
+                      return fail('a code was issued to a player who is not there')
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // What the caller is told. A reset for a name with no account must look
+      // exactly like one for a name that has one, or the endpoint becomes an
+      // account-enumeration oracle answering one name per request.
+      //
+      // Checked on BOTH kinds of server. Checking only the online-mode one
+      // passes while the hole is open on the other — and the cracked server is
+      // where it matters most, because that is where taking an account over is
+      // easiest to begin with.
+      const base = { validName: true, serverUp: true, playerOnline: true, rateLimited: false }
+      for (const onlineMode of [true, false]) {
+        const noAcc = publicVerifyReply(
+          verifyDecision({ ...base, onlineMode, purpose: 'reset', accountExists: false })
+        )
+        const hasAcc = publicVerifyReply(
+          verifyDecision({ ...base, onlineMode, purpose: 'reset', accountExists: true })
+        )
+        if (JSON.stringify(noAcc) !== JSON.stringify(hasAcc)) {
+          return fail(
+            'a reset revealed whether the account exists (online-mode=' + onlineMode + '): ' +
+              JSON.stringify(noAcc) + ' vs ' + JSON.stringify(hasAcc)
+          )
+        }
+      }
+      // ...and the same for registration, which answers for any name at all.
+      for (const onlineMode of [true, false]) {
+        const reg = publicVerifyReply(
+          verifyDecision({ ...base, onlineMode, purpose: 'register', accountExists: false })
+        )
+        const res = publicVerifyReply(
+          verifyDecision({ ...base, onlineMode, purpose: 'reset', accountExists: true })
+        )
+        if (JSON.stringify(reg) !== JSON.stringify(res)) {
+          return fail('register and reset are distinguishable (online-mode=' + onlineMode + ')')
+        }
+      }
+      // ...and no reply ever carries a code.
+      for (const d of [
+        verifyDecision({ ...base, onlineMode: true, purpose: 'register', accountExists: false }),
+        verifyDecision({ ...base, onlineMode: false, purpose: 'reset', accountExists: true })
+      ]) {
+        if (/\d{6}/.test(JSON.stringify(publicVerifyReply(d)))) {
+          return fail('a start reply carried something code-shaped')
+        }
+      }
+      console.log(
+        'WEB-SMOKE: player verification OK (12 rows, ' + swept +
+          ' combinations, no code without online-mode, no enumeration)'
+      )
+    }
+
     // an ADMIN token must NOT satisfy player auth
     r = await spost('/api/public/store/buy', { productId: 'x' }, ot)
     if (r.status !== 401) return fail('admin token on player route expected 401, got ' + r.status)
@@ -5661,6 +5804,30 @@ export async function runWebSmoke(): Promise<void> {
         const modList = (await r.json()) as { mods: { path: string; enabled: boolean }[] }
         if (!modList.mods.some((mo) => mo.path === jarRel)) {
           return fail('the seeded jar is missing from the mod list')
+        }
+
+        // ---- account claims waiting for a human (#105) ----
+        {
+          const pBase = '/api/servers/' + id + '/player-requests'
+          // `settings`, not `players`: approving grants somebody credentials to
+          // a website account with a balance. The `files` key carries neither,
+          // which is the point — it is not a scope that should reach this.
+          r = await kget(pBase, modKey.secret)
+          if (r.status !== 403) return fail('player-requests with a files key expected 403, got ' + r.status)
+          r = await get(pBase, ot)
+          if (r.status !== 200) return fail('player-requests expected 200 for an owner, got ' + r.status)
+          const q = (await r.json()) as { requests: unknown[] }
+          if (!Array.isArray(q.requests)) return fail('player-requests did not return a list')
+          // The fixture runs in online mode, so nothing should be queued: with
+          // Mojang authentication on, the in-game code proves ownership by
+          // itself and a human has nothing to add.
+          if (q.requests.length !== 0) return fail('an online-mode server queued a claim for approval')
+          r = await post(pBase + '/approve', { id: 'no-such-request' }, ot)
+          if (r.status !== 409) return fail('approving a missing request expected 409, got ' + r.status)
+          r = await post(pBase + '/deny', { id: 'no-such-request' }, ot)
+          if (r.status !== 404) return fail('denying a missing request expected 404, got ' + r.status)
+          r = await post(pBase + '/approve', { id: 'x' }, ft)
+          if (r.status !== 403) return fail('approving without settings expected 403, got ' + r.status)
         }
 
         // ---- the bridge plugin (#103) ----

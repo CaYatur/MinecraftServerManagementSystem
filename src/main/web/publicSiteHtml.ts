@@ -221,6 +221,7 @@ body.classic .hero h1{letter-spacing:-1.2px}
     <input id="liPass" type="password" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()"/>
     <button class="btn primary" style="width:100%" onclick="doLogin()" id="liBtn"></button>
     <p class="muted" style="font-size:13.5px;margin-top:14px"><span id="noAcc"></span> <a href="#" style="color:var(--accent)" onclick="showReg(1);return false" id="regLink"></a></p>
+    <p class="muted" style="font-size:13.5px;margin-top:4px"><a href="#" style="color:var(--accent)" onclick="showReset(1);return false" id="forgotLink"></a></p>
   </div>
   <div id="regForm" class="hidden">
     <div id="regStep1">
@@ -237,6 +238,7 @@ body.classic .hero h1{letter-spacing:-1.2px}
     <p class="muted" style="font-size:13.5px;margin-top:14px"><a href="#" style="color:var(--accent)" onclick="showLogin();return false" id="backLink"></a></p>
   </div>
   <div class="err" id="amErr"></div>
+  <div class="ok" id="amNote" style="font-size:13.5px"></div>
   <button class="btn sm ghost" style="margin-top:8px" onclick="closeAuth()" id="closeBtn"></button>
 </div></div>
 
@@ -514,20 +516,36 @@ function fillAuthTexts(){
  document.getElementById('codeHint').textContent=T('auth.codeHint');document.getElementById('rgCode').placeholder=T('auth.code');
  document.getElementById('rgPass').placeholder=T('auth.newPassword');document.getElementById('verifyBtn').textContent=T('auth.verify');
  document.getElementById('backLink').textContent=T('auth.backToLogin');document.getElementById('closeBtn').textContent=T('common.close');
+ document.getElementById('forgotLink').textContent=T('auth.forgot');
  document.getElementById('crateTitle').textContent=T('crate.opening');document.getElementById('crateOk').textContent=T('crate.ok')}
-function showLogin(){fillAuthTexts();document.getElementById('amTitle').textContent=T('auth.login');document.getElementById('loginForm').classList.remove('hidden');document.getElementById('regForm').classList.add('hidden');document.getElementById('amErr').textContent=''}
-function showReg(step){fillAuthTexts();document.getElementById('amTitle').textContent=T('auth.register');document.getElementById('loginForm').classList.add('hidden');document.getElementById('regForm').classList.remove('hidden');
- document.getElementById('regStep1').classList.toggle('hidden',step!==1);document.getElementById('regStep2').classList.toggle('hidden',step!==2);document.getElementById('amErr').textContent=''}
+function amClear(){document.getElementById('amErr').textContent='';document.getElementById('amNote').textContent=''}
+function showLogin(){fillAuthTexts();AUTH_MODE='register';document.getElementById('amTitle').textContent=T('auth.login');document.getElementById('loginForm').classList.remove('hidden');document.getElementById('regForm').classList.add('hidden');amClear()}
+/* The same two-step form serves registration and reset (#105): both prove the
+   same claim with the same single-use code, so a second form would be a second
+   place to get the code handling wrong. Only the copy differs. */
+var AUTH_MODE='register';
+function showReg(step){AUTH_MODE='register';showClaim(step,T('auth.register'),T('auth.registerHint'))}
+function showReset(step){AUTH_MODE='reset';showClaim(step,T('auth.resetTitle'),T('auth.resetHint'))}
+function showClaim(step,title,hint){fillAuthTexts();
+ document.getElementById('amTitle').textContent=title;
+ document.getElementById('regHint').textContent=hint;
+ document.getElementById('loginForm').classList.add('hidden');document.getElementById('regForm').classList.remove('hidden');
+ document.getElementById('regStep1').classList.toggle('hidden',step!==1);document.getElementById('regStep2').classList.toggle('hidden',step!==2);amClear()}
 function doLogin(){api('/api/public/login',{mcName:document.getElementById('liName').value,password:document.getElementById('liPass').value}).then(function(r){
  if(!r.ok){document.getElementById('amErr').textContent=T('auth.invalid');return}
  ptoken=r.j.token;pname=r.j.mcName;localStorage.setItem('msms_ptoken',ptoken);localStorage.setItem('msms_pname',pname);closeAuth();render();if((location.hash||'#/')==='#/store')loadStore()})}
 function authErr(e){return e==='not-online'?T('auth.notOnline'):e==='server-offline'?T('auth.serverOffline'):e==='rate-limited'?T('auth.rateLimited'):e==='bad-code'?T('auth.badCode'):e==='expired'?T('auth.expired'):e==='weak-password'?T('auth.weakPassword'):'Error'}
-function sendCode(){document.getElementById('amErr').textContent='';
- api('/api/public/register/start',{mcName:document.getElementById('rgName').value}).then(function(r){
-  if(!r.ok){document.getElementById('amErr').textContent=authErr(r.j.error);return}
-  window._rgName=document.getElementById('rgName').value;showReg(2)})}
-function doVerify(){document.getElementById('amErr').textContent='';
- api('/api/public/register/verify',{mcName:window._rgName,code:document.getElementById('rgCode').value,password:document.getElementById('rgPass').value}).then(function(r){
+function sendCode(){amClear();
+ api('/api/public/'+(AUTH_MODE==='reset'?'reset':'register')+'/start',{mcName:document.getElementById('rgName').value}).then(function(r){
+  if(!r.ok||!r.j.ok){document.getElementById('amErr').textContent=authErr(r.j&&r.j.error);return}
+  window._rgName=document.getElementById('rgName').value;
+  /* On a cracked server nothing proves who is standing in the game as that
+     name, so an operator has to agree first. Saying so beats a code that
+     silently never arrives. */
+  if(r.j.pending==='approval'){document.getElementById('amNote').textContent=T('auth.needsApproval');return}
+  if(AUTH_MODE==='reset')showReset(2);else showReg(2)})}
+function doVerify(){amClear();
+ api('/api/public/'+(AUTH_MODE==='reset'?'reset':'register')+'/verify',{mcName:window._rgName,code:document.getElementById('rgCode').value,password:document.getElementById('rgPass').value}).then(function(r){
   if(!r.ok){document.getElementById('amErr').textContent=authErr(r.j.error);return}
   ptoken=r.j.token;pname=r.j.mcName;localStorage.setItem('msms_ptoken',ptoken);localStorage.setItem('msms_pname',pname);closeAuth();render();if((location.hash||'#/')==='#/store')loadStore()})}
 function plogout(){api('/api/public/logout',{},ptoken);ptoken='';pname='';localStorage.removeItem('msms_ptoken');localStorage.removeItem('msms_pname');render();if((location.hash||'#/')==='#/store')loadStore()}

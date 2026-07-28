@@ -270,6 +270,14 @@ h2{margin:8px 0;font-weight:800;letter-spacing:-.4px}
       </div>
     </div>
     <div id="panelAlerts" class="hidden">
+      <!-- Account claims waiting for a human (#105). Lives in the settings-gated
+           tab because that is the scope that may approve one, and it is hidden
+           entirely when there is nothing to decide - an online-mode server never
+           queues anything, and a permanently empty panel is noise. -->
+      <div class="card hidden" id="prCard">
+        <div class="row"><b>Account requests</b><span class="dim" style="font-size:12px">This server runs in offline mode, so an in-game code proves nothing on its own.</span><div class="spacer"></div><button class="btn sm" onclick="loadPlayerRequests()" title="Refresh">RELOAD</button></div>
+        <div id="prList" style="margin-top:8px"></div>
+      </div>
       <div class="card">
         <div class="row"><b>New alert rule</b><div class="spacer"></div><button class="btn sm" onclick="loadAlerts()" title="Refresh">RELOAD</button></div>
         <input type="hidden" id="arId"/>
@@ -443,7 +451,34 @@ function showTab(tab){activeTab=tab;
  if(tab==='manage')loadManage();
  if(tab==='stats')loadStats();
  if(tab==='timeline')loadEvents();
- if(tab==='alerts')loadAlerts()}
+ if(tab==='alerts'){loadAlerts();loadPlayerRequests()}}
+
+/* ---- account claims waiting for a human (#105) ---- */
+function loadPlayerRequests(){
+ api('/api/servers/'+current.id+'/player-requests').then(function(r){
+  var card=document.getElementById('prCard');
+  /* Refused (no settings scope) is the same as empty as far as this card is
+     concerned: there is nothing this viewer can do about it either way. */
+  var list=(r.ok&&r.body.requests)||[];
+  card.classList.toggle('hidden',!list.length);
+  if(!list.length)return;
+  document.getElementById('prList').innerHTML=list.map(function(q){
+   return '<div class="mrow"><div style="flex:1;min-width:0">'+
+    '<div style="font-weight:700">'+esc(q.mcName)+' <span class="badge">'+esc(q.purpose)+'</span>'+
+    (q.hasAccount?' <span class="badge">has an account</span>':'')+'</div>'+
+    '<div class="dim" style="font-size:12px">from '+esc(q.ip)+' · '+new Date(q.at).toLocaleString()+'</div></div>'+
+    '<button class="btn sm primary" onclick="prApprove(\\''+q.id+'\\')">Approve</button>'+
+    '<button class="btn sm danger" onclick="prDeny(\\''+q.id+'\\')">Deny</button></div>'}).join('')})}
+function prApprove(rid){
+ /* The operator IS the missing authentication factor here, so make them mean
+    it: on a cracked server this hands somebody the keys to an account with a
+    balance, and the only check left is a person who is sure. */
+ if(!confirm('Approve this claim? The verification code will be whispered to whoever is currently in the game under that name.'))return;
+ api('/api/servers/'+current.id+'/player-requests/approve',{method:'POST',body:JSON.stringify({id:rid})}).then(function(r){
+  if(!r.ok)alert('Could not approve: '+((r.body&&r.body.error)||r.status));
+  loadPlayerRequests()})}
+function prDeny(rid){
+ api('/api/servers/'+current.id+'/player-requests/deny',{method:'POST',body:JSON.stringify({id:rid})}).then(loadPlayerRequests)}
 
 /* ---- alert rules (#24) ---- */
 // Mirrors extraScopesForAction() in shared/alerts.ts. This is a HINT only - the
