@@ -20,7 +20,12 @@
  * to a literal. A missing variable must not render an invisible crate.
  */
 export const CRATE_CSS = `
-.crate-modal{position:fixed;inset:0;background:rgba(0,0,0,.72);display:grid;place-items:center;z-index:80;padding:16px}
+/* Above every other overlay in all three hosts. The desktop app's own
+   .modal-backdrop is 90, so at 80 the animation played BEHIND the crate editor
+   that launched the preview — the dialog dimmed and nothing else appeared.
+   Below the desktop toast layer (100) on purpose: an error about the purchase
+   has to be readable over the animation announcing it. */
+.crate-modal{position:fixed;inset:0;background:rgba(0,0,0,.72);display:grid;place-items:center;z-index:95;padding:16px}
 .crate-box{background:linear-gradient(160deg,#17151b,#0c0c11);border:1px solid var(--accent,#dc2727);border-radius:16px;padding:24px;width:min(520px,94vw);text-align:center;box-shadow:0 30px 70px rgba(0,0,0,.65)}
 .reel-mask{position:relative;overflow:hidden;height:92px;border:1px solid var(--line,var(--border,rgba(255,255,255,.14)));border-radius:10px;background:#08080c}
 .reel{display:flex;gap:8px;padding:8px;transition:transform 4s cubic-bezier(.12,.7,.2,1)}

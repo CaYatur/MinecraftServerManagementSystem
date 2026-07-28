@@ -73,10 +73,18 @@ export const STORE_CSS = `
  * An inline crate glyph, replacing the gift emoji the two storefronts used to
  * append to the product name. An emoji renders as a different picture on every
  * platform, cannot be coloured, and carries no accessible name.
+ *
+ * `width`/`height` are on the element, not left to CSS. An inline SVG with only
+ * a viewBox has no intrinsic size, so a host that does not happen to size it
+ * gets the replaced-element default — 300x150px — and the glyph fills the
+ * screen. That is not hypothetical: it shipped that way, sized in `.sf-badge`
+ * and nowhere else, so the same icon was 12px on a card and enormous in the
+ * panel's product list. A CSS rule can still override these; the difference is
+ * that forgetting one is now a wrong size rather than a broken page.
  */
 export const CRATE_ICON_SVG =
-  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
-  'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+  '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" ' +
+  'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
   '<rect x="3" y="8" width="18" height="13" rx="2"/><path d="M3 12h18"/>' +
   '<path d="M12 8v13"/><path d="M12 8S9.5 3 7 3a2.5 2.5 0 0 0 0 5z"/>' +
   '<path d="M12 8s2.5-5 5-5a2.5 2.5 0 0 1 0 5z"/></svg>'
@@ -163,7 +171,10 @@ function sfRender(){
  if(!all.length){box.innerHTML=bar+'<div class="sf-empty">'+sEsc(sfText('store.noMatch'))+'</div>';return}
  box.innerHTML=bar+sfSectionsFor(all).map(function(sec){
   return '<div class="sf-sec">'+
-   (sec.key==='all'?'':'<div class="sf-sec-head">'+(sec.key==='crate'?CRATE_ICON_SVG:'')+sEsc(sfText('store.section_'+sec.key))+'<span class="sf-n">'+sec.items.length+'</span></div>')+
+   /* No glyph in the section heading: the heading already says "Crates", so the
+      icon was decoration next to its own label. It stays on the card badge,
+      where it marks a crate among items and carries a tooltip. */
+   (sec.key==='all'?'':'<div class="sf-sec-head">'+sEsc(sfText('store.section_'+sec.key))+'<span class="sf-n">'+sec.items.length+'</span></div>')+
    '<div class="sf-grid">'+sec.items.map(sfCard).join('')+'</div></div>'}).join('');
  /* Re-focus the search box: the toolbar is inside the innerHTML that was just
     replaced, so without this every keystroke would drop the caret. Keyed on
@@ -189,7 +200,9 @@ function sfRenderDetail(){
  var meta=[];
  if(typeof p.stock==='number')meta.push(p.stock>0?sfText('store.stockLeft').replace('{n}',p.stock):sfText('store.outOfStock'));
  if(p.perPlayerLimit)meta.push(sfText('store.limitOf').replace('{n}',p.perPlayerLimit)+(typeof p.owned==='number'?' ('+p.owned+')':''));
- if(p.type==='crate'&&p.crateAnimation)meta.push(sfText('store.plays')+' '+p.crateAnimation);
+ /* The animation is not a product feature. "Opens with: spin" told a buyer the
+    internal name of a transition they are about to watch anyway — it read as a
+    leaked setting, which is what it was. */
  document.getElementById('sfDetail').innerHTML=
   '<div class="sf-hero">'+(hero?'<img src="'+sAttr(sfImg(hero))+'" alt=""/>':'<div class="sf-none">&#9635;</div>')+'</div>'+
   '<div class="sf-inner"><h3>'+sEsc(p.name)+'</h3>'+

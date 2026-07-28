@@ -140,20 +140,9 @@ export function StoreView(): JSX.Element {
     toast('success', 'store.saved')
     void load()
   }
-  const saveCrateAnimation = async (animation: CrateAnimation): Promise<void> => {
-    const previous = crateAnim
-    setCrateAnim(animation)
-    try {
-      // Trust what was actually stored, not what was asked for - the main side
-      // coerces an unknown value, and the picker must not claim otherwise.
-      const saved = await window.msms.setCrateAnimation(id, animation)
-      setCrateAnim(saved)
-      toast('success', 'store.saved')
-    } catch (e) {
-      setCrateAnim(previous)
-      toast('error', String((e as Error)?.message ?? e))
-    }
-  }
+  // The setter that fed the removed store-wide picker went with it. The IPC
+  // channel and `setCrateAnimation` stay: the web panel still offers the
+  // fallback, and a stored value is still what "inherit" resolves to.
   const saveLayout = async (next: StoreLayout): Promise<void> => {
     const previous = layout
     setLayout(next)
@@ -221,33 +210,14 @@ export function StoreView(): JSX.Element {
           </button>
         </div>
 
-        {/* Per-server, because the people who see it are the players buying
-            from this server's panel - not the operator at the desktop (#17). */}
-        <div className="field" style={{ marginTop: 14, marginBottom: 0, maxWidth: 420 }}>
-          <label>
-            <Gift size={13} style={{ verticalAlign: -2, marginRight: 5 }} />
-            {t('store.crateAnimation')}
-          </label>
-          <select
-            className="input"
-            value={crateAnim}
-            onChange={(e) => void saveCrateAnimation(e.target.value as CrateAnimation)}
-          >
-            {CRATE_ANIMATIONS.map((a) => (
-              <option key={a.id} value={a.id}>
-                {t(`store.anim_${a.id}`)}
-              </option>
-            ))}
-          </select>
-          <p className="hint" style={{ marginBottom: 0 }}>{t(`store.animDesc_${crateAnim}`)}</p>
-          <button
-            className="btn sm"
-            style={{ marginTop: 8 }}
-            onClick={() => setPreview({ animation: crateAnim, pool: [] })}
-          >
-            <Play size={13} /> {t('store.preview')}
-          </button>
-        </div>
+        {/* The store-wide crate animation used to be set here, under the
+            currency. It is gone: every crate carries its own, chosen and
+            previewed in the crate editor where the person deciding is already
+            looking at that crate. A second control setting the fallback for a
+            field nobody leaves unset is a setting to get wrong.
+            `crateAnim` survives as the value the per-crate "inherit" option
+            resolves to, so existing crates that never chose one still play
+            something. */}
 
         {/* Crates and items are different things to shop for, so the storefront
             can put them in separate sections (#80). */}
