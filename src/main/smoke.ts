@@ -5457,6 +5457,52 @@ export async function runWebSmoke(): Promise<void> {
       }
       const per = (Date.now() - t0) / 20
       if (per > 25) return fail('serving the spec costs ' + per.toFixed(1) + 'ms a request; it is not cached')
+
+      // ---- the app shells are built once, and safely so (#100) ----
+      //
+      // Both were rebuilt from their template literals per request, and both are
+      // served before authentication. Caching them is only safe because neither
+      // depends on config — every interpolation is a module constant, and
+      // everything an operator can change is fetched by the page at runtime.
+      // This is the assertion that keeps that true: change site config, and the
+      // HTML must come back byte-identical. If a later change makes a page
+      // config-derived, this fails rather than the cache quietly serving
+      // yesterday's page.
+      {
+        const before = getPublicSiteHtml()
+        const themeSnapshot = { ...siteMod.getSiteConfig().theme }
+        const nameSnapshot = siteMod.getSiteConfig().siteName
+        siteMod.setSiteConfig({
+          theme: { ...themeSnapshot, accent: '#00ff88' },
+          siteName: 'Cache Probe'
+        })
+        const after = getPublicSiteHtml()
+        siteMod.setSiteConfig({ theme: themeSnapshot, siteName: nameSnapshot })
+        if (before !== after) {
+          return fail('the site page is config-derived, so caching it would serve a stale theme')
+        }
+        const panelBefore = getPanelHtml()
+        if (getPanelHtml() !== panelBefore) return fail('the panel page is not deterministic')
+
+        // Served once, then revalidated: an unchanged shell costs a 304.
+        const p1 = await fetch(base + '/')
+        if (p1.status !== 200) return fail('the panel page expected 200, got ' + p1.status)
+        const tag = p1.headers.get('etag')
+        if (!tag) return fail('the panel page carries no ETag')
+        const body1 = await p1.text()
+        const p2 = await fetch(base + '/', { headers: { 'If-None-Match': tag } })
+        if (p2.status !== 304) return fail('a matching ETag expected 304, got ' + p2.status)
+        if ((await p2.text()).length !== 0) return fail('a 304 carried a body')
+        const t1 = Date.now()
+        for (let i = 0; i < 20; i++) {
+          const again = await fetch(base + '/')
+          if ((await again.text()) !== body1) return fail('the panel page changed between requests')
+        }
+        const perPage = (Date.now() - t1) / 20
+        if (perPage > 25) {
+          return fail('serving the panel page costs ' + perPage.toFixed(1) + 'ms; it is not cached')
+        }
+      }
       // ...and nothing about this install may be in them, or "no credential" is
       // a disclosure rather than a convenience.
       const fixtureName = getConfig().servers.find((s) => s.id === id)?.name ?? ''

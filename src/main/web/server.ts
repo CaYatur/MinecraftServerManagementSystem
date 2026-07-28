@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from 'node:http'
+import { createHash } from 'node:crypto'
 import { networkInterfaces } from 'node:os'
 import { createReadStream, existsSync } from 'node:fs'
 import { join, extname, resolve, sep } from 'node:path'
@@ -228,6 +229,64 @@ function cachedDocs(): string {
   return docsHtml
 }
 
+/**
+ * The two app shells, built once and served with an ETag (#100).
+ *
+ * Both were rebuilt from their template literals on **every** request — a few
+ * hundred KB of string work each — and both are served before any
+ * authentication, on listeners with no per-address limit outside `/api/login`.
+ * With `bindLan` on, that is a way to make the panel unresponsive from anywhere
+ * on the network without holding a credential.
+ *
+ * Caching them is safe because neither depends on the request or on config:
+ * every interpolation is a module constant, and everything an operator can
+ * change — theme, languages, posts, logo — is fetched by the page at runtime
+ * from `/api/public/site`. The smoke asserts exactly that, by changing site
+ * config and requiring the HTML to come back byte-identical. If a later change
+ * makes a page config-derived, that assertion fails rather than this cache
+ * quietly serving yesterday's page.
+ */
+interface CachedPage {
+  body: string
+  etag: string
+}
+
+const pageCache = new Map<string, CachedPage>()
+
+function cachedPage(key: string, build: () => string): CachedPage {
+  let hit = pageCache.get(key)
+  if (!hit) {
+    const body = build()
+    hit = { body, etag: '"' + createHash('sha1').update(body).digest('base64url') + '"' }
+    pageCache.set(key, hit)
+  }
+  return hit
+}
+
+/** Test seam: drop the built pages so a rebuild can be observed. */
+export function _resetPageCache(): void {
+  pageCache.clear()
+  specJson = null
+  docsHtml = null
+}
+
+function sendPage(req: IncomingMessage, res: ServerResponse, page: CachedPage): void {
+  // `no-cache` means "revalidate", not "do not store": the browser keeps the
+  // copy and asks, and an unchanged shell costs a 304 with no body. A panel is
+  // reloaded often, and the shell only changes when the app is upgraded.
+  if (req.headers['if-none-match'] === page.etag) {
+    res.writeHead(304, { ETag: page.etag, 'Cache-Control': 'no-cache' })
+    res.end()
+    return
+  }
+  res.writeHead(200, {
+    'Content-Type': 'text/html; charset=utf-8',
+    ETag: page.etag,
+    'Cache-Control': 'no-cache'
+  })
+  res.end(page.body)
+}
+
 /** Test seam: the buckets survive a `stopWebServer()`, which smoke runs rely on. */
 export function _resetRateLimits(): void {
   resetKeyBuckets()
@@ -432,10 +491,12 @@ async function handleSite(req: IncomingMessage, res: ServerResponse): Promise<vo
       res.end()
       return
     }
+    // Limited per address like the public API below it: the page and the
+    // uploads it references are served without a credential, so an unlimited
+    // one is a way to spend the process from anywhere that can reach the port.
+    if (!publicRateOk(ip, res)) return
     if (path.startsWith('/uploads/')) return serveUpload(path, res)
-    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
-    res.end(getPublicSiteHtml())
-    return
+    return sendPage(req, res, cachedPage('site', getPublicSiteHtml))
   }
   if (path.startsWith('/api/public/')) {
     // Unauthenticated and internet-reachable when the operator opts into LAN,
@@ -525,11 +586,11 @@ async function handlePanel(req: IncomingMessage, res: ServerResponse): Promise<v
       res.end()
       return
     }
+    // Same reasoning as the site listener: unauthenticated, so limited.
+    if (!publicRateOk(ip, res)) return
     // Sandboxed raster uploads (for post image previews in the panel).
     if (path.startsWith('/uploads/')) return serveUpload(path, res)
-    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
-    res.end(getPanelHtml())
-    return
+    return sendPage(req, res, cachedPage('panel', getPanelHtml))
   }
 
   // ---- public auth endpoints ----
