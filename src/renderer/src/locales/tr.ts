@@ -876,6 +876,7 @@ const tr: typeof en = {
     yes: 'Evet',
     no: 'Hayır',
     close: 'Kapat',
+    clear: 'Temizle',
     loading: 'Yükleniyor…',
     refresh: 'Yenile',
     apply: 'Uygula',
