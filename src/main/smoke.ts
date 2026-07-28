@@ -5445,6 +5445,18 @@ export async function runWebSmoke(): Promise<void> {
       if (r.status !== 200) return fail('the spec expected 200 without a credential, got ' + r.status)
       const served = await r.text()
       if (served !== JSON.stringify(doc)) return fail('the served spec is not the generated one')
+      // Unauthenticated and ~120 KB, so it is limited by address like the other
+      // credential-less reads, and built once rather than per request. Twenty in
+      // a row must stay fast and identical; the same bucket the public site
+      // spends from allows 300 of burst, so this does not trip it.
+      const t0 = Date.now()
+      for (let i = 0; i < 20; i++) {
+        const again = await fetch(base + '/api/v1/openapi.json')
+        if (again.status !== 200) return fail('a repeated spec fetch returned ' + again.status)
+        if ((await again.text()) !== served) return fail('the spec changed between requests')
+      }
+      const per = (Date.now() - t0) / 20
+      if (per > 25) return fail('serving the spec costs ' + per.toFixed(1) + 'ms a request; it is not cached')
       // ...and nothing about this install may be in them, or "no credential" is
       // a disclosure rather than a convenience.
       const fixtureName = getConfig().servers.find((s) => s.id === id)?.name ?? ''

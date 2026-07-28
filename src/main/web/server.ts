@@ -208,6 +208,26 @@ function publicRateOk(ip: string, res: ServerResponse): boolean {
   return false
 }
 
+/**
+ * The spec and the reference page, built once.
+ *
+ * Both derive from a constant table, so the output cannot change while the
+ * process runs. Building them per request would be ~120 KB of object graph and
+ * string work on an unauthenticated route.
+ */
+let specJson: string | null = null
+let docsHtml: string | null = null
+
+function cachedSpec(): string {
+  if (specJson === null) specJson = JSON.stringify(openApiDocument())
+  return specJson
+}
+
+function cachedDocs(): string {
+  if (docsHtml === null) docsHtml = getApiDocsHtml()
+  return docsHtml
+}
+
 /** Test seam: the buckets survive a `stopWebServer()`, which smoke runs rely on. */
 export function _resetRateLimits(): void {
   resetKeyBuckets()
@@ -459,21 +479,42 @@ async function handlePanel(req: IncomingMessage, res: ServerResponse): Promise<v
   // withhold. Requiring a credential would also make the docs page useless to
   // the thing that needs it most: a browser, which cannot set an Authorization
   // header on a navigation.
-  if (rawPath === '/api/v1' && method === 'GET') {
-    return sendJson(res, 200, {
-      version: API_VERSION,
-      openapi: '/api/v1/openapi.json',
-      docs: '/api/v1/docs',
-      stream: WS_PATH,
-      streams: WS_STREAMS
+  //
+  // Rate limited per address, and built once. Both matter because these three
+  // are the only unauthenticated routes on this listener: the spec is ~120 KB
+  // and the page not much less, so rebuilding either per request hands anyone
+  // who can reach the port a way to spend the event loop without a credential.
+  // Their input is constant, so the answer is too — the cost is now one buffer
+  // write, and the per-IP bucket caps even that.
+  if (
+    rawPath === '/api/v1' ||
+    rawPath === '/api/v1/openapi.json' ||
+    rawPath === '/api/v1/docs'
+  ) {
+    if (method !== 'GET') return sendJson(res, 405, { error: 'method-not-allowed' })
+    if (!publicRateOk(ip, res)) return
+    if (rawPath === '/api/v1') {
+      return sendJson(res, 200, {
+        version: API_VERSION,
+        openapi: '/api/v1/openapi.json',
+        docs: '/api/v1/docs',
+        stream: WS_PATH,
+        streams: WS_STREAMS
+      })
+    }
+    if (rawPath === '/api/v1/openapi.json') {
+      res.writeHead(200, {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Cache-Control': 'public, max-age=300'
+      })
+      res.end(cachedSpec())
+      return
+    }
+    res.writeHead(200, {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'public, max-age=300'
     })
-  }
-  if (rawPath === '/api/v1/openapi.json' && method === 'GET') {
-    return sendJson(res, 200, openApiDocument())
-  }
-  if (rawPath === '/api/v1/docs' && method === 'GET') {
-    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' })
-    res.end(getApiDocsHtml())
+    res.end(cachedDocs())
     return
   }
 
