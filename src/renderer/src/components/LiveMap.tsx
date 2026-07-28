@@ -62,12 +62,19 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
   const bounds = useMemo(() => mapBounds(shown), [shown])
   const heat = useMemo(() => heatmap(shown, cell), [shown, cell])
 
-  // Follow the crowd: if nobody is in the selected dimension but people are
-  // online elsewhere, showing an empty map of the overworld is less useful than
-  // showing where they actually are.
+  // Follow the crowd ONCE: if nobody is in the default dimension but people are
+  // online elsewhere, an empty overworld is less useful than showing where they
+  // actually are.
+  //
+  // Only until the operator picks one, though. Without the flag this re-fires
+  // every poll, so choosing "nether" while nobody is there snaps straight back
+  // to the overworld and the select becomes unusable — the web panel avoids the
+  // same trap by keeping the chosen dimension in its list even when empty.
+  const [chosen, setChosen] = useState(false)
   useEffect(() => {
+    if (chosen) return
     if (!shown.length && dimensions.length && !dimensions.includes(dim)) setDim(dimensions[0])
-  }, [dimensions, shown.length, dim])
+  }, [chosen, dimensions, shown.length, dim])
 
   useEffect(() => {
     const cv = canvasRef.current
@@ -158,9 +165,14 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
           className="select"
           style={{ width: 150 }}
           value={dim}
-          onChange={(e) => setDim(e.target.value)}
+          onChange={(e) => {
+            setChosen(true)
+            setDim(e.target.value)
+          }}
         >
-          {(dimensions.length ? dimensions : [dim]).map((d) => (
+          {/* The chosen dimension stays listed even when it is empty, or the
+              select would drop the option that is currently selected. */}
+          {[...new Set([...dimensions, dim])].sort().map((d) => (
             <option key={d} value={d}>
               {d}
             </option>
