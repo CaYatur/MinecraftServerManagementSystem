@@ -762,11 +762,11 @@ async function handlePanel(req: IncomingMessage, res: ServerResponse): Promise<v
     }
 
     // ---- moderation (players scope) ----
+    //
+    // No GET here: `/api/servers/:id/players` is a single path segment, so the
+    // matcher above claims it and returns. A second handler would be dead code
+    // that looks like the authoritative one.
     if (group === 'players') {
-      if (!action && method === 'GET') {
-        if (!gate('view')) return
-        return sendJson(res, 200, { players: await getPlayers(id) })
-      }
       if (method === 'POST' && isModerationAction(action)) {
         if (!gate('players')) return
         const b = (await readBody(req).catch(() => ({}))) as {

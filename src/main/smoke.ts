@@ -2452,6 +2452,24 @@ export async function runSmoke(): Promise<void> {
     const live = await worldsMod.listWorlds(id)
     if (!Array.isArray(live)) return fail('listWorlds did not return a list while running')
     console.log(`SMOKE: world guard OK (delete refused while running, ${live.length} world(s) listed)`)
+
+    // Restoring a backup over a LIVE world corrupts it - the server holds region
+    // files open and writes its in-memory state back on its own schedule. The
+    // desktop only ever warned about it in a dialog ("Stop the server first"),
+    // which an API caller never reads, and core had no guard at all until #53
+    // made restore reachable over HTTP.
+    const made = await backupsMod.createBackup(id, { kind: 'full' })
+    let restoreRefused = ''
+    try {
+      backupsMod.restoreBackup(made.id)
+    } catch (e) {
+      restoreRefused = String((e as Error)?.message ?? e)
+    }
+    backupsMod.deleteBackup(made.id)
+    if (restoreRefused !== 'server-running') {
+      return fail('restoring a backup while running was refused with "' + restoreRefused + '"')
+    }
+    console.log('SMOKE: restore refused while the server is running')
   }
 
   // --- 2c. RCON auto-enable + player JSON merge ---

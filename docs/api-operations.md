@@ -141,6 +141,12 @@ up a world.
 `backupId` is looked up within **this server's** backups. A backup id belonging
 to another server is `404` here, not restorable by someone scoped to this one.
 
+Restoring is refused with `409 server-running` while the server is up. Extracting
+over a live world corrupts it: the server holds region files open and writes its
+in-memory state back on its own schedule, so a restore part-way through leaves a
+mix of old and new chunks and is then overwritten. Until this change that was
+only a warning in the desktop dialog, which an API caller never reads.
+
 ## Audit
 
 Every call writes an audit entry, successes and refusals alike:

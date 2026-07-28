@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, statSync, rmSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { getServer } from './serverRegistry'
+import { processManager } from './processManager'
 import { readProperties } from './serverFiles'
 import * as events from './events'
 import { backupsDir, backupsMetaPath } from '../paths'
@@ -114,6 +115,13 @@ export function restoreBackup(id: string): void {
   if (!rec) throw new Error('backup-not-found')
   const server = getServer(rec.serverId)
   if (!server) throw new Error('server-not-found')
+  // Extracting over a live world corrupts it: the server holds region files
+  // open and saves its in-memory state on its own schedule, so a restore
+  // part-way through leaves a mix of old and new chunks and then gets written
+  // back over. `core/worlds.ts` guards every destructive op this way; this one
+  // only ever had a warning in the desktop dialog ("Stop the server first"),
+  // which an API caller never reads.
+  if (processManager.isRunning(rec.serverId)) throw new Error('server-running')
   if (!existsSync(rec.path)) throw new Error('backup-file-missing')
   const zip = new AdmZip(rec.path)
   zip.extractAllTo(server.path, true)
