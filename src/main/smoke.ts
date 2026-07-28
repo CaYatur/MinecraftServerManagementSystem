@@ -25,13 +25,17 @@ import {
   CRATE_ANIMATIONS,
   DEFAULT_CRATE_ANIMATION,
   crateDuration,
-  normalizeCrateAnimation
+  normalizeCrateAnimation,
+  resolveCrateAnimation
 } from '@shared/crate'
 import { getProvider } from './core/versions'
 import { createServer } from './core/createServer'
 import { pickForgeRunJar } from './core/serverDetect'
 import { downloadFile } from './core/net'
 import { createServer as httpCreateServer } from 'node:http'
+import { runInNewContext } from 'node:vm'
+import { getPanelHtml } from './web/panelHtml'
+import { getPublicSiteHtml } from './web/publicSiteHtml'
 import { removeServer } from './core/serverRegistry'
 import * as sf from './core/serverFiles'
 import * as playersMod from './core/players'
@@ -3107,6 +3111,152 @@ export async function runRealSmoke(): Promise<void> {
  * Web-panel RBAC smoke: proves the DENIALS (401 no-token, 403 wrong-scope) and
  * a couple of allows, headlessly via fetch to 127.0.0.1.
  */
+/**
+ * Run one of the served pages' inline `<script>` in a stub DOM.
+ *
+ * The panel and the website are hand-written vanilla JS inside a TypeScript
+ * template literal, which means every backslash resolves twice and nothing
+ * type-checks it. A mis-escaped quote produces a page that throws on load and
+ * shows a blank screen - and the only thing that catches it today is opening a
+ * browser. This makes the parse itself an assertion, and lets a test click
+ * through the parts that build markup.
+ *
+ * Only what the exercised code paths touch is stubbed; a missing capability
+ * shows up as a thrown error, which is the correct outcome.
+ */
+interface StubNode {
+  id: string
+  innerHTML: string
+  textContent: string
+  value: string
+  checked: boolean
+  className: string
+  style: Record<string, string> & { cssText?: string }
+  classList: {
+    add(c: string): void
+    remove(c: string): void
+    toggle(c: string, on?: boolean): void
+    contains(c: string): boolean
+  }
+  children: StubNode[]
+  querySelector(): StubNode
+  querySelectorAll(): StubNode[]
+  appendChild(): void
+  addEventListener(): void
+}
+
+interface PageRun {
+  ctx: Record<string, unknown>
+  byId(id: string): StubNode
+  calls: unknown[][]
+}
+
+function runPageScript(html: string, seed: Record<string, unknown> = {}): PageRun {
+  const m = html.match(/<script>([\s\S]*?)<\/script>/)
+  if (!m) throw new Error('page has no inline script')
+
+  const nodes = new Map<string, StubNode>()
+  const mkNode = (id: string): StubNode => {
+    const cls = new Set<string>()
+    const n: StubNode = {
+      id,
+      innerHTML: '',
+      textContent: '',
+      value: '',
+      checked: false,
+      className: '',
+      style: {},
+      classList: {
+        add: (c) => void cls.add(c),
+        remove: (c) => void cls.delete(c),
+        toggle: (c, on) => {
+          if (on === undefined) cls.has(c) ? cls.delete(c) : cls.add(c)
+          else if (on) cls.add(c)
+          else cls.delete(c)
+        },
+        contains: (c) => cls.has(c)
+      },
+      children: [],
+      querySelector: () => mkNode(''),
+      querySelectorAll: () => [],
+      appendChild: () => {},
+      addEventListener: () => {}
+    }
+    return n
+  }
+  // Pre-create every id the markup declares, so a lookup that should succeed
+  // does, and one for an element that does not exist still returns something
+  // rather than throwing in a way that hides the real assertion.
+  for (const id of html.matchAll(/id="([^"]+)"/g)) nodes.set(id[1], mkNode(id[1]))
+
+  const calls: unknown[][] = []
+  const document = {
+    getElementById: (id: string): StubNode => {
+      if (!nodes.has(id)) nodes.set(id, mkNode(id))
+      return nodes.get(id) as StubNode
+    },
+    // The pages escape by round-tripping through textContent/innerHTML, so the
+    // stub has to actually escape or every escaping assertion would pass.
+    createElement: (): StubNode => {
+      const n = mkNode('')
+      let text = ''
+      Object.defineProperty(n, 'textContent', {
+        get: () => text,
+        set: (v: string) => {
+          text = v == null ? '' : String(v)
+        }
+      })
+      Object.defineProperty(n, 'innerHTML', {
+        get: () => text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'),
+        set: (v: string) => {
+          text = v
+        }
+      })
+      return n
+    },
+    querySelector: (): StubNode => mkNode(''),
+    querySelectorAll: (): StubNode[] => [],
+    addEventListener: () => {},
+    head: mkNode('head'),
+    body: mkNode('body')
+  }
+
+  const ctx: Record<string, unknown> = {
+    document,
+    console,
+    localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
+    location: { hash: '#/' },
+    setInterval: () => 0,
+    clearInterval: () => {},
+    setTimeout: () => 0,
+    clearTimeout: () => {},
+    requestAnimationFrame: () => 0,
+    cancelAnimationFrame: () => {},
+    alert: (msg: string) => calls.push(['alert', msg]),
+    confirm: () => true,
+    encodeURIComponent,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    matchMedia: () => ({ matches: false, addEventListener: () => {} }),
+    IntersectionObserver: class {
+      observe(): void {}
+      disconnect(): void {}
+    },
+    navigator: { language: 'en', languages: ['en'], clipboard: { writeText: () => Promise.resolve() } },
+    fetch: (path: string, opts?: { method?: string; body?: string }) => {
+      calls.push(['fetch', path, opts?.method ?? 'GET', opts?.body])
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}) })
+    },
+    ...seed
+  }
+  ctx['window'] = ctx
+  ctx['globalThis'] = ctx
+  // Throws on a syntax error, which is the first thing this is here to catch.
+  runInNewContext(m[1], ctx, { filename: 'page.js' })
+  Object.assign(ctx, seed) // seeds that the script's own `var` declarations reset
+  return { ctx, byId: (id) => document.getElementById(id), calls }
+}
+
 export async function runWebSmoke(): Promise<void> {
   const fail = (m: string): void => {
     console.log('WEB-SMOKE: FAIL -', m)
@@ -3940,6 +4090,156 @@ export async function runWebSmoke(): Promise<void> {
       return fail('an invalid animation must be coerced, not stored')
     }
     console.log('WEB-SMOKE: crate animation OK (coerced on every path, reaches the buyer payload)')
+
+    // ---- per-crate animation + buyer-visible contents (#75, #79) ----
+    {
+      // Pure resolution first: crate wins, absent inherits, garbage degrades.
+      if (resolveCrateAnimation({ crateAnimation: 'flip' }, 'burst') !== 'flip') {
+        return fail("a crate's own animation did not win over the store default")
+      }
+      if (resolveCrateAnimation({}, 'burst') !== 'burst') return fail('an unset crate did not inherit')
+      if (resolveCrateAnimation(undefined, 'burst') !== 'burst') return fail('no product did not inherit')
+      if (resolveCrateAnimation({ crateAnimation: 'nope' }, 'burst') !== DEFAULT_CRATE_ANIMATION) {
+        return fail('a garbage per-crate animation was not coerced to the app default')
+      }
+      if (resolveCrateAnimation({}, 'nope') !== DEFAULT_CRATE_ANIMATION) {
+        return fail('a garbage store default was not coerced')
+      }
+
+      const cs = 'crate-public-' + Date.now()
+      economy.setCrateAnimation(cs, 'burst')
+      const secret = 'lp user {player} parent set vip'
+      const pinned = economy.upsertProduct(cs, {
+        id: '',
+        type: 'crate',
+        name: 'Pinned',
+        description: '',
+        price: 10,
+        commands: [],
+        crateAnimation: 'spin',
+        rewards: [
+          { name: 'Rare', weight: 1, commands: [secret] },
+          { name: 'Common', weight: 3, commands: ['say hi'] }
+        ]
+      } as Product)
+      economy.upsertProduct(cs, {
+        id: '',
+        type: 'crate',
+        name: 'Inheriting',
+        description: '',
+        price: 10,
+        commands: [],
+        rewards: [{ name: 'Only', weight: 0, commands: [] }]
+      } as Product)
+      if (pinned.crateAnimation !== 'spin') return fail('a per-crate animation did not persist')
+
+      const pub = economy.publicStore(cs)
+      const pinnedPub = pub.products.find((p) => p.name === 'Pinned')
+      const inheritPub = pub.products.find((p) => p.name === 'Inheriting')
+      if (pinnedPub?.crateAnimation !== 'spin') return fail('the pinned crate did not publish its own animation')
+      if (inheritPub?.crateAnimation !== 'burst') return fail('the inheriting crate did not publish the store default')
+
+      // Odds, not weights: 1 and 3 is 25/75, whatever the numbers were.
+      const odds = (pinnedPub?.rewards ?? []).map((r) => r.chancePct)
+      if (odds.join(',') !== '25,75') return fail('weights were not normalised to odds: ' + odds.join(','))
+      // An all-zero pool must not divide by zero.
+      if (inheritPub?.rewards?.[0]?.chancePct !== 100) {
+        return fail('an all-zero weight pool produced ' + String(inheritPub?.rewards?.[0]?.chancePct))
+      }
+
+      // The invariant that matters: a reward's commands are console commands,
+      // and telling every visitor what they are is telling them exactly what to
+      // get a compromised account to run.
+      const serialised = JSON.stringify(pub)
+      if (serialised.includes(secret) || serialised.includes('commands')) {
+        return fail('reward commands crossed into the buyer-facing payload')
+      }
+
+      // ...and the resolved animation rides on the purchase result, because the
+      // buyer never has the product it came from.
+      economy.addBalance(cs, 'Steve', 100, 'smoke')
+      const bought = economy.purchase(cs, 'Steve', pinned.id)
+      if (!bought.ok) return fail('crate purchase failed: ' + String(bought.error))
+      if (bought.reward?.animation !== 'spin') {
+        return fail('the purchase result did not carry the crate animation: ' + String(bought.reward?.animation))
+      }
+      console.log('WEB-SMOKE: per-crate animation OK (own beats default, odds published, commands never are)')
+    }
+
+    // ---- the served pages actually run, and the crate editor has its picker ----
+    {
+      let panel: PageRun
+      let site: PageRun
+      try {
+        // A mis-escaped quote in these template literals produces a page that
+        // throws on load and renders blank. Parsing them is the assertion.
+        panel = runPageScript(getPanelHtml(), {
+          current: { id, name: 'S', scopes: ['view', 'store'], status: 'stopped' }
+        })
+        site = runPageScript(getPublicSiteHtml())
+      } catch (e) {
+        return fail('a served page threw on load: ' + String(e))
+      }
+
+      const call = <T>(name: string, ...args: unknown[]): T =>
+        (panel.ctx[name] as (...a: unknown[]) => T)(...args)
+
+      // #74: the panel could always reach the crate-animation route, and never
+      // offered a control that called it.
+      call('pmNew', 'crate')
+      const editor = panel.byId('pmBox').innerHTML
+      if (!/id="pmAnim"/.test(editor)) return fail('the crate editor has no animation picker')
+      for (const a of CRATE_ANIMATIONS) {
+        if (!editor.includes('value="' + a.id + '"')) return fail('picker is missing ' + a.id)
+      }
+      // Exactly one selected option. Two means the browser silently takes the
+      // last, so a crate that inherits would display someone else's animation.
+      const selectedCount = (editor.match(/ selected/g) ?? []).length
+      if (selectedCount !== 1) return fail('animation picker has ' + selectedCount + ' selected options')
+      if (!/<option value=""[^>]* selected/.test(editor)) {
+        return fail('a new crate does not default to inheriting the store animation')
+      }
+
+      // An untouched crate must NOT pin an animation - absent means "inherit",
+      // and storing today's default would stop it following a later change.
+      panel.calls.length = 0
+      call('pmSave')
+      const posted = panel.calls.find((c) => String(c[1]).endsWith('/store/admin/product'))
+      if (!posted) return fail('saving a crate from the panel posted nothing')
+      const body = JSON.parse(String(posted[3])) as Product
+      if (body.type !== 'crate') return fail('the panel posted the wrong product type')
+      if ('crateAnimation' in body) return fail('an inheriting crate pinned an animation anyway')
+
+      // ...and a chosen one does travel.
+      ;(panel.ctx['pmDraft'] as { crateAnimation: string }).crateAnimation = 'flip'
+      panel.calls.length = 0
+      call('pmSave')
+      const posted2 = panel.calls.find((c) => String(c[1]).endsWith('/store/admin/product'))
+      const body2 = JSON.parse(String(posted2?.[3])) as Product
+      if (body2.crateAnimation !== 'flip') return fail('a chosen crate animation was not sent')
+
+      // #79: contents render with odds, and hostile reward data cannot escape
+      // the attribute it is written into.
+      const evil = 'x" onerror="alert(1)'
+      const contents = call<string>('crateContentsHtml', [
+        { name: '<b>boom</b>', icon: evil, chancePct: 5 },
+        { name: 'Common', chancePct: 95 }
+      ])
+      if (!contents.includes('95%') || !contents.includes('5%')) return fail('odds not rendered')
+      if (contents.includes('onerror="alert(1)"')) return fail('a reward icon escaped its attribute')
+      if (contents.includes('<b>boom</b>')) return fail('a reward name was not escaped')
+      if (!contents.includes('cp-rare')) return fail('a long-odds reward is not marked as one')
+
+      // The website must have the same engine, not its old hardcoded reel.
+      for (const fn of ['openCrate', 'crateContentsHtml', 'cratePreview']) {
+        if (typeof site.ctx[fn] !== 'function') return fail('the public site is missing ' + fn)
+      }
+      const siteHtml = getPublicSiteHtml()
+      if (siteHtml.includes('5.2s cubic-bezier') || siteHtml.includes('},5300)')) {
+        return fail('the public site still has its hardcoded 5.3s reel')
+      }
+      console.log('WEB-SMOKE: panel + site scripts parse; crate editor picker, save shape and contents escaping OK')
+    }
 
     // ---- API keys (#48) + safety rails (#50) ----
     {

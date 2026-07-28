@@ -10,13 +10,15 @@ import {
   Coins,
   X,
   Tag,
+  Play,
   ChevronDown,
   ChevronRight
 } from 'lucide-react'
 import { useStore } from '../store'
 import { categoryName, filterLedger, ledgerSummary } from '@shared/economy'
-import { CRATE_ANIMATIONS, DEFAULT_CRATE_ANIMATION } from '@shared/crate'
+import { CRATE_ANIMATIONS, DEFAULT_CRATE_ANIMATION, resolveCrateAnimation } from '@shared/crate'
 import type { CrateAnimation } from '@shared/crate'
+import { CratePreview } from '../components/CratePreview'
 import type { LedgerKind } from '@shared/economy'
 import type {
   Product,
@@ -53,6 +55,11 @@ export function StoreView(): JSX.Element {
   const [crateAnim, setCrateAnim] = useState<CrateAnimation>(DEFAULT_CRATE_ANIMATION)
   const [edit, setEdit] = useState<Product | null>(null)
   const [cmdText, setCmdText] = useState('')
+  // What the preview modal is playing, and with which rewards. Null = closed.
+  const [preview, setPreview] = useState<{
+    animation: CrateAnimation
+    pool: { name: string; icon?: string }[]
+  } | null>(null)
 
   const summary = useMemo(() => ledgerSummary(ledger), [ledger])
   const shownLedger = useMemo(
@@ -119,6 +126,10 @@ export function StoreView(): JSX.Element {
       commands: edit.type === 'item' ? cmdText.split('\n').map((s) => s.trim()).filter(Boolean) : [],
       rewards: edit.type === 'crate' ? edit.rewards : []
     }
+    // Dropped rather than sent empty: an absent animation means "inherit the
+    // store default", and a crate that stored today's default would silently
+    // stop following it the moment the operator changed that default.
+    if (product.type !== 'crate' || !product.crateAnimation) delete product.crateAnimation
     await window.msms.upsertStoreProduct(id, product)
     setEdit(null)
     toast('success', 'store.saved')
@@ -213,6 +224,13 @@ export function StoreView(): JSX.Element {
             ))}
           </select>
           <p className="hint" style={{ marginBottom: 0 }}>{t(`store.animDesc_${crateAnim}`)}</p>
+          <button
+            className="btn sm"
+            style={{ marginTop: 8 }}
+            onClick={() => setPreview({ animation: crateAnim, pool: [] })}
+          >
+            <Play size={13} /> {t('store.preview')}
+          </button>
         </div>
       </div>
 
@@ -484,6 +502,55 @@ export function StoreView(): JSX.Element {
                   <p className="hint" style={{ marginTop: 4 }}>{t('store.commandsHint')}</p>
                 </div>
               ) : (
+                <>
+                {/* Per crate, falling back to the store default (#75). The
+                    daily crate and the once-a-month one should not have to
+                    feel the same. */}
+                <div className="field">
+                  <label>
+                    <Gift size={13} style={{ verticalAlign: -2, marginRight: 5 }} />
+                    {t('store.crateAnimation')}
+                  </label>
+                  <div className="row" style={{ gap: 8 }}>
+                    <select
+                      className="input"
+                      style={{ flex: 1 }}
+                      value={edit.crateAnimation ?? ''}
+                      onChange={(e) =>
+                        setEdit({
+                          ...edit,
+                          crateAnimation: (e.target.value || undefined) as CrateAnimation | undefined
+                        })
+                      }
+                    >
+                      <option value="">
+                        {t('store.animInherit', { name: t(`store.anim_${crateAnim}`) })}
+                      </option>
+                      {CRATE_ANIMATIONS.map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {t(`store.anim_${a.id}`)}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      className="btn sm"
+                      onClick={() =>
+                        setPreview({
+                          animation: resolveCrateAnimation(edit, crateAnim),
+                          pool: edit.rewards
+                            .filter((r) => r.name.trim())
+                            .map((r) => ({ name: r.name, icon: r.icon }))
+                        })
+                      }
+                    >
+                      <Play size={13} /> {t('store.preview')}
+                    </button>
+                  </div>
+                  <p className="hint" style={{ marginBottom: 0 }}>
+                    {t(`store.animDesc_${resolveCrateAnimation(edit, crateAnim)}`)}
+                  </p>
+                </div>
+
                 <div className="field">
                   <label>{t('store.rewards')}</label>
                   {(() => {
@@ -505,6 +572,7 @@ export function StoreView(): JSX.Element {
                     <Plus size={13} /> {t('store.addReward')}
                   </button>
                 </div>
+                </>
               )}
             </div>
             <div className="modal-actions">
@@ -513,6 +581,14 @@ export function StoreView(): JSX.Element {
             </div>
           </div>
         </div>
+      )}
+
+      {preview && (
+        <CratePreview
+          animation={preview.animation}
+          pool={preview.pool}
+          onClose={() => setPreview(null)}
+        />
       )}
     </div>
   )

@@ -84,6 +84,28 @@ export interface Product {
   commands: string[]
   /** For type 'crate': weighted reward pool. */
   rewards: CrateReward[]
+  /**
+   * For type 'crate': the animation this crate plays (#75). Absent means
+   * "inherit the store default", which is what every crate created before this
+   * existed says - so they all keep playing exactly what they played before.
+   */
+  crateAnimation?: CrateAnimation
+}
+
+/**
+ * One entry of a crate's contents as a buyer may see it (#79).
+ *
+ * `chancePct` rather than the raw weight: a weight is only meaningful next to
+ * every other weight in the pool, and nobody should have to normalise a column
+ * of numbers in their head to find out how likely something is. Crucially there
+ * is no `commands` field - what a reward *runs* is server business and must
+ * never reach a buyer-facing payload.
+ */
+export interface PublicReward {
+  name: string
+  icon?: string
+  /** 0-100, rounded to one decimal. */
+  chancePct: number
 }
 
 /** Product as shown to buyers (no raw commands leaked). */
@@ -94,7 +116,10 @@ export interface ProductPublic {
   description: string
   price: number
   icon?: string
-  rewardNames?: string[]
+  /** For a crate: its contents with odds, shown before buying (#79). */
+  rewards?: PublicReward[]
+  /** For a crate: the animation it will play, so a storefront can say so. */
+  crateAnimation?: CrateAnimation
 }
 
 export interface StorePublic {
@@ -156,7 +181,18 @@ export interface BuyResult {
   ok: boolean
   error?: string
   balance?: number
-  reward?: { name: string; icon?: string; crate: boolean; pool?: { name: string; icon?: string }[] }
+  reward?: {
+    name: string
+    icon?: string
+    crate: boolean
+    pool?: { name: string; icon?: string }[]
+    /**
+     * Resolved server-side (#75). The client only ever has the reward, never
+     * the product it came from, so the animation has to travel on the reward
+     * or a per-crate setting cannot reach the thing that plays it.
+     */
+    animation?: CrateAnimation
+  }
 }
 
 // ---- public website / CMS ----
