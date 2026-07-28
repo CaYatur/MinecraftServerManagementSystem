@@ -88,8 +88,20 @@ function loadSessions(): void {
   }
 }
 
+/**
+ * Sessions are 14 days long and one login mints one, so a player who signs in
+ * from a new device every day accumulates them. Bounded here rather than left
+ * to the TTL: the oldest go first, which logs out the least recently used
+ * device rather than the person who just signed in.
+ */
+const MAX_SESSIONS = 2000
+
 function saveSessions(): void {
   try {
+    if (sessions.size > MAX_SESSIONS) {
+      const byOldest = [...sessions.entries()].sort((a, b) => a[1].expires - b[1].expires)
+      for (const [token] of byOldest.slice(0, sessions.size - MAX_SESSIONS)) sessions.delete(token)
+    }
     const p = sessionsFile()
     writeFileSync(p + '.tmp', JSON.stringify([...sessions.entries()]), 'utf-8')
     renameSync(p + '.tmp', p)
@@ -392,8 +404,13 @@ export function resolvePlayerSession(token: string | undefined): { mcName: strin
   const s = sessions.get(token)
   if (!s) return null
   if (s.expires < Date.now()) {
+    // Dropped from memory, NOT written back. This is a read path reachable by
+    // anyone holding an old token, and persisting here would let a replayed
+    // expired token force a disk write per request — an amplifier on an
+    // unauthenticated path, which is the shape closed in #107. The file is
+    // pruned of expired entries the next time it is loaded or written for a
+    // real reason.
     sessions.delete(token)
-    saveSessions()
     return null
   }
   return { mcName: s.mcName }

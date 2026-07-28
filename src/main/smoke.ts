@@ -4561,13 +4561,29 @@ export async function runWebSmoke(): Promise<void> {
         // An admin token must not be a player token here either: the endpoint
         // decides "owner" from a PLAYER session, and an operator holding a panel
         // token is a stranger to every player account.
+        // An admin panel token is not a player session. It used to fall through
+        // as "anonymous"; since #120 a credential that was supplied and did not
+        // resolve is refused outright, which is both clearer and consistent
+        // with every other player route.
+        //
+        // Asserted as `=== 401` rather than "if it happened to be 200": guarding
+        // the body check behind a status that no longer occurs is a test that
+        // silently stopped testing, which is what this assertion became when
+        // the 401 landed.
         pr = await sget('/api/public/profile?name=Profiley', ot)
-        if (pr.status === 200) {
-          const asAdmin = (await pr.json()) as unknown as Record<string, unknown>
-          for (const f of GATED) {
-            if (f in asAdmin) return fail('an admin token read a player\'s ' + f + ' from the public site')
-          }
+        if (pr.status !== 401) {
+          return fail('an admin token on the public profile expected 401, got ' + pr.status)
         }
+        // ...and a dead PLAYER token is refused the same way, which is the
+        // restart case: the browser still holds a token the server forgot.
+        pr = await sget('/api/public/profile', 'deadbeef'.repeat(8))
+        if (pr.status !== 401) {
+          return fail('a stale player token expected 401, got ' + pr.status)
+        }
+        // The anonymous rule is untouched by all of that — no credential still
+        // means "answer as a stranger", not "refuse".
+        pr = await sget('/api/public/profile?name=Profiley')
+        if (pr.status === 401) return fail('an anonymous profile read was refused as if it had a token')
         console.log('WEB-SMOKE: public profile OK (own vs stranger, admin token is a stranger, 400 on a bad name)')
       } finally {
         siteMod.setSiteConfig({ storeServerId: storeBefore, profile: profileBefore })
