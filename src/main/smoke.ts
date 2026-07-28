@@ -4296,6 +4296,11 @@ export async function runWebSmoke(): Promise<void> {
         ['a rate-limited reset', { purpose: 'reset', accountExists: true, rateLimited: true }, 'refuse:rate-limited'],
         ['a rate-limited cracked reset', { purpose: 'reset', accountExists: true, onlineMode: false, rateLimited: true }, 'refuse:rate-limited'],
         ['reset for a name with no account', { purpose: 'reset' }, 'refuse:no-account'],
+        // ...and a missing account is decided AFTER the server checks, so a
+        // reset for a name nobody owns is indistinguishable from any other
+        // request that could not be started.
+        ['no account and the server is down', { purpose: 'reset', serverUp: false }, 'refuse:server-offline'],
+        ['no account and nobody online', { purpose: 'reset', playerOnline: false }, 'refuse:not-online'],
         ['server down', { purpose: 'register', serverUp: false }, 'refuse:server-offline'],
         ['player not online', { purpose: 'register', playerOnline: false }, 'refuse:not-online'],
         // Offline mode does not rescue a player who is not there: the code is
@@ -4344,20 +4349,42 @@ export async function runWebSmoke(): Promise<void> {
       // What the caller is told. A reset for a name with no account must look
       // exactly like one for a name that has one, or the endpoint becomes an
       // account-enumeration oracle answering one name per request.
-      const base = { validName: true, onlineMode: true, serverUp: true, playerOnline: true, rateLimited: false }
-      const noAcc = publicVerifyReply(
-        verifyDecision({ ...base, purpose: 'reset', accountExists: false })
-      )
-      const hasAcc = publicVerifyReply(
-        verifyDecision({ ...base, purpose: 'reset', accountExists: true })
-      )
-      if (JSON.stringify(noAcc) !== JSON.stringify(hasAcc)) {
-        return fail('a reset told the caller whether the account exists: ' + JSON.stringify(noAcc))
+      //
+      // Checked on BOTH kinds of server. Checking only the online-mode one
+      // passes while the hole is open on the other — and the cracked server is
+      // where it matters most, because that is where taking an account over is
+      // easiest to begin with.
+      const base = { validName: true, serverUp: true, playerOnline: true, rateLimited: false }
+      for (const onlineMode of [true, false]) {
+        const noAcc = publicVerifyReply(
+          verifyDecision({ ...base, onlineMode, purpose: 'reset', accountExists: false })
+        )
+        const hasAcc = publicVerifyReply(
+          verifyDecision({ ...base, onlineMode, purpose: 'reset', accountExists: true })
+        )
+        if (JSON.stringify(noAcc) !== JSON.stringify(hasAcc)) {
+          return fail(
+            'a reset revealed whether the account exists (online-mode=' + onlineMode + '): ' +
+              JSON.stringify(noAcc) + ' vs ' + JSON.stringify(hasAcc)
+          )
+        }
+      }
+      // ...and the same for registration, which answers for any name at all.
+      for (const onlineMode of [true, false]) {
+        const reg = publicVerifyReply(
+          verifyDecision({ ...base, onlineMode, purpose: 'register', accountExists: false })
+        )
+        const res = publicVerifyReply(
+          verifyDecision({ ...base, onlineMode, purpose: 'reset', accountExists: true })
+        )
+        if (JSON.stringify(reg) !== JSON.stringify(res)) {
+          return fail('register and reset are distinguishable (online-mode=' + onlineMode + ')')
+        }
       }
       // ...and no reply ever carries a code.
       for (const d of [
-        verifyDecision({ ...base, purpose: 'register', accountExists: false }),
-        verifyDecision({ ...base, purpose: 'reset', accountExists: true, onlineMode: false })
+        verifyDecision({ ...base, onlineMode: true, purpose: 'register', accountExists: false }),
+        verifyDecision({ ...base, onlineMode: false, purpose: 'reset', accountExists: true })
       ]) {
         if (/\d{6}/.test(JSON.stringify(publicVerifyReply(d)))) {
           return fail('a start reply carried something code-shaped')

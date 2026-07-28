@@ -39,7 +39,17 @@ export type VerifyDecision =
   | { action: 'issue' }
   /** Queue it for an operator. The code is whispered once a human agrees. */
   | { action: 'approve' }
-  | { action: 'refuse'; reason: VerifyRefusal }
+  | {
+      action: 'refuse'
+      reason: VerifyRefusal
+      /**
+       * What this request WOULD have been, when the refusal must not be
+       * visible. Only `no-account` carries it: the caller has to be told the
+       * same thing a real account would have produced, and "the same thing"
+       * depends on the server's online mode.
+       */
+      pretend?: 'issue' | 'approve'
+    }
 
 export interface VerifyInputs {
   purpose: VerifyPurpose
@@ -65,15 +75,22 @@ export interface VerifyInputs {
 export function verifyDecision(i: VerifyInputs): VerifyDecision {
   if (!i.validName) return { action: 'refuse', reason: 'invalid-name' }
   if (i.rateLimited) return { action: 'refuse', reason: 'rate-limited' }
-  if (i.purpose === 'reset' && !i.accountExists) {
-    return { action: 'refuse', reason: 'no-account' }
-  }
   if (!i.serverUp) return { action: 'refuse', reason: 'server-offline' }
   if (!i.playerOnline) return { action: 'refuse', reason: 'not-online' }
   // The whole point. Everything above is true on both kinds of server; this is
   // the line where the in-game code stops meaning anything.
-  if (!i.onlineMode) return { action: 'approve' }
-  return { action: 'issue' }
+  const real = i.onlineMode ? 'issue' : 'approve'
+  // Checked LAST, and carrying what would have happened.
+  //
+  // Checking it earlier is the obvious order and it opens the hole this
+  // function exists to close: on a cracked server a real account answers
+  // "waiting for approval" and an absent one answers "code sent", and the
+  // difference between those two strings is an account-enumeration oracle —
+  // on exactly the kind of server where taking an account over is easiest.
+  if (i.purpose === 'reset' && !i.accountExists) {
+    return { action: 'refuse', reason: 'no-account', pretend: real }
+  }
+  return { action: real }
 }
 
 /**
@@ -92,9 +109,14 @@ export function publicVerifyReply(d: VerifyDecision): {
   status: number
   body: { ok: boolean; pending?: 'code' | 'approval'; error?: string }
 } {
-  if (d.action === 'issue') return { status: 200, body: { ok: true, pending: 'code' } }
-  if (d.action === 'approve') return { status: 200, body: { ok: true, pending: 'approval' } }
-  if (d.reason === 'no-account') return { status: 200, body: { ok: true, pending: 'code' } }
+  const started = (a: 'issue' | 'approve'): ReturnType<typeof publicVerifyReply> => ({
+    status: 200,
+    body: { ok: true, pending: a === 'approve' ? 'approval' : 'code' }
+  })
+  if (d.action !== 'refuse') return started(d.action)
+  // Byte-identical to what a real account would have produced on THIS server,
+  // which is why the decision carries it rather than this function guessing.
+  if (d.reason === 'no-account') return started(d.pretend ?? 'issue')
   const status = d.reason === 'rate-limited' ? 429 : 400
   return { status, body: { ok: false, error: d.reason } }
 }
