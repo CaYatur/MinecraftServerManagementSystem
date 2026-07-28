@@ -38,6 +38,34 @@ import type { ProfileViewer } from '@shared/profile'
 
 /** Same shape the rest of the app validates a Minecraft name with. */
 const MC_NAME_RE = /^[A-Za-z0-9_]{3,16}$/
+
+/**
+ * The player roster, cached for a few seconds (#107).
+ *
+ * `getPlayers` parses every player's `.dat` with an NBT reader. Every other
+ * public route answers from memory; this one is the first that reads the disk,
+ * and the per-address budget allows ten requests a second — so without a cache
+ * one visitor turns a cheap HTTP request into the whole world folder being
+ * parsed, ten times a second, and a busy server has thousands of those files.
+ *
+ * The window is short because a profile showing a ten-second-old inventory is
+ * fine and one that pins the process is not. Shared across callers rather than
+ * per-address: the expensive part is the same work whoever asked for it.
+ */
+const rosterCache = new Map<string, { at: number; players: PlayerInfo[] }>()
+const ROSTER_TTL_MS = 10_000
+
+async function cachedRoster(serverId: string): Promise<PlayerInfo[]> {
+  const hit = rosterCache.get(serverId)
+  if (hit && Date.now() - hit.at < ROSTER_TTL_MS) return hit.players
+  const players = await playersMod.getPlayers(serverId).catch(() => [] as PlayerInfo[])
+  rosterCache.set(serverId, { at: Date.now(), players })
+  return players
+}
+
+export function _resetRosterCache(): void {
+  rosterCache.clear()
+}
 import * as metrics from '../core/metrics'
 import * as events from '../core/events'
 import * as alerts from '../core/alerts'
@@ -527,6 +555,8 @@ async function handlePublic(
 
   // ---- a player's profile (#107) ----
   //
+  // See `cachedRoster`: this is the only public route that touches the disk.
+  //
   // Who is asking decides what comes back, and the decision is a pure table in
   // @shared/profile because it is the whole security of the feature. Fields are
   // OMITTED, never sent-and-hidden: a page can be read with the network tab
@@ -543,11 +573,20 @@ async function handlePublic(
       : session.mcName.toLowerCase() === asked.toLowerCase()
         ? 'owner'
         : 'stranger'
-    // The roster read is the expensive part (it parses player .dat files), so
-    // it happens once and the decision runs over the result.
-    const roster = await playersMod.getPlayers(psid).catch(() => [])
+    const roster = await cachedRoster(psid)
     const p = roster.find((x) => x.name.toLowerCase() === asked.toLowerCase())
-    if (!p && !playerAuth.isRegistered(asked)) return sendJson(res, 404, { error: 'not-found' })
+    // Existence is decided by the ROSTER alone for anyone but the owner.
+    //
+    // Consulting `isRegistered` here for a stranger would make 200-vs-404
+    // answer "does this name have a website account?" for every name that has
+    // never played — the same enumeration oracle closed in #105, reopened in a
+    // different endpoint. The owner is already authenticated as that name, so
+    // telling them their own account exists reveals nothing, and it is the only
+    // way someone who registered on a server that has never run can see their
+    // own profile.
+    if (!p && !(viewer === 'owner' && playerAuth.isRegistered(asked))) {
+      return sendJson(res, 404, { error: 'not-found' })
+    }
     return sendJson(
       res,
       200,

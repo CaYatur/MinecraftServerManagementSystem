@@ -268,10 +268,15 @@ var S=null,LANG='en',ptoken=localStorage.getItem('msms_ptoken')||'',pname=localS
 /* The signed-in player's uuid, for the head beside their name (#107). Cached in
    localStorage rather than re-fetched on every render: it never changes for a
    given name, and the profile read parses player .dat files. */
-var puuid=localStorage.getItem('msms_puuid')||'';
+var puuid=localStorage.getItem('msms_puuid')||'',whoamiTried=false;
 function refreshWhoami(){
- if(!ptoken){puuid='';localStorage.removeItem('msms_puuid');return}
- if(puuid)return;
+ if(!ptoken){puuid='';whoamiTried=false;localStorage.removeItem('msms_puuid');return}
+ if(puuid||whoamiTried)return;
+ /* Once per page load, not once per render. A player who has registered but
+    never joined has no uuid to find, so without the flag every navigation
+    would fire another request — and on the server side that request is the
+    only public one that parses the world's player files. */
+ whoamiTried=true;
  api('/api/public/profile',null,ptoken).then(function(r){
   if(!r.ok||!r.j.uuid)return;
   puuid=r.j.uuid;localStorage.setItem('msms_puuid',puuid);renderChrome()})}
@@ -310,7 +315,12 @@ function renderChrome(){
  var sel=document.getElementById('langSel');var codes=Object.keys(S.i18n.langs);
  sel.innerHTML=codes.map(function(c){return '<option value="'+c+'"'+(c===LANG?' selected':'')+'>'+c.toUpperCase()+'</option>'}).join('');
  document.getElementById('accBtn').innerHTML=ptoken
-  ? '<a href="#/profile" class="whoami" title="'+escAttr(T('profile.title'))+'">'+headImg(puuid,24)+'<span>'+esc(pname)+'</span></a><button class="btn sm" onclick="plogout()">'+esc(T('auth.logout'))+'</button>'
+  ? (S.showProfiles
+      ? '<a href="#/profile" class="whoami" title="'+escAttr(T('profile.title'))+'">'+headImg(puuid,24)+'<span>'+esc(pname)+'</span></a>'
+      /* No server behind the site means no profile to link to: the page would
+         load and say "no such player" about the visitor themselves. */
+      : '<span class="muted" style="margin-right:10px;font-size:14px">'+esc(pname)+'</span>')+
+    '<button class="btn sm" onclick="plogout()">'+esc(T('auth.logout'))+'</button>'
   : '<button class="btn sm primary" onclick="openAuth()">'+esc(T('auth.login'))+'</button>';
  var links=[['#/','nav.home'],['#/news','nav.news']];
  if(S.showStore)links.push(['#/store','nav.store']);
@@ -548,8 +558,8 @@ function render(){
  else if(h==='#/store')app.innerHTML=pageStore();
  else if(h==='#/servers')app.innerHTML=pageServers();
  else if(h==='#/map'&&S.showMap)app.innerHTML=pageMap();
- else if(h.indexOf('#/player/')===0)app.innerHTML=pageProfile(decodeURIComponent(h.slice(9)));
- else if(h==='#/profile'&&ptoken)app.innerHTML=pageProfile('');
+ else if(h.indexOf('#/player/')===0&&S.showProfiles)app.innerHTML=pageProfile(decodeURIComponent(h.slice(9)));
+ else if(h==='#/profile'&&ptoken&&S.showProfiles)app.innerHTML=pageProfile('');
  else app.innerHTML=pageHome();
  /* Stop the 2s feed on the way OUT of the map. Without this a visitor who
     opened it once keeps polling for as long as the tab is open, from every

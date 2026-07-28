@@ -4521,20 +4521,37 @@ export async function runWebSmoke(): Promise<void> {
         if (own.mcName !== 'Profiley') return fail('own profile returned the wrong player')
         if (own.hidden.length !== 0) return fail('a player was told their own data was withheld')
 
-        // A stranger reading the same name, with everything off.
+        // ...and a STRANGER asking about that same name gets the same answer
+        // they would get for a name nobody has ever heard of. The fixture
+        // server has no roster, so `Profiley` exists only as a website account
+        // — and answering 200 for it while answering 404 for `Nobodyy` would
+        // make this endpoint report which names have accounts, one per request.
+        // That is the oracle closed in #105, in a different route.
+        const strangerHit = await sget('/api/public/profile?name=Profiley')
+        const strangerMiss = await sget('/api/public/profile?name=Nobodyy')
+        if (strangerHit.status !== strangerMiss.status) {
+          return fail(
+            'a stranger can tell a registered name from an unknown one: ' +
+              strangerHit.status + ' vs ' + strangerMiss.status
+          )
+        }
+        // Whatever a stranger does get back must carry none of the gated fields.
         pr = await sget('/api/public/profile?name=Profiley')
-        if (pr.status !== 200) return fail('a public profile expected 200, got ' + pr.status)
-        const strange = (await pr.json()) as unknown as Record<string, unknown>
-        for (const f of GATED) {
-          if (f in strange) return fail('an anonymous profile read carried "' + f + '"')
+        if (pr.status === 200) {
+          const strange = (await pr.json()) as unknown as Record<string, unknown>
+          for (const f of GATED) {
+            if (f in strange) return fail('an anonymous profile read carried "' + f + '"')
+          }
         }
         // An admin token must not be a player token here either: the endpoint
         // decides "owner" from a PLAYER session, and an operator holding a panel
         // token is a stranger to every player account.
         pr = await sget('/api/public/profile?name=Profiley', ot)
-        const asAdmin = (await pr.json()) as unknown as Record<string, unknown>
-        for (const f of GATED) {
-          if (f in asAdmin) return fail('an admin token read a player\'s ' + f + ' from the public site')
+        if (pr.status === 200) {
+          const asAdmin = (await pr.json()) as unknown as Record<string, unknown>
+          for (const f of GATED) {
+            if (f in asAdmin) return fail('an admin token read a player\'s ' + f + ' from the public site')
+          }
         }
         console.log('WEB-SMOKE: public profile OK (own vs stranger, admin token is a stranger, 400 on a bad name)')
       } finally {
