@@ -63,6 +63,9 @@ import {
 import * as apikeys from './apikeys'
 import { spendKeyToken, resetKeyBuckets } from './rate'
 import { attachWs, closeAllWs, WS_PATH, WS_STREAMS } from './wsHub'
+import { getApiDocsHtml } from './apiDocsHtml'
+import { openApiDocument } from '@shared/openapi'
+import { API_VERSION } from '@shared/apiSurface'
 import {
   consumeToken,
   isOriginAllowed,
@@ -203,6 +206,26 @@ function publicRateOk(ip: string, res: ServerResponse): boolean {
   res.setHeader('Retry-After', String(r.retryAfterSec))
   sendJson(res, 429, { error: 'rate-limited', retryAfter: r.retryAfterSec })
   return false
+}
+
+/**
+ * The spec and the reference page, built once.
+ *
+ * Both derive from a constant table, so the output cannot change while the
+ * process runs. Building them per request would be ~120 KB of object graph and
+ * string work on an unauthenticated route.
+ */
+let specJson: string | null = null
+let docsHtml: string | null = null
+
+function cachedSpec(): string {
+  if (specJson === null) specJson = JSON.stringify(openApiDocument())
+  return specJson
+}
+
+function cachedDocs(): string {
+  if (docsHtml === null) docsHtml = getApiDocsHtml()
+  return docsHtml
 }
 
 /** Test seam: the buckets survive a `stopWebServer()`, which smoke runs rely on. */
@@ -449,12 +472,50 @@ async function handlePanel(req: IncomingMessage, res: ServerResponse): Promise<v
   // to be answered before anything asks who the caller is.
   if (path.startsWith('/api/') && applyCors(req, res)) return
 
-  // The surface's own index, served before authentication: it is a description
-  // of the software, identical on every install, carrying no server name, id or
-  // count. There is nothing in it to withhold, and it is what a client points at
-  // first to find out whether it is talking to something it understands.
-  if (rawPath === '/api/v1' && method === 'GET') {
-    return sendJson(res, 200, { version: 'v1', stream: WS_PATH, streams: WS_STREAMS })
+  // The index, the spec and the reference page are served before authentication,
+  // and are the only routes that are. All three are descriptions of the
+  // software — the same bytes on every install, generated from a constant table,
+  // carrying no server name, id or count — so there is nothing in them to
+  // withhold. Requiring a credential would also make the docs page useless to
+  // the thing that needs it most: a browser, which cannot set an Authorization
+  // header on a navigation.
+  //
+  // Rate limited per address, and built once. Both matter because these three
+  // are the only unauthenticated routes on this listener: the spec is ~120 KB
+  // and the page not much less, so rebuilding either per request hands anyone
+  // who can reach the port a way to spend the event loop without a credential.
+  // Their input is constant, so the answer is too — the cost is now one buffer
+  // write, and the per-IP bucket caps even that.
+  if (
+    rawPath === '/api/v1' ||
+    rawPath === '/api/v1/openapi.json' ||
+    rawPath === '/api/v1/docs'
+  ) {
+    if (method !== 'GET') return sendJson(res, 405, { error: 'method-not-allowed' })
+    if (!publicRateOk(ip, res)) return
+    if (rawPath === '/api/v1') {
+      return sendJson(res, 200, {
+        version: API_VERSION,
+        openapi: '/api/v1/openapi.json',
+        docs: '/api/v1/docs',
+        stream: WS_PATH,
+        streams: WS_STREAMS
+      })
+    }
+    if (rawPath === '/api/v1/openapi.json') {
+      res.writeHead(200, {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Cache-Control': 'public, max-age=300'
+      })
+      res.end(cachedSpec())
+      return
+    }
+    res.writeHead(200, {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'public, max-age=300'
+    })
+    res.end(cachedDocs())
+    return
   }
 
   // ---- static (admin panel listener) ----

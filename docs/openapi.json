@@ -1,0 +1,3891 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "MSMS integration API",
+    "version": "v1",
+    "description": "The surface a third-party application integrates with.\n\nAuthenticate with an **API key** (`Authorization: Bearer msms_…` or\n`X-API-Key: msms_…`). A key is not a person: it carries its own scopes\nand its own server allowlist, and can never hold a role — routes marked\nowner-only are reachable from a panel session and from nothing else.\n\nLive push is a WebSocket at `/api/v1/stream`; it is not described here,\nbecause OpenAPI does not describe WebSocket protocols. See\n`docs/api-websocket.md`.\n\nThis server is plain HTTP, bound to 127.0.0.1 unless the operator opts\ninto LAN. TLS belongs to your own reverse proxy.",
+    "license": {
+      "name": "MIT"
+    }
+  },
+  "servers": [
+    {
+      "url": "http://127.0.0.1:8722",
+      "description": "Default admin panel listener."
+    }
+  ],
+  "tags": [
+    {
+      "name": "meta"
+    },
+    {
+      "name": "session"
+    },
+    {
+      "name": "servers"
+    },
+    {
+      "name": "telemetry"
+    },
+    {
+      "name": "alerts"
+    },
+    {
+      "name": "players"
+    },
+    {
+      "name": "worlds"
+    },
+    {
+      "name": "backups"
+    },
+    {
+      "name": "files"
+    },
+    {
+      "name": "config"
+    },
+    {
+      "name": "mods"
+    },
+    {
+      "name": "store"
+    },
+    {
+      "name": "site"
+    },
+    {
+      "name": "keys"
+    },
+    {
+      "name": "audit"
+    },
+    {
+      "name": "host"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "apiKey": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-API-Key"
+      },
+      "bearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "An API key or a session token."
+      }
+    }
+  },
+  "security": [
+    {
+      "apiKey": []
+    },
+    {
+      "bearer": []
+    }
+  ],
+  "paths": {
+    "/api/v1": {
+      "get": {
+        "operationId": "getRoot",
+        "summary": "Surface version and stream path.",
+        "description": "No credential required.",
+        "tags": [
+          "meta"
+        ],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      }
+    },
+    "/api/v1/openapi.json": {
+      "get": {
+        "operationId": "getOpenapiJson",
+        "summary": "This document.",
+        "description": "No credential required.",
+        "tags": [
+          "meta"
+        ],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      }
+    },
+    "/api/v1/docs": {
+      "get": {
+        "operationId": "getDocs",
+        "summary": "Human-readable reference page.",
+        "description": "No credential required.",
+        "tags": [
+          "meta"
+        ],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      }
+    },
+    "/api/v1/login": {
+      "post": {
+        "operationId": "postLogin",
+        "summary": "Exchange a panel username and password for a session token.",
+        "description": "No credential required.\n\nBody fields:\n- `username` — Panel account name.\n- `password` — Panel account password.\n\nRate limited per address. Integrations should use an API key instead.",
+        "tags": [
+          "session"
+        ],
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      }
+    },
+    "/api/v1/logout": {
+      "post": {
+        "operationId": "postLogout",
+        "summary": "Invalidate the presented session token.",
+        "description": "Any session or key.",
+        "tags": [
+          "session"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      }
+    },
+    "/api/v1/me": {
+      "get": {
+        "operationId": "getMe",
+        "summary": "Who the presented credential is.",
+        "description": "Any session or key.",
+        "tags": [
+          "session"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      }
+    },
+    "/api/v1/servers": {
+      "get": {
+        "operationId": "getServers",
+        "summary": "Every server the caller can see.",
+        "description": "Scope `view` on the server.",
+        "tags": [
+          "servers"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{id}": {
+      "get": {
+        "operationId": "getServersId",
+        "summary": "One server: config, run state, live counters.",
+        "description": "Scope `view` on the server.",
+        "tags": [
+          "servers"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Server id, as returned by GET /servers.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteServersId",
+        "summary": "Deregister a server. Files are kept; history and alert rules are not.",
+        "description": "Owner **session** only — no API key can hold a role, so no key reaches this.\n\nRequires an explicit confirmation on top of the scope — see the reference.\n\n409 while the server is running. Creating a server, and deleting its files, are not exposed.",
+        "tags": [
+          "servers"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Server id, as returned by GET /servers.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "confirm",
+            "in": "query",
+            "required": true,
+            "description": "Must be `true`.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{id}/console": {
+      "get": {
+        "operationId": "getServersIdConsole",
+        "summary": "The last 250 console lines and the run state.",
+        "description": "Scope `view` on the server.",
+        "tags": [
+          "servers"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Server id, as returned by GET /servers.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{id}/power": {
+      "post": {
+        "operationId": "postServersIdPower",
+        "summary": "Start, stop, restart or kill the server.",
+        "description": "Scope `power` on the server.\n\nBody fields:\n- `action` — `start` | `stop` | `restart` | `kill`.",
+        "tags": [
+          "servers"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Server id, as returned by GET /servers.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{id}/command": {
+      "post": {
+        "operationId": "postServersIdCommand",
+        "summary": "Run a console command.",
+        "description": "Scope `console` on the server.\n\nBody fields:\n- `command` — The command line, without a leading slash.",
+        "tags": [
+          "servers"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Server id, as returned by GET /servers.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{id}/metrics": {
+      "get": {
+        "operationId": "getServersIdMetrics",
+        "summary": "Performance history.",
+        "description": "Scope `view` on the server.",
+        "tags": [
+          "telemetry"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Server id, as returned by GET /servers.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "description": "Epoch ms. Defaults to an hour ago.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "description": "Epoch ms. Defaults to now.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "res",
+            "in": "query",
+            "required": false,
+            "description": "`10s` | `1m` | `1h`. Chosen for you when omitted.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Rows, max 5000.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{id}/events": {
+      "get": {
+        "operationId": "getServersIdEvents",
+        "summary": "Timeline events.",
+        "description": "Scope `view` on the server.",
+        "tags": [
+          "telemetry"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Server id, as returned by GET /servers.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "description": "Epoch ms.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "description": "Epoch ms.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "types",
+            "in": "query",
+            "required": false,
+            "description": "Comma-separated event types.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Rows, max 500.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{id}/uptime": {
+      "get": {
+        "operationId": "getServersIdUptime",
+        "summary": "Uptime over a window, derived from the timeline.",
+        "description": "Scope `view` on the server.",
+        "tags": [
+          "telemetry"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Server id, as returned by GET /servers.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "description": "Epoch ms.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "description": "Epoch ms.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{id}/analysis": {
+      "get": {
+        "operationId": "getServersIdAnalysis",
+        "summary": "Performance findings for a window.",
+        "description": "Scope `view` on the server.",
+        "tags": [
+          "telemetry"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Server id, as returned by GET /servers.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "hours",
+            "in": "query",
+            "required": false,
+            "description": "1-720, default 24.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{id}/alerts": {
+      "get": {
+        "operationId": "getServersIdAlerts",
+        "summary": "Alert rules for this server.",
+        "description": "Scope `view` on the server.",
+        "tags": [
+          "alerts"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Server id, as returned by GET /servers.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      },
+      "post": {
+        "operationId": "postServersIdAlerts",
+        "summary": "Create or update an alert rule.",
+        "description": "Scope `settings` on the server.\n\nBody fields:\n- `id` — Rule id to update; omit to create.\n- `name` — Label.\n- `metric` — `tps` | `cpu` | `memory` | `players` | `offline`.\n- `comparison` — `above` | `below`.\n- `threshold` — Number.\n- `action` — Optional reaction; needs the scope that action would need.\n\nA rule whose action runs a command also needs `console`; one that restarts needs `power`.",
+        "tags": [
+          "alerts"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Server id, as returned by GET /servers.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteServersIdAlerts",
+        "summary": "Delete an alert rule.",
+        "description": "Scope `settings` on the server.",
+        "tags": [
+          "alerts"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Server id, as returned by GET /servers.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ruleId",
+            "in": "query",
+            "required": true,
+            "description": "Rule to delete.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{id}/players": {
+      "get": {
+        "operationId": "getServersIdPlayers",
+        "summary": "The roster: online, ops, whitelist, bans.",
+        "description": "Scope `view` on the server.",
+        "tags": [
+          "players"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Server id, as returned by GET /servers.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{id}/players/{name}": {
+      "get": {
+        "operationId": "getServersIdPlayersName",
+        "summary": "One player: profile, stats, inventory, live position.",
+        "description": "Scope `view` on the server.",
+        "tags": [
+          "players"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Server id, as returned by GET /servers.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "description": "Minecraft username.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{id}/players/{action}": {
+      "post": {
+        "operationId": "postServersIdPlayersAction",
+        "summary": "Moderate: op, deop, ban, pardon, kick, whitelist-add, whitelist-remove, gamemode.",
+        "description": "Scope `players` on the server.\n\nBody fields:\n- `player` — Minecraft username, `^[A-Za-z0-9_]{3,16}$`.\n- `reason` — Free text for ban/kick; control characters are stripped.\n- `gamemode` — `survival` | `creative` | `adventure` | `spectator`.\n\nKick and gamemode need a running server (409 otherwise). The others edit the json files by uuid when stopped.",
+        "tags": [
+          "players"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Server id, as returned by GET /servers.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "action",
+            "in": "path",
+            "required": true,
+            "description": "One of the eight moderation actions.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{id}/map": {
+      "get": {
+        "operationId": "getServersIdMap",
+        "summary": "Live positions, bounds and a chunk heatmap for one dimension.",
+        "description": "Scope `view` on the server.\n\nNeeds the Bridge plugin; `bridge: false` means the data is stale or absent.",
+        "tags": [
+          "players"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Server id, as returned by GET /servers.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "dim",
+            "in": "query",
+            "required": false,
+            "description": "`overworld` | `nether` | `end`, or a modded key.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cell",
+            "in": "query",
+            "required": false,
+            "description": "Heatmap cell size in blocks, 1-512.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{id}/worlds": {
+      "get": {
+        "operationId": "getServersIdWorlds",
+        "summary": "Worlds, with their dimensions and sizes.",
+        "description": "Scope `view` on the server.",
+        "tags": [
+          "worlds"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Server id, as returned by GET /servers.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteServersIdWorlds",
+        "summary": "Delete a world.",
+        "description": "Scope `worlds` on the server.\n\nRequires an explicit confirmation on top of the scope — see the reference.",
+        "tags": [
+          "worlds"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Server id, as returned by GET /servers.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "query",
+            "required": true,
+            "description": "World to delete.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "confirm",
+            "in": "query",
+            "required": true,
+            "description": "Must be `true`.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{id}/worlds/{action}": {
+      "post": {
+        "operationId": "postServersIdWorldsAction",
+        "summary": "Activate, rename, clone or reset a world.",
+        "description": "Scope `worlds` on the server.\n\nRequires an explicit confirmation on top of the scope — see the reference.\n\nBody fields:\n- `name` — World name; a path component, validated untrimmed.\n- `newName` — For rename and clone.\n- `dimension` — For reset: `overworld` | `nether` | `end`.\n- `confirm` — Required for reset.",
+        "tags": [
+          "worlds"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Server id, as returned by GET /servers.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "action",
+            "in": "path",
+            "required": true,
+            "description": "`activate` | `rename` | `clone` | `reset`.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{id}/backups": {
+      "get": {
+        "operationId": "getServersIdBackups",
+        "summary": "Backups held for this server.",
+        "description": "Scope `view` on the server.",
+        "tags": [
+          "backups"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Server id, as returned by GET /servers.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      },
+      "post": {
+        "operationId": "postServersIdBackups",
+        "summary": "Create a backup.",
+        "description": "Scope `backups` on the server.\n\nBody fields:\n- `kind` — `world` (default) or `full`.\n\n`destDir` is not accepted: writing a zip to an arbitrary path is a different privilege.",
+        "tags": [
+          "backups"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Server id, as returned by GET /servers.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteServersIdBackups",
+        "summary": "Delete a backup.",
+        "description": "Scope `backups` on the server.\n\nRequires an explicit confirmation on top of the scope — see the reference.",
+        "tags": [
+          "backups"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Server id, as returned by GET /servers.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "backupId",
+            "in": "query",
+            "required": true,
+            "description": "Backup to delete.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "confirm",
+            "in": "query",
+            "required": true,
+            "description": "Must be `true`.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{id}/backups/restore": {
+      "post": {
+        "operationId": "postServersIdBackupsRestore",
+        "summary": "Restore a backup over the live world.",
+        "description": "Scope `backups` on the server.\n\nRequires an explicit confirmation on top of the scope — see the reference.\n\nBody fields:\n- `backupId` — Backup to restore.\n- `confirm` — Must be `true`.\n\n409 while the server is running — extracting over open region files corrupts them.",
+        "tags": [
+          "backups"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Server id, as returned by GET /servers.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{id}/files": {
+      "get": {
+        "operationId": "getServersIdFiles",
+        "summary": "List a directory, or read a file with `as=file`.",
+        "description": "Scope `files` on the server.\n\nReading needs `files`, not `view`: server.properties holds the RCON password.",
+        "tags": [
+          "files"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Server id, as returned by GET /servers.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "path",
+            "in": "query",
+            "required": false,
+            "description": "Relative to the server root.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "as",
+            "in": "query",
+            "required": false,
+            "description": "`file` to read contents instead of listing.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      },
+      "post": {
+        "operationId": "postServersIdFiles",
+        "summary": "Write a text file.",
+        "description": "Scope `files` on the server.\n\nBody fields:\n- `path` — Relative path.\n- `content` — Full new contents.",
+        "tags": [
+          "files"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Server id, as returned by GET /servers.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteServersIdFiles",
+        "summary": "Delete a file or folder.",
+        "description": "Scope `files` on the server.\n\nRequires an explicit confirmation on top of the scope — see the reference.",
+        "tags": [
+          "files"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Server id, as returned by GET /servers.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "path",
+            "in": "query",
+            "required": true,
+            "description": "Relative path.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "confirm",
+            "in": "query",
+            "required": true,
+            "description": "Must be `true`.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{id}/files/folder": {
+      "post": {
+        "operationId": "postServersIdFilesFolder",
+        "summary": "Create a folder.",
+        "description": "Scope `files` on the server.\n\nBody fields:\n- `path` — Parent, relative.\n- `name` — New folder name.",
+        "tags": [
+          "files"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Server id, as returned by GET /servers.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{id}/files/rename": {
+      "post": {
+        "operationId": "postServersIdFilesRename",
+        "summary": "Rename an entry.",
+        "description": "Scope `files` on the server.\n\nBody fields:\n- `path` — Relative path.\n- `newName` — New name.",
+        "tags": [
+          "files"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Server id, as returned by GET /servers.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{id}/config": {
+      "get": {
+        "operationId": "getServersIdConfig",
+        "summary": "Server config, Java args and server.properties.",
+        "description": "Scope `settings` on the server.",
+        "tags": [
+          "config"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Server id, as returned by GET /servers.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{id}/config/properties": {
+      "post": {
+        "operationId": "postServersIdConfigProperties",
+        "summary": "Merge into server.properties, or replace it.",
+        "description": "Scope `settings` on the server.\n\nBody fields:\n- `updates` — Key/value map, merged.\n- `raw` — Whole file, replacing it.\n\nA value containing a newline is refused: in a properties file that smuggles in a second key.",
+        "tags": [
+          "config"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Server id, as returned by GET /servers.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{id}/config/java": {
+      "post": {
+        "operationId": "postServersIdConfigJava",
+        "summary": "Patch the Java launch config. Merges.",
+        "description": "Scope `settings` on the server.\n\nBody fields:\n- `minMemoryMB` — Heap floor.\n- `maxMemoryMB` — Heap ceiling.\n- `preset` — Flag preset.\n- `nogui` — Boolean.\n- `jarFile` — Jar to launch.\n\n`javaPath`, `customArgs` and `extraFlags` are refused with 403 local-only-field — they decide what program runs.",
+        "tags": [
+          "config"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Server id, as returned by GET /servers.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{id}/config/favorite": {
+      "post": {
+        "operationId": "postServersIdConfigFavorite",
+        "summary": "Pin or unpin the server.",
+        "description": "Scope `settings` on the server.\n\nBody fields:\n- `favorite` — Boolean.",
+        "tags": [
+          "config"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Server id, as returned by GET /servers.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{id}/mods": {
+      "get": {
+        "operationId": "getServersIdMods",
+        "summary": "Installed plugins and mods.",
+        "description": "Scope `files` on the server.",
+        "tags": [
+          "mods"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Server id, as returned by GET /servers.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteServersIdMods",
+        "summary": "Delete an installed jar.",
+        "description": "Scope `files` on the server.\n\nRequires an explicit confirmation on top of the scope — see the reference.",
+        "tags": [
+          "mods"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Server id, as returned by GET /servers.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "rel",
+            "in": "query",
+            "required": true,
+            "description": "Installed path.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "confirm",
+            "in": "query",
+            "required": true,
+            "description": "Must be `true`.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{id}/mods/search": {
+      "get": {
+        "operationId": "getServersIdModsSearch",
+        "summary": "Search Modrinth, filtered to this server’s loaders.",
+        "description": "Scope `files` on the server.",
+        "tags": [
+          "mods"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Server id, as returned by GET /servers.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": true,
+            "description": "Search text.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{id}/mods/detail": {
+      "get": {
+        "operationId": "getServersIdModsDetail",
+        "summary": "Project detail and a compatibility verdict for this server.",
+        "description": "Scope `files` on the server.",
+        "tags": [
+          "mods"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Server id, as returned by GET /servers.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "projectId",
+            "in": "query",
+            "required": true,
+            "description": "Modrinth project id or slug.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{id}/mods/updates": {
+      "get": {
+        "operationId": "getServersIdModsUpdates",
+        "summary": "Which installed jars have a newer compatible file.",
+        "description": "Scope `files` on the server.\n\nAnswers `{ ok: false }` rather than failing when Modrinth is unreachable.",
+        "tags": [
+          "mods"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Server id, as returned by GET /servers.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{id}/mods/install": {
+      "post": {
+        "operationId": "postServersIdModsInstall",
+        "summary": "Install a Modrinth project.",
+        "description": "Scope `files` on the server.\n\nBody fields:\n- `projectId` — Project to install.\n- `versionId` — Optional; the newest compatible version otherwise.\n\nThe download URL is resolved server-side and the file hash checked. A caller names a project, never a URL.",
+        "tags": [
+          "mods"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Server id, as returned by GET /servers.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{id}/mods/update": {
+      "post": {
+        "operationId": "postServersIdModsUpdate",
+        "summary": "Replace an installed jar with a specific version.",
+        "description": "Scope `files` on the server.\n\nBody fields:\n- `rel` — Installed path, under plugins/ or mods/.\n- `versionId` — Version to install.",
+        "tags": [
+          "mods"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Server id, as returned by GET /servers.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{id}/mods/toggle": {
+      "post": {
+        "operationId": "postServersIdModsToggle",
+        "summary": "Enable or disable an installed jar.",
+        "description": "Scope `files` on the server.\n\nBody fields:\n- `rel` — Installed path.\n- `enable` — Boolean.",
+        "tags": [
+          "mods"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Server id, as returned by GET /servers.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{id}/store": {
+      "get": {
+        "operationId": "getServersIdStore",
+        "summary": "The storefront as a player sees it.",
+        "description": "Scope `view` on the server.",
+        "tags": [
+          "store"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Server id, as returned by GET /servers.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{id}/store/balance": {
+      "get": {
+        "operationId": "getServersIdStoreBalance",
+        "summary": "The caller’s balance, if a Minecraft name is linked.",
+        "description": "Scope `view` on the server.",
+        "tags": [
+          "store"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Server id, as returned by GET /servers.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{id}/store/txns": {
+      "get": {
+        "operationId": "getServersIdStoreTxns",
+        "summary": "The caller’s transactions.",
+        "description": "Scope `view` on the server.",
+        "tags": [
+          "store"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Server id, as returned by GET /servers.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{id}/store/buy": {
+      "post": {
+        "operationId": "postServersIdStoreBuy",
+        "summary": "Buy a product as the linked Minecraft name.",
+        "description": "Scope `view` on the server.\n\nBody fields:\n- `productId` — Product to buy.",
+        "tags": [
+          "store"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Server id, as returned by GET /servers.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{id}/store/admin": {
+      "get": {
+        "operationId": "getServersIdStoreAdmin",
+        "summary": "Store config, balances and categories.",
+        "description": "Scope `store` on the server.",
+        "tags": [
+          "store"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Server id, as returned by GET /servers.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{id}/store/admin/ledger": {
+      "get": {
+        "operationId": "getServersIdStoreAdminLedger",
+        "summary": "The currency ledger: every balance change, with actor and reason.",
+        "description": "Scope `store` on the server.",
+        "tags": [
+          "store"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Server id, as returned by GET /servers.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "mcName",
+            "in": "query",
+            "required": false,
+            "description": "Limit to one player.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{id}/store/admin/currency": {
+      "post": {
+        "operationId": "postServersIdStoreAdminCurrency",
+        "summary": "Set the currency name.",
+        "description": "Scope `store` on the server.\n\nBody fields:\n- `currency` — Display name.",
+        "tags": [
+          "store"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Server id, as returned by GET /servers.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{id}/store/admin/product": {
+      "post": {
+        "operationId": "postServersIdStoreAdminProduct",
+        "summary": "Create or update a product or crate.",
+        "description": "Scope `store` on the server.\n\nBody fields:\n- `id` — Product id; omit to create.\n- `name` — Display name.\n- `price` — Number.\n- `kind` — `item` or `crate`.",
+        "tags": [
+          "store"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Server id, as returned by GET /servers.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{id}/store/admin/delete": {
+      "post": {
+        "operationId": "postServersIdStoreAdminDelete",
+        "summary": "Delete a product.",
+        "description": "Scope `store` on the server.\n\nBody fields:\n- `productId` — Product to delete.",
+        "tags": [
+          "store"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Server id, as returned by GET /servers.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{id}/store/admin/balance": {
+      "post": {
+        "operationId": "postServersIdStoreAdminBalance",
+        "summary": "Grant, remove or set a player balance.",
+        "description": "Scope `store` on the server.\n\nBody fields:\n- `mcName` — Minecraft username.\n- `amount` — Number.\n- `mode` — `add` (default) or `set`.\n- `reason` — Free text for the ledger.\n- `category` — Ledger category.",
+        "tags": [
+          "store"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Server id, as returned by GET /servers.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{id}/store/admin/layout": {
+      "post": {
+        "operationId": "postServersIdStoreAdminLayout",
+        "summary": "Set the storefront layout.",
+        "description": "Scope `store` on the server.\n\nBody fields:\n- `layout` — `crates-first` | `items-first` | `mixed`.",
+        "tags": [
+          "store"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Server id, as returned by GET /servers.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{id}/store/admin/upload": {
+      "post": {
+        "operationId": "postServersIdStoreAdminUpload",
+        "summary": "Upload a product image. Raster only, size capped.",
+        "description": "Scope `store` on the server.",
+        "tags": [
+          "store"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Server id, as returned by GET /servers.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{id}/store/admin/crate-animation": {
+      "post": {
+        "operationId": "postServersIdStoreAdminCrateAnimation",
+        "summary": "Set the store-wide default crate animation.",
+        "description": "Scope `store` on the server.\n\nBody fields:\n- `animation` — Animation key.",
+        "tags": [
+          "store"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Server id, as returned by GET /servers.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{id}/store/admin/category": {
+      "post": {
+        "operationId": "postServersIdStoreAdminCategory",
+        "summary": "Create or update a category.",
+        "description": "Scope `store` on the server.\n\nBody fields:\n- `id` — Category id; omit to create.\n- `name` — Display name.",
+        "tags": [
+          "store"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Server id, as returned by GET /servers.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{id}/store/admin/category/delete": {
+      "post": {
+        "operationId": "postServersIdStoreAdminCategoryDelete",
+        "summary": "Delete a category.",
+        "description": "Scope `store` on the server.\n\nBody fields:\n- `id` — Category to delete.",
+        "tags": [
+          "store"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Server id, as returned by GET /servers.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      }
+    },
+    "/api/v1/site/posts": {
+      "get": {
+        "operationId": "getSitePosts",
+        "summary": "News posts, including unpublished ones.",
+        "description": "Scope `settings` on the server.",
+        "tags": [
+          "site"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      },
+      "post": {
+        "operationId": "postSitePosts",
+        "summary": "Create or update a post.",
+        "description": "Scope `settings` on the server.\n\nBody fields:\n- `id` — Post id; omit to create.\n- `title` — Title.\n- `body` — Markdown body.\n- `published` — Boolean.",
+        "tags": [
+          "site"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      }
+    },
+    "/api/v1/site/posts/delete": {
+      "post": {
+        "operationId": "postSitePostsDelete",
+        "summary": "Delete a post.",
+        "description": "Scope `settings` on the server.\n\nBody fields:\n- `id` — Post to delete.",
+        "tags": [
+          "site"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      }
+    },
+    "/api/v1/site/uploads": {
+      "get": {
+        "operationId": "getSiteUploads",
+        "summary": "Images available to posts.",
+        "description": "Scope `settings` on the server.",
+        "tags": [
+          "site"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      }
+    },
+    "/api/v1/site/upload": {
+      "post": {
+        "operationId": "postSiteUpload",
+        "summary": "Upload an image. Raster only, size capped.",
+        "description": "Scope `settings` on the server.",
+        "tags": [
+          "site"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      }
+    },
+    "/api/v1/keys": {
+      "get": {
+        "operationId": "getKeys",
+        "summary": "Issued API keys. Secrets are never returned.",
+        "description": "Owner **session** only — no API key can hold a role, so no key reaches this.",
+        "tags": [
+          "keys"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      },
+      "post": {
+        "operationId": "postKeys",
+        "summary": "Issue a key. The secret is shown once and never again.",
+        "description": "Owner **session** only — no API key can hold a role, so no key reaches this.\n\nBody fields:\n- `label` — What it is for.\n- `scopes` — Array of scopes.\n- `servers` — `all` or an array of server ids.\n- `expiresInDays` — Optional lifetime.\n- `canAudit` — Whether it may read the audit log.",
+        "tags": [
+          "keys"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteKeys",
+        "summary": "Delete a key record outright.",
+        "description": "Owner **session** only — no API key can hold a role, so no key reaches this.",
+        "tags": [
+          "keys"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "query",
+            "required": true,
+            "description": "Key id.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      }
+    },
+    "/api/v1/keys/revoke": {
+      "post": {
+        "operationId": "postKeysRevoke",
+        "summary": "Revoke a key, keeping the record.",
+        "description": "Owner **session** only — no API key can hold a role, so no key reaches this.\n\nBody fields:\n- `id` — Key id.",
+        "tags": [
+          "keys"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      }
+    },
+    "/api/v1/audit": {
+      "get": {
+        "operationId": "getAudit",
+        "summary": "The audit trail, newest first.",
+        "description": "Owner **session** only — no API key can hold a role, so no key reaches this.\n\nOwner, or an account (or key) explicitly granted audit access.",
+        "tags": [
+          "audit"
+        ],
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "description": "Epoch ms.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "description": "Epoch ms.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "actions",
+            "in": "query",
+            "required": false,
+            "description": "Comma-separated action names.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "actor",
+            "in": "query",
+            "required": false,
+            "description": "Substring match.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "serverId",
+            "in": "query",
+            "required": false,
+            "description": "Filter to one server.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Rows.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      }
+    },
+    "/api/v1/java": {
+      "get": {
+        "operationId": "getJava",
+        "summary": "Java runtimes found on this host.",
+        "description": "Owner **session** only — no API key can hold a role, so no key reaches this.\n\nOwner session only. No API key can reach this: a key carries scopes, never a role.",
+        "tags": [
+          "host"
+        ],
+        "parameters": [
+          {
+            "name": "refresh",
+            "in": "query",
+            "required": false,
+            "description": "`true` to rescan rather than use the cache.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      }
+    },
+    "/api/v1/java/install": {
+      "post": {
+        "operationId": "postJavaInstall",
+        "summary": "Download and unpack a JDK.",
+        "description": "Owner **session** only — no API key can hold a role, so no key reaches this.\n\nBody fields:\n- `major` — Java major version, 8-64.\n\nOwner session only. The major version selects from a release list; the caller never names a URL.",
+        "tags": [
+          "host"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      }
+    },
+    "/api/v1/telemetry": {
+      "get": {
+        "operationId": "getTelemetry",
+        "summary": "Metric retention settings.",
+        "description": "Owner **session** only — no API key can hold a role, so no key reaches this.\n\nOwner session only.",
+        "tags": [
+          "host"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      },
+      "post": {
+        "operationId": "postTelemetry",
+        "summary": "Patch metric retention. Merges.",
+        "description": "Owner **session** only — no API key can hold a role, so no key reaches this.\n\nBody fields:\n- `enabled` — Boolean.\n- `rawHours` — 1-8760.\n- `minuteDays` — 1-3650.\n- `hourDays` — 1-3650.\n\nValidated, not cast: this is persisted, and a bad value fails every later prune rather than this request.",
+        "tags": [
+          "host"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      }
+    }
+  }
+}
