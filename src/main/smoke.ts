@@ -5005,10 +5005,32 @@ export async function runWebSmoke(): Promise<void> {
         } else {
           if (!box.includes('sf-previewbar')) return fail('the panel storefront is not framed as a preview')
           if (!box.includes('sfEdit(')) return fail('the panel storefront offers no way to author')
+          // ...and only for someone who may. The storefront is visible with
+          // 'view' and editing needs 'store', so the two are not the same
+          // audience — without this the canEdit check could be ignored
+          // entirely and the assertion above would still pass.
+          const canEditBefore = (ctx.SF as unknown as { canEdit: boolean }).canEdit
+          ;(ctx.SF as unknown as { canEdit: boolean }).canEdit = false
+          ctx['sfRender']()
+          if (page.byId('sfBox').innerHTML.includes('sfEdit(')) {
+            return fail('the panel offers to edit products to a viewer who cannot')
+          }
+          ;(ctx.SF as unknown as { canEdit: boolean }).canEdit = canEditBefore
+          ctx['sfRender']()
+        }
+        // Opening the editor from the detail closes it. .sf-modal is z-index 75
+        // and .pm-modal is 50, so an editor opened over an open detail renders
+        // underneath it, behind a dimmed backdrop.
+        if (!buying) {
+          ctx['sfOpen']('p1')
+          if (!ctx.SF.detail) return fail('the panel detail did not open')
+          ;(ctx['sfEdit'] as unknown as (id: string) => void)('p1')
+          if (ctx.SF.detail) return fail('opening the product editor left the detail on top of it')
         }
         // A signed-in visitor, or the buy path stops at the login modal and the
         // assertion below would pass without ever reaching a purchase.
-        if (buying) ctx['ptoken'] = 'smoke-token'
+        const asAny = ctx as unknown as Record<string, unknown>
+        if (buying) asAny['ptoken'] = 'smoke-token'
         const catalogue = ctx.SF.products
         page.calls.length = 0
         ;(ctx['sfAction'] as unknown as (id: string) => void)('p2')
@@ -5019,7 +5041,7 @@ export async function runWebSmoke(): Promise<void> {
         // The buy path reloads the catalogue on the way out, and the stub
         // answers with an empty one. Put the fixture back for what follows —
         // including the signed-out token, which a later block depends on.
-        if (buying) ctx['ptoken'] = ''
+        if (buying) asAny['ptoken'] = ''
         ctx.SF.products = catalogue
         ctx['sfRender']()
         if (box.includes('onerror="alert(1)"')) return fail('a product icon escaped its attribute')

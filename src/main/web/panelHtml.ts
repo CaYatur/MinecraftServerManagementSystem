@@ -658,9 +658,15 @@ function loadStore(){api('/api/servers/'+current.id+'/store').then(function(r){i
    against the admin catalogue before pmEdit can fill a draft. Fetched when it
    is not already there, because the Store tab does not load the admin one. */
 function sfEdit(id){
+ /* Close the detail first. Both overlays are position:fixed, and .sf-modal
+    sits at z-index 75 against .pm-modal's 50 — so opening the editor from the
+    detail view put it UNDER the thing the operator clicked Edit in, behind a
+    dimmed backdrop. Same shape as the bug on the site's login (#106): a modal
+    opened from a modal has to say which one wins. */
+ sfCloseDetail();
  if((mstore.products||[]).some(function(p){return p.id===id}))return pmEdit(id);
  api('/api/servers/'+current.id+'/store/admin').then(function(r){
-  if(!r.ok){alert('No access to the product editor.');return}
+  if(!r.ok){sfNotice('err','Cannot edit','No access to the product editor.');return}
   mstore=r.body;renderMProducts();pmEdit(id)})}
 /* The four hooks the shared storefront calls back into. The panel is English
    only, so its translator returns a small table and falls back to the key. */
