@@ -32,6 +32,12 @@ export interface WebConfig {
   /** Public website listener (separate port + toggle). */
   siteEnabled: boolean
   sitePort: number
+  /**
+   * Origins allowed to call the API from a browser (#50). Default deny: an
+   * absent or empty list means no cross-origin request is answered, which is
+   * the right default for a surface authenticated with long-lived keys.
+   */
+  apiOrigins?: string[]
 }
 
 export interface ListenerStatus {
@@ -237,4 +243,6 @@ export interface WebStatus {
   bindLan: boolean
   panel: ListenerStatus
   site: ListenerStatus
+  /** Browser origins allowed to call the API (#50). Empty = deny all. */
+  apiOrigins: string[]
 }

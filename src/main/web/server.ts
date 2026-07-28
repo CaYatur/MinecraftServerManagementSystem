@@ -30,11 +30,21 @@ import {
   login,
   logout,
   resolveSession,
+  principalForKey,
   can,
   scopesFor,
   visibleServerIds,
   type AuthUser
 } from './auth'
+import * as apikeys from './apikeys'
+import {
+  consumeToken,
+  isOriginAllowed,
+  newBucket,
+  DEFAULT_KEY_LIMIT,
+  type Bucket,
+  type KeyServers
+} from '@shared/apikeys'
 import { getPanelHtml } from './panelHtml'
 import { SCOPES } from '@shared/web'
 import type { Scope, WebStatus, WebConfig } from '@shared/web'
@@ -111,6 +121,103 @@ function bearer(req: IncomingMessage): string | undefined {
   const h = req.headers['authorization']
   if (h && h.startsWith('Bearer ')) return h.slice(7)
   return undefined
+}
+
+// ---- API keys (#48) + safety rails (#50) ----
+
+/**
+ * The presented API key, if any. `X-API-Key` wins over `Authorization` so a
+ * caller can hold a browser session and still drive the API as a key from the
+ * same page. A bearer token only counts as a key when it is shaped like one -
+ * otherwise a plain session token would be sent off to be hashed and refused.
+ */
+function apiKeyToken(req: IncomingMessage): string | undefined {
+  const h = req.headers['x-api-key']
+  const direct = Array.isArray(h) ? h[0] : h
+  if (direct) return direct
+  const b = bearer(req)
+  return b && apikeys.looksLikeKey(b) ? b : undefined
+}
+
+/**
+ * One token bucket per key, in memory. Deliberately not persisted: a restart
+ * clearing the buckets is the correct behaviour for a burst brake, and writing
+ * a file on every request would cost more than the limit saves.
+ */
+const keyBuckets = new Map<string, Bucket>()
+
+function keyRateOk(keyId: string, res: ServerResponse): boolean {
+  const now = Date.now()
+  const b = keyBuckets.get(keyId) ?? newBucket(DEFAULT_KEY_LIMIT, now)
+  const r = consumeToken(b, DEFAULT_KEY_LIMIT, now)
+  keyBuckets.set(keyId, r.bucket)
+  if (r.allowed) return true
+  res.setHeader('Retry-After', String(r.retryAfterSec))
+  sendJson(res, 429, { error: 'rate-limited', retryAfter: r.retryAfterSec })
+  return false
+}
+
+/**
+ * Per-IP budget for the unauthenticated public API (#50). Far larger than the
+ * per-key one because a single visitor's browser polls the storefront, and
+ * because a shared NAT puts a whole household behind one address.
+ */
+const PUBLIC_IP_LIMIT = { capacity: 300, refillPerSec: 10 }
+const ipBuckets = new Map<string, Bucket>()
+
+function publicRateOk(ip: string, res: ServerResponse): boolean {
+  const now = Date.now()
+  const b = ipBuckets.get(ip) ?? newBucket(PUBLIC_IP_LIMIT, now)
+  const r = consumeToken(b, PUBLIC_IP_LIMIT, now)
+  ipBuckets.set(ip, r.bucket)
+  // A public listener sees unbounded distinct addresses, so this map has to be
+  // swept. A bucket that has refilled to capacity is indistinguishable from a
+  // fresh one, which makes dropping it free rather than a reset of someone's
+  // budget.
+  if (ipBuckets.size > 4096) {
+    for (const [k, v] of ipBuckets) {
+      if (v.tokens >= PUBLIC_IP_LIMIT.capacity) ipBuckets.delete(k)
+    }
+  }
+  if (r.allowed) return true
+  res.setHeader('Retry-After', String(r.retryAfterSec))
+  sendJson(res, 429, { error: 'rate-limited', retryAfter: r.retryAfterSec })
+  return false
+}
+
+/** Test seam: the buckets survive a `stopWebServer()`, which smoke runs rely on. */
+export function _resetRateLimits(): void {
+  keyBuckets.clear()
+  ipBuckets.clear()
+}
+
+/**
+ * Answer the CORS handshake for a cross-origin API call.
+ *
+ * Returns `true` when the request was a preflight and has been fully answered.
+ * A disallowed origin gets **no** `Access-Control-Allow-*` header at all, which
+ * is what makes the browser refuse it - there is no wildcard branch here, by
+ * design: this surface is authenticated with long-lived credentials.
+ */
+function applyCors(req: IncomingMessage, res: ServerResponse): boolean {
+  const origin = Array.isArray(req.headers.origin) ? req.headers.origin[0] : req.headers.origin
+  const allowed = isOriginAllowed(origin, webCfg().apiOrigins ?? [])
+  if (allowed && origin) {
+    res.setHeader('Access-Control-Allow-Origin', origin)
+    res.setHeader('Access-Control-Allow-Credentials', 'true')
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-API-Key')
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS')
+    res.setHeader('Access-Control-Max-Age', '600')
+    // Responses differ per origin; without this a shared cache could hand one
+    // site the headers minted for another.
+    res.setHeader('Vary', 'Origin')
+  }
+  if ((req.method ?? 'GET') === 'OPTIONS') {
+    res.writeHead(allowed ? 204 : 403)
+    res.end()
+    return true
+  }
+  return false
 }
 
 // ---- login rate limiting ----
@@ -283,7 +390,13 @@ async function handleSite(req: IncomingMessage, res: ServerResponse): Promise<vo
     res.end(getPublicSiteHtml())
     return
   }
-  if (path.startsWith('/api/public/')) return handlePublic(path, method, req, res, ip)
+  if (path.startsWith('/api/public/')) {
+    // Unauthenticated and internet-reachable when the operator opts into LAN,
+    // so it is limited by address (#50). The panel API is limited per key
+    // instead, which is the sharper signal once there is a credential.
+    if (!publicRateOk(ip, res)) return
+    return handlePublic(path, method, req, res, ip)
+  }
   sendJson(res, 404, { error: 'not-found' })
 }
 
@@ -293,6 +406,10 @@ async function handlePanel(req: IncomingMessage, res: ServerResponse): Promise<v
   const path = url.pathname
   const method = req.method ?? 'GET'
   const ip = req.socket.remoteAddress ?? 'unknown'
+
+  // Cross-origin handshake first: a preflight carries no credentials, so it has
+  // to be answered before anything asks who the caller is.
+  if (path.startsWith('/api/') && applyCors(req, res)) return
 
   // ---- static (admin panel listener) ----
   if (!path.startsWith('/api/')) {
@@ -330,8 +447,34 @@ async function handlePanel(req: IncomingMessage, res: ServerResponse): Promise<v
     })
   }
 
-  // ---- everything else requires a session ----
-  const user = resolveSession(bearer(req))
+  // ---- everything else requires a session, or an API key (#48) ----
+  let user: AuthUser | null
+  const keyToken = apiKeyToken(req)
+  if (keyToken) {
+    const key = apikeys.resolveKey(keyToken)
+    // Unknown, revoked, expired and wrong-secret all answer the same 401: the
+    // response must not tell a caller which of those it got.
+    if (!key) return sendJson(res, 401, { error: 'unauthorized' })
+    if (!keyRateOk(key.id, res)) return
+    apikeys.touchKey(key.id)
+    user = principalForKey(key)
+    // Mutations made by a machine credential are recorded. Reads are not:
+    // an integration polling six endpoints would bury every human action in
+    // the log, and the trail exists to answer "what changed, and who changed
+    // it" - which a GET never answers.
+    if (method !== 'GET') {
+      audit.record({
+        source: 'api',
+        action: 'api.' + method.toLowerCase(),
+        actor: user.username,
+        target: path,
+        ok: true,
+        ip
+      })
+    }
+  } else {
+    user = resolveSession(bearer(req))
+  }
   if (!user) return sendJson(res, 401, { error: 'unauthorized' })
 
   if (path === '/api/logout' && method === 'POST') {
@@ -707,6 +850,79 @@ async function handlePanel(req: IncomingMessage, res: ServerResponse): Promise<v
     }
   }
 
+  // ---- API keys (#48): owner only, and never reachable with a key ----
+  if (path.startsWith('/api/keys')) {
+    // A key cannot mint or revoke keys. Otherwise a leaked key with any scope
+    // could issue itself a wider one, and revoking the original would achieve
+    // nothing - the whole point of revocation is that it ends the access.
+    if (user.apiKey) return sendJson(res, 403, { error: 'forbidden', need: 'session' })
+    if (user.role !== 'owner') return sendJson(res, 403, { error: 'forbidden', need: 'owner' })
+
+    if (path === '/api/keys' && method === 'GET') {
+      return sendJson(res, 200, { keys: apikeys.listKeys() })
+    }
+    if (path === '/api/keys' && method === 'POST') {
+      const b = (await readBody(req).catch(() => ({}))) as {
+        label?: string
+        scopes?: Scope[]
+        servers?: KeyServers
+        expiresInDays?: number
+        canAudit?: boolean
+      }
+      const created = apikeys.createKey({
+        label: b.label ?? '',
+        // Only scopes this build knows about. An unknown string in the list
+        // would sit in the file forever, meaning nothing but looking granted.
+        scopes: (Array.isArray(b.scopes) ? b.scopes : []).filter((s) => SCOPES.includes(s)),
+        servers: b.servers === 'all' ? 'all' : Array.isArray(b.servers) ? b.servers : [],
+        expiresInDays: Number(b.expiresInDays) || 0,
+        canAudit: !!b.canAudit
+      })
+      audit.record({
+        source: 'webpanel',
+        action: 'apikey.create',
+        actor: user.username,
+        target: created.key.label,
+        detail: created.key.scopes.join(',') || 'no scopes',
+        ok: true,
+        ip
+      })
+      // The secret is in this response and nowhere else, ever again.
+      return sendJson(res, 200, created)
+    }
+    if (path === '/api/keys/revoke' && method === 'POST') {
+      const b = (await readBody(req).catch(() => ({}))) as { keyId?: string }
+      try {
+        const k = apikeys.revokeKey(b.keyId ?? '')
+        audit.record({
+          source: 'webpanel',
+          action: 'apikey.revoke',
+          actor: user.username,
+          target: k.label,
+          ok: true,
+          ip
+        })
+        return sendJson(res, 200, k)
+      } catch {
+        return sendJson(res, 404, { error: 'key-not-found' })
+      }
+    }
+    if (path === '/api/keys' && method === 'DELETE') {
+      const keyId = url.searchParams.get('keyId') ?? ''
+      apikeys.deleteKey(keyId)
+      audit.record({
+        source: 'webpanel',
+        action: 'apikey.delete',
+        actor: user.username,
+        target: keyId,
+        ok: true,
+        ip
+      })
+      return sendJson(res, 200, { ok: true })
+    }
+    return sendJson(res, 404, { error: 'not-found' })
+  }
+
   // ---- global audit log (owner only: entries carry player IPs, personal data) ----
   if (path.startsWith('/api/audit')) {
     // Owner, or a co-admin explicitly granted the account-level audit permission.
@@ -768,7 +984,8 @@ function webCfg(): Required<WebConfig> {
     port: c?.port ?? 8722,
     bindLan: c?.bindLan ?? false,
     siteEnabled: c?.siteEnabled ?? false,
-    sitePort: c?.sitePort ?? 8723
+    sitePort: c?.sitePort ?? 8723,
+    apiOrigins: Array.isArray(c?.apiOrigins) ? c.apiOrigins : []
   }
 }
 
@@ -822,6 +1039,7 @@ export function getWebStatus(): WebStatus {
   const cfg = webCfg()
   return {
     bindLan: cfg.bindLan,
+    apiOrigins: cfg.apiOrigins,
     panel: {
       enabled: cfg.enabled,
       running: !!server && server.listening,

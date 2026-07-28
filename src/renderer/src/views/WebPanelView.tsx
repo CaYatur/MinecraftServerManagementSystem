@@ -1,10 +1,24 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Globe, Check, Trash2, Plus, KeyRound, ShieldCheck, ExternalLink, X } from 'lucide-react'
+import {
+  Globe,
+  Check,
+  Trash2,
+  Plus,
+  KeyRound,
+  ShieldCheck,
+  ExternalLink,
+  X,
+  Ban,
+  Copy,
+  Terminal
+} from 'lucide-react'
 import { useStore } from '../store'
 import { SCOPES } from '@shared/web'
 import { effectiveScopes } from '@shared/rbac'
+import { isKeyUsable } from '@shared/apikeys'
 import type { RoleDef } from '@shared/rbac'
+import type { ApiKeyView, KeyServers } from '@shared/apikeys'
 import type { Scope, WebRole, WebStatus, WebUserView } from '@shared/web'
 
 export function WebPanelView(): JSX.Element {
@@ -34,6 +48,19 @@ export function WebPanelView(): JSX.Element {
   const [pwUser, setPwUser] = useState<WebUserView | null>(null)
   const [pwVal, setPwVal] = useState('')
 
+  // ---- API keys (#48) ----
+  const [keys, setKeys] = useState<ApiKeyView[]>([])
+  const [keyLabel, setKeyLabel] = useState('')
+  const [keyScopes, setKeyScopes] = useState<Scope[]>(['view'])
+  const [keyAllServers, setKeyAllServers] = useState(true)
+  const [keyServers, setKeyServers] = useState<string[]>([])
+  const [keyDays, setKeyDays] = useState(0)
+  const [keyAudit, setKeyAudit] = useState(false)
+  // Held only until the operator dismisses it — this is the one and only time
+  // the raw secret exists outside the caller.
+  const [newSecret, setNewSecret] = useState<{ label: string; secret: string } | null>(null)
+  const [originsText, setOriginsText] = useState('')
+
   const refresh = async (): Promise<void> => {
     const st = await window.msms.getWebStatus()
     setStatus(st)
@@ -42,8 +69,30 @@ export function WebPanelView(): JSX.Element {
     setSiteEnabled(st.site.enabled)
     setSitePort(st.site.port)
     setBindLan(st.bindLan)
+    setOriginsText((st.apiOrigins ?? []).join('\n'))
     setUsers(await window.msms.listWebUsers())
     setRoles(await window.msms.listRoles())
+    setKeys(await window.msms.listApiKeys())
+  }
+
+  const createKey = async (): Promise<void> => {
+    const label = keyLabel.trim()
+    if (!label) return
+    try {
+      const servers: KeyServers = keyAllServers ? 'all' : keyServers
+      const r = await window.msms.createApiKey({
+        label,
+        scopes: keyScopes,
+        servers,
+        expiresInDays: Number(keyDays) || 0,
+        canAudit: keyAudit
+      })
+      setNewSecret({ label: r.key.label, secret: r.secret })
+      setKeyLabel('')
+      void refresh()
+    } catch (e) {
+      toast('error', String((e as Error)?.message ?? e))
+    }
   }
 
   const addRole = async (): Promise<void> => {
@@ -84,9 +133,11 @@ export function WebPanelView(): JSX.Element {
       port: Number(port),
       bindLan,
       siteEnabled,
-      sitePort: Number(sitePort)
+      sitePort: Number(sitePort),
+      apiOrigins: originsText.split('\n').map((s) => s.trim()).filter(Boolean)
     })
     setStatus(st)
+    setOriginsText((st.apiOrigins ?? []).join('\n'))
     toast('success', 'web.saved')
   }
 
@@ -347,6 +398,212 @@ export function WebPanelView(): JSX.Element {
           ))}
         </div>
       </div>
+
+      {/* API keys (#48). Machine credentials: scoped, revocable, tied to no
+          person. Desktop-only issuing, like roles — a web route would let a
+          settings-scoped user mint themselves something wider. */}
+      <div className="section-title">
+        <Terminal size={14} style={{ verticalAlign: -2, marginRight: 6 }} />
+        {t('web.apiKeys')}
+      </div>
+      <div className="panel">
+        <p className="hint" style={{ marginTop: 0 }}>{t('web.apiKeysHint')}</p>
+
+        <div className="row wrap" style={{ gap: 8, alignItems: 'flex-end', marginBottom: 10 }}>
+          <div className="field" style={{ flex: 1, minWidth: 150, marginBottom: 0 }}>
+            <label>{t('web.keyLabel')}</label>
+            <input
+              className="input"
+              value={keyLabel}
+              onChange={(e) => setKeyLabel(e.target.value)}
+              placeholder={t('web.keyLabelPlaceholder')}
+            />
+          </div>
+          <div className="field" style={{ width: 150, marginBottom: 0 }}>
+            <label>{t('web.keyExpiry')}</label>
+            <input
+              className="input"
+              type="number"
+              min={0}
+              value={keyDays}
+              onChange={(e) => setKeyDays(Number(e.target.value))}
+            />
+          </div>
+          <button className="btn primary" onClick={() => void createKey()} disabled={!keyLabel.trim()}>
+            <Plus size={14} /> {t('web.keyCreate')}
+          </button>
+        </div>
+        <p className="hint" style={{ marginTop: 0 }}>{t('web.keyExpiryHint')}</p>
+
+        <div className="field-label">{t('web.keyScopes')}</div>
+        <div className="row wrap" style={{ gap: 10, marginBottom: 10 }}>
+          {SCOPES.map((sc) => (
+            <label key={sc} className="switch" style={{ fontSize: 12 }}>
+              <input
+                type="checkbox"
+                checked={keyScopes.includes(sc)}
+                onChange={() =>
+                  setKeyScopes((prev) =>
+                    prev.includes(sc) ? prev.filter((x) => x !== sc) : [...prev, sc]
+                  )
+                }
+              />
+              {t(`web.scope.${sc}`)}
+            </label>
+          ))}
+          <label className="switch" style={{ fontSize: 12 }}>
+            <input type="checkbox" checked={keyAudit} onChange={() => setKeyAudit((v) => !v)} />
+            {t('web.keyAudit')}
+          </label>
+        </div>
+
+        <div className="field-label">{t('web.keyServers')}</div>
+        <label className="switch" style={{ fontSize: 12, marginBottom: 6 }}>
+          <input
+            type="checkbox"
+            checked={keyAllServers}
+            onChange={() => setKeyAllServers((v) => !v)}
+          />
+          {t('web.keyAllServers')}
+        </label>
+        {!keyAllServers && (
+          <div className="row wrap" style={{ gap: 10, marginBottom: 8 }}>
+            {servers.length === 0 ? (
+              <span className="dim" style={{ fontSize: 12 }}>{t('web.noServers')}</span>
+            ) : (
+              servers.map((s) => (
+                <label key={s.id} className="switch" style={{ fontSize: 12 }}>
+                  <input
+                    type="checkbox"
+                    checked={keyServers.includes(s.id)}
+                    onChange={() =>
+                      setKeyServers((prev) =>
+                        prev.includes(s.id) ? prev.filter((x) => x !== s.id) : [...prev, s.id]
+                      )
+                    }
+                  />
+                  {s.name}
+                </label>
+              ))
+            )}
+          </div>
+        )}
+
+        {keys.length === 0 ? (
+          <p className="dim" style={{ margin: '10px 0 0' }}>{t('web.noKeys')}</p>
+        ) : (
+          <div style={{ marginTop: 10 }}>
+            {keys.map((k) => {
+              const usable = isKeyUsable(k, Date.now())
+              return (
+                <div key={k.id} className="mod-row">
+                  <KeyRound size={16} className={usable ? '' : 'dim'} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div className="mod-name">
+                      {k.label}{' '}
+                      <span className={`badge ${usable ? 'op-badge' : 'error-badge'}`}>
+                        {k.revoked
+                          ? t('web.keyRevoked')
+                          : usable
+                            ? t('web.keyActive')
+                            : t('web.keyExpired')}
+                      </span>
+                    </div>
+                    <div className="dim" style={{ fontSize: 11 }}>
+                      {k.scopes.length ? k.scopes.join(', ') : t('web.keyNoScopes')}
+                      {' · '}
+                      {k.servers === 'all'
+                        ? t('web.keyAllServers')
+                        : k.servers
+                            .map((sid) => servers.find((x) => x.id === sid)?.name ?? sid)
+                            .join(', ') || t('web.keyNoServers')}
+                      {k.expiresAt ? ` · ${t('web.keyExpiresAt')} ${new Date(k.expiresAt).toLocaleDateString()}` : ''}
+                      {k.lastUsedAt
+                        ? ` · ${t('web.keyLastUsed')} ${new Date(k.lastUsedAt).toLocaleString()}`
+                        : ` · ${t('web.keyNeverUsed')}`}
+                    </div>
+                  </div>
+                  {!k.revoked && (
+                    <button
+                      className="btn ghost sm"
+                      title={t('web.keyRevoke')}
+                      onClick={async () => {
+                        await window.msms.revokeApiKey(k.id)
+                        void refresh()
+                      }}
+                    >
+                      <Ban size={14} />
+                    </button>
+                  )}
+                  <button
+                    className="btn ghost sm danger"
+                    title={t('common.delete')}
+                    onClick={async () => {
+                      await window.msms.deleteApiKey(k.id)
+                      void refresh()
+                    }}
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              )
+            })}
+          </div>
+        )}
+
+        {/* CORS allowlist (#50). Lives next to the keys because it only matters
+            for a key used from a browser. */}
+        <div className="field" style={{ marginTop: 14, marginBottom: 0, maxWidth: 460 }}>
+          <label>{t('web.apiOrigins')}</label>
+          <textarea
+            className="input"
+            style={{ minHeight: 64, fontFamily: 'var(--mono, monospace)', fontSize: 12 }}
+            value={originsText}
+            onChange={(e) => setOriginsText(e.target.value)}
+            placeholder="https://dash.example.com"
+          />
+          <p className="hint" style={{ marginBottom: 0 }}>{t('web.apiOriginsHint')}</p>
+          <button className="btn primary sm" style={{ marginTop: 8 }} onClick={saveConfig}>
+            <Check size={13} /> {t('common.save')}
+          </button>
+        </div>
+      </div>
+
+      {newSecret && (
+        <div className="modal-backdrop" onClick={() => setNewSecret(null)}>
+          <div className="modal" style={{ width: 'min(560px,94vw)' }} onClick={(e) => e.stopPropagation()}>
+            <h3>{t('web.keyCreated', { name: newSecret.label })}</h3>
+            <p className="hint" style={{ color: 'var(--warning)', marginTop: 0 }}>
+              ⚠ {t('web.keySecretWarn')}
+            </p>
+            <div
+              className="panel"
+              style={{
+                padding: 12,
+                wordBreak: 'break-all',
+                fontFamily: 'var(--mono, monospace)',
+                fontSize: 12
+              }}
+            >
+              {newSecret.secret}
+            </div>
+            <div className="modal-actions">
+              <button
+                className="btn"
+                onClick={() => {
+                  void navigator.clipboard.writeText(newSecret.secret)
+                  toast('success', 'web.keyCopied')
+                }}
+              >
+                <Copy size={14} /> {t('web.keyCopy')}
+              </button>
+              <button className="btn primary" onClick={() => setNewSecret(null)}>
+                <Check size={14} /> {t('common.close')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {permUser && (
         <div className="modal-backdrop" onClick={() => setPermUser(null)}>

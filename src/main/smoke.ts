@@ -6,8 +6,10 @@ import AdmZip from 'adm-zip'
 import * as nbt from 'prismarine-nbt'
 import { processManager } from './core/processManager'
 import { getConfig, updateConfig } from './config'
-import { startWebServer, stopWebServer } from './web/server'
+import { startWebServer, stopWebServer, _resetRateLimits } from './web/server'
 import * as webAuth from './web/auth'
+import * as apikeys from './web/apikeys'
+import { DEFAULT_KEY_LIMIT, consumeToken, newBucket, isOriginAllowed } from '@shared/apikeys'
 import * as webPlayerAuth from './web/playerAuth'
 import * as economy from './store/economy'
 import * as siteMod from './web/site'
@@ -3842,6 +3844,227 @@ export async function runWebSmoke(): Promise<void> {
       return fail('an invalid animation must be coerced, not stored')
     }
     console.log('WEB-SMOKE: crate animation OK (coerced on every path, reaches the buyer payload)')
+
+    // ---- API keys (#48) + safety rails (#50) ----
+    {
+      // Pure bucket math first — the HTTP assertions below cannot distinguish
+      // "the limiter works" from "the limiter is broken in a way that happens
+      // to refuse things".
+      const lim = { capacity: 3, refillPerSec: 1 }
+      let b = newBucket(lim, 1000)
+      for (let i = 0; i < 3; i++) {
+        const step = consumeToken(b, lim, 1000)
+        if (!step.allowed) return fail('bucket refused within its burst at spend ' + i)
+        b = step.bucket
+      }
+      let over = consumeToken(b, lim, 1000)
+      if (over.allowed) return fail('bucket allowed a 4th spend inside one instant')
+      if (over.retryAfterSec < 1) return fail('a refusal must ask for at least a 1s wait')
+      // one second later, exactly one token is back
+      const after = consumeToken(over.bucket, lim, 2000)
+      if (!after.allowed) return fail('bucket did not refill after a second')
+      if (consumeToken(after.bucket, lim, 2000).allowed) {
+        return fail('bucket refilled more than the elapsed time earns')
+      }
+      // a clock that jumps backwards must not mint tokens
+      over = consumeToken(b, lim, 500)
+      if (over.allowed) return fail('a backwards clock handed out a free token')
+      // ...and it never exceeds capacity however long it idles
+      const idle = consumeToken(newBucket(lim, 0), lim, 10_000_000)
+      if (idle.bucket.tokens > lim.capacity) return fail('bucket overfilled past capacity')
+
+      if (isOriginAllowed(undefined, ['https://a'])) return fail('a missing Origin was allowed')
+      if (isOriginAllowed('https://a', [])) return fail('an empty allowlist allowed an origin')
+      if (isOriginAllowed('https://b', ['https://a'])) return fail('an unlisted origin was allowed')
+      if (!isOriginAllowed('https://A', [' https://a '])) return fail('origin match is not normalised')
+      if (isOriginAllowed('https://evil', ['*'])) return fail('a wildcard entry matched an origin')
+
+      // Purge leftovers first. A failed assertion skips the cleanup below, and
+      // a stale key from the previous run would silently change what the
+      // "issue a key" assertions are actually testing.
+      for (const k of apikeys.listKeys()) {
+        if (k.label.startsWith('smoke_')) apikeys.deleteKey(k.id)
+      }
+      const keyHdr = (k: string): Record<string, string> => ({ 'X-API-Key': k })
+      const kget = (p: string, k: string): Promise<Response> =>
+        fetch(base + p, { headers: keyHdr(k) })
+      const kpost = (p: string, body: unknown, k: string): Promise<Response> =>
+        fetch(base + p, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...keyHdr(k) },
+          body: JSON.stringify(body)
+        })
+
+      // minting is owner-only, and never reachable with a key
+      r = await post('/api/keys', { label: 'smoke_nope', scopes: ['view'], servers: 'all' }, ft)
+      if (r.status !== 403) return fail('non-owner key create expected 403, got ' + r.status)
+
+      // a view-only key, scoped to this one server
+      r = await post('/api/keys', { label: 'smoke_view', scopes: ['view'], servers: [id] }, ot)
+      if (r.status !== 200) return fail('owner key create expected 200, got ' + r.status)
+      const issued = (await r.json()) as { key: { id: string; scopes: string[] }; secret: string }
+      if (!issued.secret.startsWith('msms_')) return fail('issued secret is not prefixed: ' + issued.secret)
+
+      // the raw secret must exist nowhere but that one response
+      if (JSON.stringify(apikeys.listKeys()).includes(issued.secret)) {
+        return fail('the raw key secret is readable from the key list')
+      }
+
+      // scope enforcement, exactly like a user
+      r = await kget('/api/servers/' + id + '/console', issued.secret)
+      if (r.status !== 200) return fail('view key on console read expected 200, got ' + r.status)
+      r = await kpost('/api/servers/' + id + '/power', { action: 'start' }, issued.secret)
+      if (r.status !== 403) return fail('view key on power expected 403, got ' + r.status)
+
+      // a key cannot mint or revoke keys, however wide its scopes
+      r = await kget('/api/keys', issued.secret)
+      if (r.status !== 403) return fail('key listing keys expected 403, got ' + r.status)
+
+      // Authorization: Bearer must work as well as X-API-Key
+      r = await get('/api/servers/' + id + '/console', issued.secret)
+      if (r.status !== 200) return fail('bearer-form key expected 200, got ' + r.status)
+
+      // per-server allowlist: a key scoped elsewhere sees nothing here
+      r = await post(
+        '/api/keys',
+        { label: 'smoke_elsewhere', scopes: ['view', 'power'], servers: ['some-other-server'] },
+        ot
+      )
+      const elsewhere = (await r.json()) as { key: { id: string }; secret: string }
+      r = await kget('/api/servers/' + id + '/console', elsewhere.secret)
+      if (r.status !== 403) return fail('key scoped to another server expected 403, got ' + r.status)
+      r = await kget('/api/servers', elsewhere.secret)
+      const elseList = ((await r.json()) as { servers: { id: string }[] }).servers
+      if (elseList.some((s) => s.id === id)) return fail('a key listed a server outside its allowlist')
+
+      // revoked -> 401 (not 403: the credential itself is no longer valid)
+      r = await post('/api/keys/revoke', { keyId: elsewhere.key.id }, ot)
+      if (r.status !== 200) return fail('revoke expected 200, got ' + r.status)
+      r = await kget('/api/servers', elsewhere.secret)
+      if (r.status !== 401) return fail('revoked key expected 401, got ' + r.status)
+
+      // expired -> 401. Issued through the store directly so the clock can be
+      // moved rather than waiting a day.
+      const exp = apikeys.createKey({ label: 'smoke_exp', scopes: ['view'], servers: 'all', expiresInDays: 1 })
+      if (!apikeys.resolveKey(exp.secret)) return fail('a fresh key with an expiry did not resolve')
+      if (apikeys.resolveKey(exp.secret, Date.now() + 2 * 86400_000)) {
+        return fail('an expired key still resolved')
+      }
+      r = await kget('/api/servers', exp.secret + 'x')
+      if (r.status !== 401) return fail('a tampered key expected 401, got ' + r.status)
+      apikeys.deleteKey(exp.key.id)
+
+      // key use is audited for mutations, and lands under its own source
+      {
+        const af = join(auditDir(), 'audit.jsonl')
+        const snap = existsSync(af) ? readFileSync(af, 'utf-8') : null
+        try {
+          rmSync(af, { force: true })
+          auditMod._reset()
+          await kget('/api/servers/' + id + '/console', issued.secret) // GET: not audited
+          await kpost('/api/servers/' + id + '/power', { action: 'start' }, issued.secret) // 403, still audited
+          const apiEntries = auditMod.query({ sources: ['api'] }).entries
+          if (apiEntries.length !== 1) {
+            return fail('expected exactly one api audit entry (mutations only), got ' + apiEntries.length)
+          }
+          if (!apiEntries[0].actor.startsWith('key:')) {
+            return fail('an api audit entry is not attributed to the key: ' + apiEntries[0].actor)
+          }
+        } finally {
+          if (snap == null) rmSync(af, { force: true })
+          else writeFileSync(af, snap, 'utf-8')
+        }
+      }
+
+      // Rate limit: burst past the bucket, expect 429 + Retry-After.
+      //
+      // Fired concurrently on purpose. Sequentially, each round trip gives the
+      // bucket time to refill, and whether the limit is ever reached becomes a
+      // race between request latency and the refill rate — a test that passes
+      // or fails depending on how busy the machine is. A burst is also what a
+      // runaway client actually looks like.
+      _resetRateLimits()
+      const t0 = Date.now()
+      const burst: Response[] = []
+      // Batched rather than one giant Promise.all: a few hundred sockets opened
+      // at once exhausts the connection pool and surfaces as "fetch failed",
+      // which says nothing about the limiter.
+      for (let sent = 0; sent < DEFAULT_KEY_LIMIT.capacity * 3 && !burst.some((x) => x.status === 429); sent += 30) {
+        burst.push(...(await Promise.all(Array.from({ length: 30 }, () => kget('/api/me', issued.secret)))))
+      }
+      const elapsedSec = (Date.now() - t0) / 1000
+      const limited = burst.filter((x) => x.status === 429)
+      if (limited.length === 0) return fail('a runaway key was never rate limited')
+      // The budget is the burst plus whatever the wall clock legitimately
+      // earned back, computed rather than guessed - a fixed number here would
+      // pass or fail depending on how fast the machine answered.
+      const budget =
+        DEFAULT_KEY_LIMIT.capacity + Math.ceil(elapsedSec * DEFAULT_KEY_LIMIT.refillPerSec) + 2
+      const served = burst.filter((x) => x.status === 200).length
+      if (served > budget) {
+        return fail('the limiter served ' + served + ' with a budget of ' + budget)
+      }
+      const ra = Number(limited[0].headers.get('Retry-After'))
+      if (!Number.isFinite(ra) || ra < 1) return fail('429 without a usable Retry-After: ' + ra)
+      _resetRateLimits()
+      // ...and the limit is per key, not global: a session must still work.
+      r = await get('/api/me', ot)
+      if (r.status !== 200) return fail('a rate-limited key blocked a human session, got ' + r.status)
+
+      // CORS: default deny, no wildcard, ever
+      const preflight = (origin: string): Promise<Response> =>
+        fetch(base + '/api/servers', { method: 'OPTIONS', headers: { Origin: origin } })
+      r = await preflight('https://evil.example')
+      if (r.status !== 403) return fail('unlisted origin preflight expected 403, got ' + r.status)
+      if (r.headers.get('Access-Control-Allow-Origin')) {
+        return fail('a refused origin was still handed CORS headers')
+      }
+      updateConfig((c) => {
+        if (c.web) c.web.apiOrigins = ['https://dash.example']
+      })
+      r = await preflight('https://dash.example')
+      if (r.status !== 204) return fail('allowed origin preflight expected 204, got ' + r.status)
+      if (r.headers.get('Access-Control-Allow-Origin') !== 'https://dash.example') {
+        return fail('allowed origin did not get its own ACAO header')
+      }
+      r = await preflight('https://evil.example')
+      if (r.headers.get('Access-Control-Allow-Origin')) {
+        return fail('the allowlist leaked headers to an origin that is not on it')
+      }
+
+      // The unauthenticated public API is limited per address (#50).
+      _resetRateLimits()
+      const pub: Response[] = []
+      for (let sent = 0; sent < 1200 && !pub.some((x) => x.status === 429); sent += 30) {
+        pub.push(...(await Promise.all(Array.from({ length: 30 }, () => sget('/api/public/site')))))
+      }
+      if (!pub.some((x) => x.status === 429)) return fail('the public API was never rate limited')
+      _resetRateLimits()
+      if ((await sget('/api/public/site')).status !== 200) {
+        return fail('the public API did not recover after its buckets were cleared')
+      }
+
+      // Resolving a key must stay cheap: it happens on every request, on the
+      // same thread that runs the UI, and before there is a key id to charge a
+      // rate-limit bucket against. A slow KDF here is a self-inflicted DoS, not
+      // a hardening measure - the secret is 256 random bits, so there is no
+      // guessing surface for one to protect.
+      {
+        const perf = apikeys.createKey({ label: 'smoke_perf', scopes: ['view'], servers: 'all' })
+        const n = 200
+        const started = Date.now()
+        for (let i = 0; i < n; i++) apikeys.resolveKey(perf.secret)
+        const each = (Date.now() - started) / n
+        apikeys.deleteKey(perf.key.id)
+        if (each > 2) return fail('key resolution costs ' + each.toFixed(1) + ' ms per request')
+      }
+
+      apikeys.deleteKey(issued.key.id)
+      apikeys.deleteKey(elsewhere.key.id)
+      console.log(
+        'WEB-SMOKE: API keys OK (scope + server allowlist, revoked/expired/tampered 401, audited, rate limited, CORS default-deny)'
+      )
+    }
   } catch (e) {
     return fail('exception: ' + String(e))
   } finally {

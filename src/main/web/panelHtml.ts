@@ -199,6 +199,7 @@ h2{margin:8px 0;font-weight:800;letter-spacing:-.4px}
       <button class="tab on" id="tabServersBtn" onclick="showSection('servers')">Servers</button>
       <button class="tab" id="tabNewsBtn" onclick="showSection('news')">News</button>
       <button class="tab hidden" id="tabAuditBtn" onclick="showSection('audit')">Audit</button>
+      <button class="tab hidden" id="tabKeysBtn" onclick="showSection('keys')">API keys</button>
     </div>
     <div id="list"></div>
     <div id="newsSection" class="hidden">
@@ -239,6 +240,7 @@ h2{margin:8px 0;font-weight:800;letter-spacing:-.4px}
             <option value="panel">Panel</option>
             <option value="webpanel">Web panel</option>
             <option value="public">Public site</option>
+            <option value="api">API key</option>
             <option value="system">System</option>
           </select>
           <select id="auditOk" onchange="loadAudit()">
@@ -251,6 +253,24 @@ h2{margin:8px 0;font-weight:800;letter-spacing:-.4px}
         <div class="dim" id="auditMeta" style="font-size:12px;margin-top:8px"></div>
       </div>
       <div id="auditList"></div>
+    </div>
+    <div id="keysSection" class="hidden">
+      <div class="card">
+        <div class="title">Issue an API key</div>
+        <div class="dim" style="font-size:12px;margin-bottom:8px">A key belongs to no account. It carries its own permissions, works only on the servers you tick, and can be revoked on its own. Send it as <code>Authorization: Bearer &lt;key&gt;</code> or <code>X-API-Key: &lt;key&gt;</code>.</div>
+        <div class="row" style="align-items:flex-end">
+          <div style="flex:1;min-width:150px"><div class="dim" style="font-size:12px">Label</div><input id="kLabel" placeholder="Discord bot"/></div>
+          <div style="width:150px"><div class="dim" style="font-size:12px">Expires in (days)</div><input id="kDays" type="number" min="0" value="0"/></div>
+          <button class="btn primary" onclick="createKey()">Issue key</button>
+        </div>
+        <div class="dim" style="font-size:12px;margin:8px 0 4px">Permissions</div>
+        <div id="kScopes" class="chips"></div>
+        <div class="dim" style="font-size:12px;margin:10px 0 4px">Servers</div>
+        <label class="row" style="gap:6px;font-size:13px"><input type="checkbox" id="kAll" checked onchange="renderKeyServers()" style="width:auto"/> All servers</label>
+        <div id="kServers" class="chips" style="margin-top:6px"></div>
+      </div>
+      <div id="keySecret" class="card hidden"></div>
+      <div id="keysList"></div>
     </div>
   </div>
 
@@ -388,7 +408,10 @@ h2{margin:8px 0;font-weight:800;letter-spacing:-.4px}
 <script>
 var token=localStorage.getItem('msms_token')||'';
 var current=null, pollTimer=null, statsRange=86400000, activeTab='console', myRole='', myCanAudit=false;
-function applyRole(){var b=document.getElementById('tabAuditBtn');if(b)b.classList.toggle('hidden',myRole!=='owner'&&!myCanAudit)}
+function applyRole(){var b=document.getElementById('tabAuditBtn');if(b)b.classList.toggle('hidden',myRole!=='owner'&&!myCanAudit);
+ /* Keys are owner-only on the server too; hiding the tab just stops a
+    co-admin from clicking into a section that would only 403 at them. */
+ var k=document.getElementById('tabKeysBtn');if(k)k.classList.toggle('hidden',myRole!=='owner')}
 function api(path,opts){opts=opts||{};opts.headers=Object.assign({'Content-Type':'application/json'},opts.headers||{});if(token)opts.headers['Authorization']='Bearer '+token;return fetch(path,opts).then(function(r){return r.json().then(function(j){return{ok:r.ok,status:r.status,body:j}})})}
 function show(id){['login','app','detail'].forEach(function(x){document.getElementById(x).classList.add('hidden')});document.getElementById(id).classList.remove('hidden');
  document.getElementById('logout').classList.toggle('hidden',id==='login');
@@ -817,11 +840,61 @@ function showSection(which){
  document.getElementById('list').classList.toggle('hidden',which!=='servers');
  document.getElementById('newsSection').classList.toggle('hidden',which!=='news');
  document.getElementById('auditSection').classList.toggle('hidden',which!=='audit');
+ document.getElementById('keysSection').classList.toggle('hidden',which!=='keys');
  document.getElementById('tabServersBtn').className='tab'+(which==='servers'?' on':'');
  document.getElementById('tabNewsBtn').className='tab'+(which==='news'?' on':'');
  document.getElementById('tabAuditBtn').classList.toggle('on',which==='audit');
+ document.getElementById('tabKeysBtn').classList.toggle('on',which==='keys');
  if(which==='news'){loadPosts();loadUploads()}
- if(which==='audit'){loadAudit()}}
+ if(which==='audit'){loadAudit()}
+ if(which==='keys'){loadKeys()}}
+
+/* ---- API keys (#48). Owner-only; the routes enforce it too. ---- */
+var KEY_SCOPES=['view','console','power','players','files','backups','settings','store'];
+var kScopeSel={view:true},kServerSel={},kServerList=[];
+function renderKeyScopes(){var el=document.getElementById('kScopes');
+ el.innerHTML=KEY_SCOPES.map(function(s){return '<label class="chip" style="cursor:pointer"><input type="checkbox" '+(kScopeSel[s]?'checked':'')+' onchange="kScopeSel[\\''+s+'\\']=this.checked" style="width:auto;margin-right:5px"/>'+s+'</label>'}).join('')+
+  '<label class="chip" style="cursor:pointer"><input type="checkbox" id="kAudit" style="width:auto;margin-right:5px"/>audit log</label>'}
+function renderKeyServers(){var el=document.getElementById('kServers');var all=document.getElementById('kAll').checked;
+ el.classList.toggle('hidden',all);
+ if(all){el.innerHTML='';return}
+ if(!kServerList.length){el.innerHTML='<span class="dim" style="font-size:12px">No servers.</span>';return}
+ el.innerHTML=kServerList.map(function(s){return '<label class="chip" style="cursor:pointer"><input type="checkbox" '+(kServerSel[s.id]?'checked':'')+' onchange="kServerSel[\\''+s.id+'\\']=this.checked" style="width:auto;margin-right:5px"/>'+esc(s.name)+'</label>'}).join('')}
+function loadKeys(){renderKeyScopes();
+ api('/api/servers').then(function(r){kServerList=(r.ok&&r.body.servers)||[];renderKeyServers()});
+ api('/api/keys').then(function(r){var el=document.getElementById('keysList');
+  if(r.status===403){el.innerHTML='<div class="card dim">Owner access required.</div>';return}
+  if(!r.ok){el.innerHTML='<div class="card dim">Could not load API keys.</div>';return}
+  renderKeys(r.body.keys||[])})}
+function keyState(k){if(k.revoked)return 'revoked';if(k.expiresAt&&k.expiresAt<=Date.now())return 'expired';return 'active'}
+function renderKeys(keys){var el=document.getElementById('keysList');
+ if(!keys.length){el.innerHTML='<div class="card dim">No API keys yet.</div>';return}
+ el.innerHTML='<div class="card">'+keys.map(function(k){var st=keyState(k);
+  var where=k.servers==='all'?'all servers':((k.servers||[]).length?k.servers.length+' server(s)':'no servers');
+  return '<div class="mrow"><span class="ic">'+(st==='active'?'🔑':'✕')+'</span>'+
+   '<div style="flex:1;min-width:0"><div style="font-weight:700">'+esc(k.label)+' <span class="badge">'+st+'</span></div>'+
+   '<div class="dim" style="font-size:12px">'+esc((k.scopes||[]).join(', ')||'no permissions')+' · '+esc(where)+
+   (k.expiresAt?' · expires '+new Date(k.expiresAt).toLocaleDateString():'')+
+   (k.lastUsedAt?' · last used '+new Date(k.lastUsedAt).toLocaleString():' · never used')+'</div></div>'+
+   (k.revoked?'':'<button class="btn sm" onclick="revokeKey(\\''+k.id+'\\')">Revoke</button>')+
+   '<button class="btn sm danger" onclick="deleteKey(\\''+k.id+'\\')">🗑</button></div>'}).join('')+'</div>'}
+function createKey(){var label=document.getElementById('kLabel').value.trim();if(!label){alert('Give the key a label.');return}
+ var scopes=KEY_SCOPES.filter(function(s){return kScopeSel[s]});
+ var all=document.getElementById('kAll').checked;
+ var servers=all?'all':kServerList.filter(function(s){return kServerSel[s.id]}).map(function(s){return s.id});
+ var body={label:label,scopes:scopes,servers:servers,expiresInDays:Number(document.getElementById('kDays').value)||0,canAudit:document.getElementById('kAudit').checked};
+ api('/api/keys',{method:'POST',body:JSON.stringify(body)}).then(function(r){
+  if(!r.ok){alert('Could not issue the key.');return}
+  /* Shown once, then gone: the server keeps only a hash. */
+  var box=document.getElementById('keySecret');box.classList.remove('hidden');
+  box.innerHTML='<div class="title">Key issued — '+esc(r.body.key.label)+'</div>'+
+   '<div class="dim" style="font-size:12px;margin-bottom:6px">Copy it now. It is stored hashed and will never be shown again.</div>'+
+   '<div style="word-break:break-all;font-family:ui-monospace,monospace;font-size:12px;background:var(--elev);padding:10px;border-radius:8px">'+esc(r.body.secret)+'</div>';
+  document.getElementById('kLabel').value='';loadKeys()})}
+function revokeKey(id){if(!confirm('Revoke this key? Anything using it stops working immediately.'))return;
+ api('/api/keys/revoke',{method:'POST',body:JSON.stringify({keyId:id})}).then(function(r){if(r.ok)loadKeys()})}
+function deleteKey(id){if(!confirm('Delete this key permanently? Audit entries will keep referring to it.'))return;
+ api('/api/keys?keyId='+encodeURIComponent(id),{method:'DELETE'}).then(function(r){if(r.ok)loadKeys()})}
 var auditTimer=null;
 function auditDebounce(){clearTimeout(auditTimer);auditTimer=setTimeout(loadAudit,200)}
 function loadAudit(){var qs=['limit=500'];
