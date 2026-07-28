@@ -1,4 +1,5 @@
 import type { CrateAnimation } from './crate'
+import type { StoreLayout } from './storefront'
 
 // Per-server permission scopes for web-panel users.
 export type Scope =
@@ -90,6 +91,16 @@ export interface Product {
    * existed says - so they all keep playing exactly what they played before.
    */
   crateAnimation?: CrateAnimation
+  /** Extra pictures beyond the icon, shown in the detail view (#77). */
+  images?: string[]
+  /** Prepared but not yet on sale. Filtered out server-side, not in CSS (#81). */
+  hidden?: boolean
+  /** Finite supply. Decremented atomically with the balance, so it cannot oversell. */
+  stock?: number
+  /** How many one player may ever buy. Counted from the purchase history. */
+  perPlayerLimit?: number
+  /** Operator ordering for the 'featured' sort; lower is earlier. */
+  sort?: number
 }
 
 /**
@@ -120,6 +131,16 @@ export interface ProductPublic {
   rewards?: PublicReward[]
   /** For a crate: the animation it will play, so a storefront can say so. */
   crateAnimation?: CrateAnimation
+  /** Extra pictures for the detail view (#77). */
+  images?: string[]
+  /** Remaining supply, when the product has one at all (#81). */
+  stock?: number
+  /** How many one player may ever buy, when limited. */
+  perPlayerLimit?: number
+  /** How many the *asking* player already has. Undefined when nobody is signed in. */
+  owned?: number
+  /** Operator ordering for the 'featured' sort. */
+  sort?: number
 }
 
 export interface StorePublic {
@@ -127,12 +148,16 @@ export interface StorePublic {
   products: ProductPublic[]
   /** Which crate animation this server's panel should play (#16). */
   crateAnimation: CrateAnimation
+  /** Section order for the storefront (#80). */
+  layout: StoreLayout
 }
 
 export interface StoreConfig {
   currency: string
   products: Product[]
   crateAnimation: CrateAnimation
+  /** Whether crates or items come first on the storefront (#80). */
+  layout: StoreLayout
 }
 
 /**

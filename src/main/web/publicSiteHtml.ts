@@ -3,6 +3,7 @@
 // Everything user-authored is escaped before rendering.
 import { pickSiteLang } from './siteLang'
 import { CRATE_CSS, CRATE_JS, CRATE_MODAL_HTML } from '@shared/crateUi'
+import { STORE_CSS, STORE_JS, STORE_MODAL_HTML, CRATE_ICON_SVG } from '@shared/storeUi'
 
 export function getPublicSiteHtml(): string {
   return `<!doctype html><html lang="en"><head>
@@ -168,8 +169,9 @@ html.anim .reveal.shown{opacity:1!important;transform:none!important;transition:
 input{width:100%;padding:12px 14px;background:color-mix(in srgb,var(--bg) 70%,var(--card));border:1px solid var(--line);border-radius:11px;color:var(--text);margin:7px 0;font-size:15px;font-family:inherit}
 input:focus{outline:none;border-color:var(--accent)}
 .err{color:#f87171;font-size:13.5px;margin-top:8px;min-height:18px}
-/* crate - one implementation, shared with the admin panel (crateUi.ts) */
+/* crate + storefront - one implementation, shared with the admin panel */
 ${CRATE_CSS}
+${STORE_CSS}
 footer{border-top:1px solid var(--line);padding:44px 0 34px;color:var(--dim);font-size:13.5px;margin-top:56px;
   background:linear-gradient(180deg,transparent,color-mix(in srgb,var(--accent) 7%,transparent))}
 .foot{display:flex;flex-wrap:wrap;gap:18px;align-items:center;justify-content:space-between}
@@ -233,6 +235,7 @@ body.classic .hero h1{letter-spacing:-1.2px}
 </div></div>
 
 ${CRATE_MODAL_HTML}
+${STORE_MODAL_HTML}
   <div id="crateResult" class="crate-result"></div>
   <button class="btn primary" onclick="closeCrate()" style="margin-top:16px" id="crateOk"></button>
 </div></div>
@@ -388,27 +391,33 @@ function pageServers(){
  return '<section class="section"><div class="wrap"><div class="section-head"><h2>'+esc(T('servers.title'))+'</h2></div>'+
   (S.servers.length?serverGrid():'<p class="muted">'+esc(T('servers.empty'))+'</p>')+'</div></section>'}
 function pageStore(){
- var h='<section class="section"><div class="wrap"><div class="section-head"><h2>'+esc(T('store.title'))+'</h2><span id="balBox"></span></div><div id="storeBox" class="muted">'+esc(T('common.loading'))+'</div></div></section>';
+ var h='<section class="section"><div class="wrap"><div class="section-head"><h2>'+esc(T('store.title'))+'</h2><span id="balBox"></span></div><div id="sfBox" class="muted">'+esc(T('common.loading'))+'</div></div></section>';
  setTimeout(loadStore,0);return h}
 function loadStore(){
- api('/api/public/store').then(function(r){STORE=r.j;var box=document.getElementById('storeBox');if(!box)return;
-  if(!STORE.products||!STORE.products.length){box.innerHTML='<p class="muted">'+esc(T('store.empty'))+'</p>';return}
-  box.innerHTML='<div class="grid c4">'+STORE.products.map(function(p){
-    return '<div class="card reveal'+(p.type==='crate'?' crate':'')+'"><div class="prod">'+(p.icon?'<img class="ico" src="'+escAttr(p.icon)+'" alt=""/>':'')+
-    '<div class="nm">'+esc(p.name)+(p.type==='crate'?' 🎁':'')+'</div><div class="ds">'+esc(p.description||'')+'</div>'+
-    /* What a crate can give you, with odds, before you pay for it (#79). */
-    (p.type==='crate'?crateContentsHtml(p.rewards,4):'')+
-    '<div style="display:flex;align-items:center;gap:10px"><span class="price">'+p.price+' '+esc(STORE.currency||'')+'</span>'+
-    '<button class="btn primary sm" style="margin-left:auto" onclick="buy(\\''+p.id+'\\')">'+esc(T('store.buy'))+'</button></div></div></div>'}).join('')+'</div>';
-  revealAll();refreshBalance()})}
+ api('/api/public/store').then(function(r){STORE=r.j;
+  SF.products=STORE.products||[];SF.layout=STORE.layout||'crates-first';
+  sfRender();revealAll();refreshBalance()})}
+/* The hooks the shared storefront calls back into. */
+function sfCurrency(){return (STORE&&STORE.currency)||''}
+function sfImg(src){return src}
+function sfText(k){return T(k)}
+function sfBuy(pid){buy(pid)}
 function refreshBalance(){var el=document.getElementById('balBox');if(!el)return;
  if(!ptoken){el.innerHTML='<button class="btn sm primary" onclick="openAuth()">'+esc(T('store.loginToBuy'))+'</button>';return}
  api('/api/public/store/balance',null,ptoken).then(function(b){if(!b.ok)return;
   el.innerHTML='<span class="pill">'+esc(T('store.balance'))+': <b style="color:var(--accent)">'+b.j.balance+' '+esc(b.j.currency||'')+'</b></span>'})}
 function buy(pid){if(!ptoken){openAuth();return}
  api('/api/public/store/buy',{productId:pid},ptoken).then(function(r){
-  if(!r.ok){alert(r.j.error==='insufficient'?T('store.insufficient'):('Error: '+(r.j.error||r.s)));return}
-  refreshBalance();
+  if(!r.ok){alert(r.j.error==='insufficient'?T('store.insufficient')
+   :r.j.error==='out-of-stock'?T('store.outOfStock')
+   :r.j.error==='limit-reached'?T('store.limitReached')
+   :('Error: '+(r.j.error||r.s)));
+   /* Somebody else may have taken the last one while this page was open. */
+   loadStore();return}
+  refreshBalance();sfCloseDetail();
+  /* Reload so a stock count or per-player limit updates immediately rather
+     than on the next visit. */
+  loadStore();
   /* The animation rides on the reward: the server resolved it for this crate,
      and the buyer never has the product it came from (#75). */
   if(r.j.reward&&r.j.reward.crate){document.getElementById('crateTitle').textContent=T('crate.opening');
@@ -486,6 +495,8 @@ function plogout(){api('/api/public/logout',{},ptoken);ptoken='';pname='';localS
    from crateUi.ts, the same implementation the admin panel runs, and reads the
    animation the server resolved for that specific crate. */
 ${CRATE_JS}
+${STORE_JS}
+var CRATE_ICON_SVG=${JSON.stringify(CRATE_ICON_SVG)};
 
 loadSite();setInterval(pollStatus,15000);
 </script>

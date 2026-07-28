@@ -136,6 +136,7 @@ const api: MsmsApi = {
 
   getStore: (id) => ipcRenderer.invoke(IPC.storeGet, id),
   setStoreCurrency: (id, currency) => ipcRenderer.invoke(IPC.storeCurrency, id, currency),
+  setStoreLayout: (id, layout) => ipcRenderer.invoke(IPC.storeLayout, id, layout),
   upsertStoreProduct: (id, product) => ipcRenderer.invoke(IPC.storeUpsert, id, product),
   deleteStoreProduct: (id, productId) => ipcRenderer.invoke(IPC.storeDelete, id, productId),
   addStoreBalance: (id, mcName, amount, reason, category) =>

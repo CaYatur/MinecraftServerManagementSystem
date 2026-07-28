@@ -20,6 +20,14 @@ import type { LedgerEntry, Product, Scope } from '@shared/web'
 import { categoryName, filterLedger, ledgerSummary } from '@shared/economy'
 import { ANALYSIS_EVENT_LIMIT, ANALYSIS_EVENT_TYPES } from '@shared/analysis'
 import { effectiveScopes, normalizeScopes } from '@shared/rbac'
+import {
+  filterProducts,
+  isSafeImageSrc,
+  normalizeLayout,
+  sanitizeImages,
+  sections,
+  MAX_PRODUCT_IMAGES
+} from '@shared/storefront'
 import * as rolesMod from './web/roles'
 import {
   CRATE_ANIMATIONS,
@@ -3131,7 +3139,8 @@ interface StubNode {
   value: string
   checked: boolean
   className: string
-  style: Record<string, string> & { cssText?: string }
+  style: Record<string, string> & { cssText?: string; setProperty(k: string, v: string): void }
+  lang?: string
   classList: {
     add(c: string): void
     remove(c: string): void
@@ -3143,6 +3152,8 @@ interface StubNode {
   querySelectorAll(): StubNode[]
   appendChild(): void
   addEventListener(): void
+  focus(): void
+  setSelectionRange(): void
 }
 
 interface PageRun {
@@ -3165,7 +3176,8 @@ function runPageScript(html: string, seed: Record<string, unknown> = {}): PageRu
       value: '',
       checked: false,
       className: '',
-      style: {},
+      lang: '',
+      style: Object.assign(Object.create(null), { setProperty: () => {} }),
       classList: {
         add: (c) => void cls.add(c),
         remove: (c) => void cls.delete(c),
@@ -3180,7 +3192,9 @@ function runPageScript(html: string, seed: Record<string, unknown> = {}): PageRu
       querySelector: () => mkNode(''),
       querySelectorAll: () => [],
       appendChild: () => {},
-      addEventListener: () => {}
+      addEventListener: () => {},
+      focus: () => {},
+      setSelectionRange: () => {}
     }
     return n
   }
@@ -3218,7 +3232,9 @@ function runPageScript(html: string, seed: Record<string, unknown> = {}): PageRu
     querySelectorAll: (): StubNode[] => [],
     addEventListener: () => {},
     head: mkNode('head'),
-    body: mkNode('body')
+    body: mkNode('body'),
+    // Both pages set `documentElement.lang` and read `.style` off it on load.
+    documentElement: mkNode('html')
   }
 
   const ctx: Record<string, unknown> = {
@@ -3237,6 +3253,10 @@ function runPageScript(html: string, seed: Record<string, unknown> = {}): PageRu
     encodeURIComponent,
     addEventListener: () => {},
     removeEventListener: () => {},
+    scrollTo: () => {},
+    scrollY: 0,
+    innerWidth: 1280,
+    innerHeight: 800,
     matchMedia: () => ({ matches: false, addEventListener: () => {} }),
     IntersectionObserver: class {
       observe(): void {}
@@ -3245,7 +3265,22 @@ function runPageScript(html: string, seed: Record<string, unknown> = {}): PageRu
     navigator: { language: 'en', languages: ['en'], clipboard: { writeText: () => Promise.resolve() } },
     fetch: (path: string, opts?: { method?: string; body?: string }) => {
       calls.push(['fetch', path, opts?.method ?? 'GET', opts?.body])
-      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}) })
+      // Both pages call something on load. An empty `{}` makes those bootstrap
+      // paths throw asynchronously, and an unhandled rejection in the test
+      // output is how a real one later goes unnoticed — so the shapes they
+      // destructure on startup are answered plausibly.
+      const body: Record<string, unknown> = path.includes('/api/public/site')
+        ? {
+            siteName: 'Test',
+            tagline: '',
+            description: '',
+            servers: [],
+            posts: [],
+            showStore: true,
+            i18n: { defaultLang: 'en', langs: { en: {} } }
+          }
+        : { servers: [], products: [], lines: [], entries: [] }
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) })
     },
     ...seed
   }
@@ -4193,6 +4228,172 @@ export async function runWebSmoke(): Promise<void> {
       console.log('WEB-SMOKE: per-crate animation OK (own beats default, odds published, commands never are)')
     }
 
+    // ---- storefront: images, availability, sections, search (#76-#82) ----
+    {
+      // Image sources are attacker-controlled - any store-scoped web user can
+      // set one, and it renders for every visitor to the public site.
+      for (const good of [
+        '',
+        'https://cdn.example/x.png',
+        'http://cdn.example/x.png',
+        '/uploads/a-b_c.1.png',
+        'HTTPS://CDN.EXAMPLE/X.PNG'
+      ]) {
+        if (!isSafeImageSrc(good)) return fail('a legitimate image source was refused: ' + good)
+      }
+      for (const bad of [
+        'javascript:alert(1)',
+        'JaVaScRiPt:alert(1)',
+        'data:image/svg+xml;base64,PHN2Zz48c2NyaXB0Pg==',
+        '//evil.example/x.png',
+        '/uploads/../../secrets.json',
+        '/uploads/sub/dir.png',
+        '/uploads/.env',
+        'file:///etc/passwd',
+        'vbscript:msgbox',
+        42 as unknown as string
+      ]) {
+        if (isSafeImageSrc(bad)) return fail('an unsafe image source was accepted: ' + String(bad))
+      }
+      if (sanitizeImages(['https://a/1.png', 'javascript:x', '/uploads/b.png']).length !== 2) {
+        return fail('sanitizeImages kept something it should have dropped')
+      }
+      if (sanitizeImages(Array(40).fill('https://a/1.png')).length !== MAX_PRODUCT_IMAGES) {
+        return fail('sanitizeImages did not cap the gallery')
+      }
+
+      const sfid = 'storefront-' + Date.now()
+      const mk = (over: Partial<Product>): Product =>
+        economy.upsertProduct(sfid, {
+          id: '',
+          type: 'item',
+          name: 'X',
+          description: '',
+          price: 10,
+          commands: [],
+          rewards: [],
+          ...over
+        } as Product)
+
+      // The chokepoint drops a hostile icon rather than storing it.
+      const dirty = mk({
+        name: 'Dirty',
+        icon: 'javascript:alert(1)',
+        images: ['https://ok.example/a.png', 'data:image/svg+xml,<svg onload=alert(1)>'],
+        type: 'crate',
+        rewards: [{ name: 'R', weight: 1, icon: 'javascript:alert(2)', commands: [] }]
+      })
+      if (dirty.icon) return fail('a javascript: icon was stored: ' + dirty.icon)
+      if (dirty.images?.length !== 1) return fail('a data: gallery image was stored')
+      if (dirty.rewards[0].icon) return fail('a javascript: reward icon was stored')
+
+      // Hidden means absent from the payload, not merely styled out - shipping
+      // it would leak an unlaunched product's name, price and reward list, and
+      // leave its id buyable.
+      const secretProduct = mk({ name: 'Unlaunched', hidden: true, price: 999 })
+      const stocked = mk({ name: 'Limited', stock: 2, price: 1 })
+      const capped = mk({ name: 'Capped', perPlayerLimit: 1, price: 1 })
+      mk({ name: 'Zebra', price: 300, sort: 5 })
+      mk({ name: 'Apple', price: 50, sort: 1, type: 'crate', rewards: [{ name: 'Sword', weight: 1, commands: [] }] })
+
+      const anon = JSON.stringify(economy.publicStore(sfid))
+      if (anon.includes('Unlaunched')) return fail('a hidden product reached the public payload')
+      if (economy.publicStore(sfid).products.some((p) => p.id === secretProduct.id)) {
+        return fail('a hidden product was listed')
+      }
+      economy.addBalance(sfid, 'Steve', 500, 'smoke')
+      // ...and it is not buyable by id either.
+      const sneak = economy.purchase(sfid, 'Steve', secretProduct.id)
+      if (sneak.ok) return fail('a hidden product was bought by id')
+
+      // Stock cannot oversell, and the count is visible.
+      if (economy.purchase(sfid, 'Steve', stocked.id).ok !== true) return fail('first stocked buy failed')
+      if (economy.purchase(sfid, 'Steve', stocked.id).ok !== true) return fail('second stocked buy failed')
+      const third = economy.purchase(sfid, 'Steve', stocked.id)
+      if (third.ok) return fail('a product with 2 in stock sold 3')
+      if (third.error !== 'out-of-stock') return fail('overselling reported as ' + String(third.error))
+      const stockedPub = economy.publicStore(sfid).products.find((p) => p.id === stocked.id)
+      if (stockedPub?.stock !== 0) return fail('remaining stock not published: ' + String(stockedPub?.stock))
+
+      // Per-player limit counts from the purchase history.
+      if (!economy.purchase(sfid, 'Steve', capped.id).ok) return fail('first capped buy failed')
+      const over = economy.purchase(sfid, 'Steve', capped.id)
+      if (over.ok || over.error !== 'limit-reached') return fail('per-player limit not enforced')
+      // ...and it is per player, not global.
+      economy.addBalance(sfid, 'Alex', 50, 'smoke')
+      if (!economy.purchase(sfid, 'Alex', capped.id).ok) {
+        return fail('one player hitting their limit blocked everybody else')
+      }
+      // The asking player's own count travels, so the UI can say so up front.
+      const forSteve = economy.publicStore(sfid, 'Steve').products.find((p) => p.id === capped.id)
+      if (forSteve?.owned !== 1) return fail('owned count not reported: ' + String(forSteve?.owned))
+      if (economy.publicStore(sfid).products.find((p) => p.id === capped.id)?.owned !== undefined) {
+        return fail('an anonymous visitor was told somebody else owned counts')
+      }
+
+      // Sections, search and sort are one shared rule for all three UIs.
+      const cat = economy.publicStore(sfid).products
+      const secs = sections(cat, 'crates-first')
+      if (secs[0].type !== 'crate') return fail('crates-first did not put crates first')
+      if (sections(cat, 'items-first')[0].type !== 'item') return fail('items-first is not honoured')
+      if (sections(cat, 'mixed').length !== 1) return fail('mixed should be one section')
+      if (sections(cat.filter((p) => p.type === 'item'), 'crates-first').length !== 1) {
+        return fail('an empty section was emitted as a heading with nothing under it')
+      }
+      if (normalizeLayout('nonsense') !== 'crates-first') return fail('a bad layout was not coerced')
+
+      const byPrice = filterProducts(cat, { sort: 'price-asc' }).map((p) => p.price)
+      if (byPrice.join() !== [...byPrice].sort((a, b) => a - b).join()) return fail('price sort is wrong')
+      const featured = filterProducts(cat, { sort: 'featured' })
+      if (featured[0].name !== 'Apple') return fail('featured order ignored the sort field')
+      // Searching a crate by what is inside it is the whole point of indexing rewards.
+      const found = filterProducts(cat, { text: 'sword' })
+      if (found.length !== 1 || found[0].name !== 'Apple') {
+        return fail('searching a crate by its contents found ' + found.map((p) => p.name).join(','))
+      }
+      if (filterProducts(cat, { type: 'crate' }).some((p) => p.type !== 'crate')) {
+        return fail('the type filter let something else through')
+      }
+      // The two new admin routes carry the `store` scope, not `settings`.
+      const layoutUrl = '/api/servers/' + id + '/store/admin/layout'
+      r = await post(layoutUrl, { layout: 'items-first' }, ft)
+      if (r.status !== 403) return fail('non-store layout change expected 403, got ' + r.status)
+      r = await post(layoutUrl, { layout: 'items-first' }, ot)
+      if (r.status !== 200) return fail('layout change expected 200, got ' + r.status)
+      if (economy.getStoreConfig(id).layout !== 'items-first') return fail('layout did not persist')
+      r = await post(layoutUrl, { layout: 'nonsense' }, ot)
+      if (((await r.json()) as { layout: string }).layout !== 'crates-first') {
+        return fail('a nonsense layout was stored rather than coerced')
+      }
+
+      // Product images upload under the store scope. Deliberately NOT the
+      // site's /api/site/upload, which needs `settings` - a store manager
+      // should not need the keys to the public website to add a picture.
+      const upUrl = base + '/api/servers/' + id + '/store/admin/upload'
+      const png = Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+        'base64'
+      )
+      const upload = (tok: string, type: string): Promise<Response> =>
+        fetch(upUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': type, Authorization: 'Bearer ' + tok },
+          body: png
+        })
+      r = await upload(ft, 'image/png')
+      if (r.status !== 403) return fail('non-store image upload expected 403, got ' + r.status)
+      r = await upload(ot, 'text/html')
+      if (r.status !== 415) return fail('an html upload expected 415, got ' + r.status)
+      r = await upload(ot, 'image/png')
+      if (r.status !== 200) return fail('store image upload expected 200, got ' + r.status)
+      const up = (await r.json()) as { name: string; src: string }
+      if (!up.src.startsWith('/uploads/')) return fail('upload did not return a servable path: ' + up.src)
+      if (!isSafeImageSrc(up.src)) return fail('upload returned a path its own validator refuses')
+      rmSync(join(uploadsDir(), up.name), { force: true })
+
+      console.log('WEB-SMOKE: storefront OK (image allowlist, hidden/stock/limit enforced, sections + search)')
+    }
+
     // ---- the served pages actually run, and the crate editor has its picker ----
     {
       let panel: PageRun
@@ -4265,7 +4466,67 @@ export async function runWebSmoke(): Promise<void> {
       if (siteHtml.includes('5.2s cubic-bezier') || siteHtml.includes('},5300)')) {
         return fail('the public site still has its hardcoded 5.3s reel')
       }
-      console.log('WEB-SMOKE: panel + site scripts parse; crate editor picker, save shape and contents escaping OK')
+      // #78/#80/#82: the storefront a buyer sees, rendered by both pages from
+      // the same shared code, so they cannot disagree about it.
+      const evilIcon = 'x" onerror="alert(1)'
+      const GIFT_EMOJI = String.fromCodePoint(0x1f381)
+      for (const page of [panel, site]) {
+        const ctx = page.ctx as Record<string, (...a: unknown[]) => unknown> & {
+          SF: { products: unknown[]; layout: string; text: string; type: string; sort: string }
+        }
+        ctx.SF.products = [
+          {
+            id: 'p1',
+            type: 'crate',
+            name: 'Mythic Crate',
+            description: 'good stuff',
+            price: 100,
+            icon: evilIcon,
+            rewards: [{ name: 'Netherite', chancePct: 5 }]
+          },
+          { id: 'p2', type: 'item', name: 'VIP Rank', description: '', price: 50 },
+          { id: 'p3', type: 'item', name: 'Sold Out Thing', description: '', price: 5, stock: 0 }
+        ]
+        ctx.SF.layout = 'crates-first'
+        ctx['sfRender']()
+        const box = page.byId('sfBox').innerHTML
+        if (!box.includes('sf-grid')) return fail('the storefront rendered no grid')
+        // The gift emoji is gone: it renders as a different picture on every
+        // platform and carries no accessible name.
+        if (box.includes(GIFT_EMOJI)) return fail('the storefront still uses the gift emoji')
+        if (!box.includes('<svg')) return fail('the crate badge is not an inline svg')
+        if (!box.includes('sf-sec-head')) return fail('crates and items were not split into sections')
+        if (box.indexOf('Mythic Crate') > box.indexOf('VIP Rank')) {
+          return fail('crates-first put items above crates')
+        }
+        // Sold out is stated, and the button is disabled rather than failing on click.
+        if (!box.includes('sold-out') || !box.includes('disabled')) {
+          return fail('a sold-out product was still offered for sale')
+        }
+        if (box.includes('onerror="alert(1)"')) return fail('a product icon escaped its attribute')
+
+        // Search reaches into a crate's contents, which is how people look for one.
+        ctx.SF.text = 'netherite'
+        ctx['sfRender']()
+        const searched = page.byId('sfBox').innerHTML
+        if (!searched.includes('Mythic Crate') || searched.includes('VIP Rank')) {
+          return fail('searching by crate contents did not filter correctly')
+        }
+        ctx.SF.text = 'nothing-matches-this'
+        ctx['sfRender']()
+        if (!page.byId('sfBox').innerHTML.includes('sf-empty')) {
+          return fail('an empty search result said nothing')
+        }
+        ctx.SF.text = ''
+
+        // The detail view opens and carries the contents list.
+        ctx['sfOpen']('p1')
+        const detail = page.byId('sfDetail').innerHTML
+        if (!detail.includes('Mythic Crate')) return fail('the detail view did not open the product')
+        if (!detail.includes('5%')) return fail('the detail view did not list the crate odds')
+        if (detail.includes('onerror="alert(1)"')) return fail('the detail view escaped nothing')
+      }
+      console.log('WEB-SMOKE: panel + site scripts parse; crate picker, storefront sections, search, detail and escaping OK')
     }
 
     // ---- API keys (#48) + safety rails (#50) ----
