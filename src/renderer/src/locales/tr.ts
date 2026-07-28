@@ -131,7 +131,14 @@ const tr: typeof en = {
     bridgeInstalled: '{{version}} kuruldu. Yüklenmesi için sunucuyu yeniden başlat.',
     bridgeFailed: 'Kurulum başarısız: {{error}}',
     bridgeUnsupported: 'Bu sunucu türü Bridge eklentisini çalıştıramaz.',
-    bridgeOutdated: 'Bridge {{installed}} → {{latest}} sürümüne güncelle'
+    bridgeOutdated: '{{installed}} kurulu, {{latest}} mevcut.',
+    bridgeOutdatedTitle: 'MSMS-Bridge güncellemesi var'
+  },
+  bridge: {
+    missingTitle: 'Bu sunucuda MSMS-Bridge eklentisi yok',
+    missingWhy:
+      'Gerçek TPS, canlı oyuncu konumları ve dünya haritası bunu gerektirir. Sunucu konsolu üzerinden bildirim yaptığı için kurmak ek bir port açmaz.',
+    offline: 'GitHub’a ulaşılamıyor; uygulamayla gelen kopya kullanılacak.'
   },
   audit: {
     title: 'Denetim kaydı',

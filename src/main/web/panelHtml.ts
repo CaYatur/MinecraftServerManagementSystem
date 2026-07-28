@@ -270,6 +270,20 @@ h2{margin:8px 0;font-weight:800;letter-spacing:-.4px}
         <button class="btn primary" onclick="sendCmd()">Send</button>
       </div>
     </div>
+    <!-- Bridge notice (#118). Outside the tab panels on purpose: it used to
+         live in the map's empty state, which renders only when there is nobody
+         to draw, so a busy server with no bridge showed nothing at all — and
+         only to an operator who opened that tab in the first place. -->
+    <div class="card hidden" id="brNotice" style="margin-bottom:10px">
+      <div class="row" style="align-items:center">
+        <div style="flex:1;min-width:220px">
+          <b id="brTitle"></b>
+          <div class="dim" id="brWhy" style="font-size:12px;margin-top:3px"></div>
+        </div>
+        <button class="btn sm primary" id="brBtn" onclick="brInstall()"></button>
+      </div>
+      <div class="dim" id="brMsg" style="font-size:12px;margin-top:8px"></div>
+    </div>
     <div id="panelAlerts" class="hidden">
       <!-- Account claims waiting for a human (#105). Lives in the settings-gated
            tab because that is the scope that may approve one, and it is hidden
@@ -439,7 +453,9 @@ function renderDetail(){show('detail');var s=current;document.getElementById('dN
    return '<button class="btn sm'+(a[0]==='start'?' primary':a[0]==='kill'?' danger':'')+'" onclick="power(\\''+a[0]+'\\')">'+a[1]+'</button>'}).join('')}
  document.getElementById('dCmdRow').style.display=has('console')?'flex':'none';
  document.getElementById('tabManageBtn').classList.toggle('hidden',!has('store'));
- document.getElementById('tabAlertsBtn').classList.toggle('hidden',!has('settings'));showTab('console')}
+ document.getElementById('tabAlertsBtn').classList.toggle('hidden',!has('settings'));
+ loadBridgeNotice();
+ showTab('console')}
 function showTab(tab){activeTab=tab;
  [['console','panelConsole','tabConsole'],['stats','panelStats','tabStats'],['timeline','panelTimeline','tabTimeline'],['map','panelMap','tabMap'],['store','panelStore','tabStore'],['alerts','panelAlerts','tabAlertsBtn'],['manage','panelManage','tabManageBtn']]
   .forEach(function(t){document.getElementById(t[1]).classList.toggle('hidden',tab!==t[0]);
@@ -453,6 +469,43 @@ function showTab(tab){activeTab=tab;
  if(tab==='stats')loadStats();
  if(tab==='timeline')loadEvents();
  if(tab==='alerts'){loadAlerts();loadPlayerRequests()}}
+
+/* ---- the bridge plugin, wherever the operator is (#118) ----
+   Fetched once when a server is opened, not once per map visit: an operator who
+   never opens the map tab was never told that half the features are switched
+   off for want of a 6 KB jar. */
+var BR=null,brBusy=false;
+function loadBridgeNotice(){
+ BR=null;renderBridgeNotice();
+ if(!current||current.scopes.indexOf('files')<0)return;
+ mapGet('/api/servers/'+current.id+'/bridge').then(function(b){BR=b;renderBridgeNotice()})}
+function renderBridgeNotice(){
+ var card=document.getElementById('brNotice');if(!card)return;
+ /* Nothing to say when the type cannot run it, it is current, or there is no
+    jar anywhere to offer — a banner nobody can act on is noise. */
+ var show=!!BR&&(BR.state==='missing'||BR.state==='outdated')&&BR.actionable;
+ card.classList.toggle('hidden',!show);
+ if(!show)return;
+ var outdated=BR.state==='outdated';
+ document.getElementById('brTitle').textContent=outdated
+  ?'MSMS-Bridge update available'
+  :'This server has no MSMS-Bridge plugin';
+ document.getElementById('brWhy').textContent=(outdated
+  ?('Installed '+(BR.installed||'')+', '+(BR.latest||'')+' is available.')
+  :'True TPS, live player positions and the world map all need it. It reports over the server console, so no extra port is opened.')
+  +(BR.offline?' GitHub is unreachable; the copy shipped with the app will be used.':'');
+ document.getElementById('brBtn').textContent=brBusy?'Installing…':('Install '+(BR.latest||''));
+ document.getElementById('brBtn').disabled=brBusy}
+function brInstall(){
+ if(brBusy||!current)return;
+ brBusy=true;renderBridgeNotice();
+ mapPost('/api/servers/'+current.id+'/bridge/install').then(function(b){
+  brBusy=false;
+  /* "Installed" is not "working": Bukkit loads plugins at startup. */
+  document.getElementById('brMsg').textContent=(b&&b.ok)
+   ?('Installed '+(b.version||'')+'. Restart the server to load it.')
+   :('Install failed: '+((b&&b.error)||'request failed'));
+  loadBridgeNotice()})}
 
 /* ---- account claims waiting for a human (#105) ---- */
 function loadPlayerRequests(){

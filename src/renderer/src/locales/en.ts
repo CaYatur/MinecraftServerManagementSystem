@@ -129,7 +129,14 @@ export default {
     bridgeInstalled: 'Installed {{version}}. Restart the server to load it.',
     bridgeFailed: 'Install failed: {{error}}',
     bridgeUnsupported: 'This server type cannot run the Bridge plugin.',
-    bridgeOutdated: 'Bridge {{installed}} → update to {{latest}}'
+    bridgeOutdated: 'Installed {{installed}}, {{latest}} is available.',
+    bridgeOutdatedTitle: 'MSMS-Bridge update available'
+  },
+  bridge: {
+    missingTitle: 'This server has no MSMS-Bridge plugin',
+    missingWhy:
+      'True TPS, live player positions and the world map all need it. It reports over the server console, so installing it opens no extra port.',
+    offline: 'GitHub is unreachable; the copy shipped with the app will be used.'
   },
   audit: {
     title: 'Audit log',
