@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from 'node:http'
+import { createHash } from 'node:crypto'
 import { networkInterfaces } from 'node:os'
 import { createReadStream, existsSync } from 'node:fs'
 import { join, extname, resolve, sep } from 'node:path'
@@ -219,13 +220,103 @@ let specJson: string | null = null
 let docsHtml: string | null = null
 
 function cachedSpec(): string {
-  if (specJson === null) specJson = JSON.stringify(openApiDocument())
+  if (specJson === null) {
+    buildCount++
+    buildLog.push('spec')
+    specJson = JSON.stringify(openApiDocument())
+  }
   return specJson
 }
 
 function cachedDocs(): string {
-  if (docsHtml === null) docsHtml = getApiDocsHtml()
+  if (docsHtml === null) {
+    buildCount++
+    buildLog.push('docs')
+    docsHtml = getApiDocsHtml()
+  }
   return docsHtml
+}
+
+/**
+ * The two app shells, built once and served with an ETag (#100).
+ *
+ * Both were rebuilt from their template literals on **every** request — a few
+ * hundred KB of string work each — and both are served before any
+ * authentication, on listeners with no per-address limit outside `/api/login`.
+ * With `bindLan` on, that is a way to make the panel unresponsive from anywhere
+ * on the network without holding a credential.
+ *
+ * Caching them is safe because neither depends on the request or on config:
+ * every interpolation is a module constant, and everything an operator can
+ * change — theme, languages, posts, logo — is fetched by the page at runtime
+ * from `/api/public/site`. The smoke asserts exactly that, by changing site
+ * config and requiring the HTML to come back byte-identical. If a later change
+ * makes a page config-derived, that assertion fails rather than this cache
+ * quietly serving yesterday's page.
+ */
+interface CachedPage {
+  body: string
+  etag: string
+}
+
+const pageCache = new Map<string, CachedPage>()
+
+/**
+ * Counted, not timed.
+ *
+ * The first version of this asserted that twenty requests averaged under 25ms.
+ * Measured: 13.3ms per request uncached against 10.85ms cached — the loopback
+ * round trip dwarfs the work, so the threshold could not fail and the test
+ * proved nothing. A build counter is the same claim without the noise: twenty
+ * requests must cause zero rebuilds, on any machine.
+ */
+let buildCount = 0
+const buildLog: string[] = []
+
+function cachedPage(key: string, build: () => string): CachedPage {
+  let hit = pageCache.get(key)
+  if (!hit) {
+    buildCount++
+    buildLog.push(key)
+    const body = build()
+    hit = { body, etag: '"' + createHash('sha1').update(body).digest('base64url') + '"' }
+    pageCache.set(key, hit)
+  }
+  return hit
+}
+
+/** Test seam: how many times a cached artefact has actually been built. */
+export function _buildCount(): number {
+  return buildCount
+}
+
+/** Test seam: which artefacts were built, in order. Names a surprise rebuild. */
+export function _buildLog(): string[] {
+  return [...buildLog]
+}
+
+/** Test seam: drop the built artefacts so a rebuild can be observed. */
+export function _resetPageCache(): void {
+  pageCache.clear()
+  specJson = null
+  docsHtml = null
+}
+
+function sendPage(req: IncomingMessage, res: ServerResponse, page: CachedPage): void {
+  // `no-cache` means "revalidate", not "do not store": the browser keeps the
+  // copy and asks, and an unchanged shell costs a 304 with no body. A panel is
+  // reloaded often, and the shell only changes when the app is upgraded.
+  if (req.headers['if-none-match'] === page.etag) {
+    res.writeHead(304, { ETag: page.etag, 'Cache-Control': 'no-cache' })
+    res.end()
+    return
+  }
+  res.writeHead(200, {
+    'Content-Type': 'text/html; charset=utf-8',
+    ETag: page.etag,
+    'Cache-Control': 'no-cache'
+  })
+  res.end(page.body)
 }
 
 /** Test seam: the buckets survive a `stopWebServer()`, which smoke runs rely on. */
@@ -432,10 +523,12 @@ async function handleSite(req: IncomingMessage, res: ServerResponse): Promise<vo
       res.end()
       return
     }
+    // Limited per address like the public API below it: the page and the
+    // uploads it references are served without a credential, so an unlimited
+    // one is a way to spend the process from anywhere that can reach the port.
+    if (!publicRateOk(ip, res)) return
     if (path.startsWith('/uploads/')) return serveUpload(path, res)
-    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
-    res.end(getPublicSiteHtml())
-    return
+    return sendPage(req, res, cachedPage('site', getPublicSiteHtml))
   }
   if (path.startsWith('/api/public/')) {
     // Unauthenticated and internet-reachable when the operator opts into LAN,
@@ -525,11 +618,11 @@ async function handlePanel(req: IncomingMessage, res: ServerResponse): Promise<v
       res.end()
       return
     }
+    // Same reasoning as the site listener: unauthenticated, so limited.
+    if (!publicRateOk(ip, res)) return
     // Sandboxed raster uploads (for post image previews in the panel).
     if (path.startsWith('/uploads/')) return serveUpload(path, res)
-    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
-    res.end(getPanelHtml())
-    return
+    return sendPage(req, res, cachedPage('panel', getPanelHtml))
   }
 
   // ---- public auth endpoints ----
