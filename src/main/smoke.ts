@@ -3781,28 +3781,48 @@ export async function runWebSmoke(): Promise<void> {
     }
 
     // ---- double-spend: two concurrent buys with balance for one -> exactly one wins ----
-    webAuth.setUserMc(owner.id, 'Tester')
-    economy.addBalance(id, 'Tester', 100, { by: 'desktop', source: 'panel' })
-    const prod = economy.upsertProduct(id, {
-      id: '',
-      type: 'item',
-      name: 'TestItem',
-      description: '',
-      price: 100,
-      commands: ['say {player} bought TestItem'],
-      rewards: []
-    } as Product)
-    const buy = (): Promise<Response> =>
-      post('/api/servers/' + id + '/store/buy', { productId: prod.id }, ot)
-    const [r1, r2] = await Promise.all([buy(), buy()])
-    const codes = [r1.status, r2.status].sort((a, b) => a - b)
-    if (!(codes[0] === 200 && codes[1] === 402)) {
-      return fail('double-spend expected [200,402], got [' + codes.join(',') + ']')
+    // Driven through the public site, which since #102 is the only surface that
+    // buys. The panel route was removed: it spent currency behind a `view` gate.
+    {
+      const storeServerBefore = siteMod.getSiteConfig().storeServerId
+      siteMod.setSiteConfig({ storeServerId: id })
+      economy.addBalance(id, 'Tester', 100, { by: 'desktop', source: 'panel' })
+      const prod = economy.upsertProduct(id, {
+        id: '',
+        type: 'item',
+        name: 'TestItem',
+        description: '',
+        price: 100,
+        commands: ['say {player} bought TestItem'],
+        rewards: []
+      } as Product)
+      webPlayerAuth._testCreateAccount('Tester', 'testerpass')
+      const lr = await spost('/api/public/login', { mcName: 'Tester', password: 'testerpass' })
+      const tt = ((await lr.json()) as { token: string }).token
+      if (!tt) return fail('the double-spend probe could not sign in as a player')
+      const buy = (): Promise<Response> =>
+        spost('/api/public/store/buy', { productId: prod.id }, tt)
+      const [r1, r2] = await Promise.all([buy(), buy()])
+      const codes = [r1.status, r2.status].sort((a, b) => a - b)
+      if (!(codes[0] === 200 && codes[1] === 402)) {
+        return fail('double-spend expected [200,402], got [' + codes.join(',') + ']')
+      }
+      const finalBal = economy.getBalance(id, 'Tester')
+      if (finalBal !== 0) return fail('double-spend balance should be 0, got ' + finalBal)
+
+      // ...and the panel cannot buy at all — checked with the OWNER token, so a
+      // refusal cannot be mistaken for a missing scope. Removing the Buy button
+      // while leaving the route would keep the part that costs money.
+      const gone = await post('/api/servers/' + id + '/store/buy', { productId: prod.id }, ot)
+      if (gone.status !== 404) {
+        return fail('the panel buy route answered ' + gone.status + ' to an owner, expected 404')
+      }
+      if (economy.getBalance(id, 'Tester') !== 0) return fail('the panel buy route spent currency')
+
+      economy.deleteProduct(id, prod.id)
+      siteMod.setSiteConfig({ storeServerId: storeServerBefore })
+      console.log('WEB-SMOKE: double-spend prevented (one 200, one 402, balance 0); panel buy route gone')
     }
-    const finalBal = economy.getBalance(id, 'Tester')
-    if (finalBal !== 0) return fail('double-spend balance should be 0, got ' + finalBal)
-    economy.deleteProduct(id, prod.id)
-    console.log('WEB-SMOKE: double-spend prevented (one 200, one 402, balance 0)')
 
     // ---- currency management (grant / remove / set) + audit ledger ----
     const balUrl = '/api/servers/' + id + '/store/admin/balance'
@@ -3880,10 +3900,14 @@ export async function runWebSmoke(): Promise<void> {
         }
         apikeys.deleteKey(k.key.id)
 
-        // A purchase from the admin panel was not audited, while the same
-        // purchase from the public site was — so whether the action appeared in
-        // the trail depended on which page it was made from.
+        // The panel used to buy, unaudited, on a `view` gate. Both halves are
+        // gone with the route (#102); what still has to hold is that the
+        // surface which DOES buy records it. Attribution matters more here than
+        // it did in the panel: the actor is a player, not an account an
+        // operator can look up.
         {
+          const storeServerBefore = siteMod.getSiteConfig().storeServerId
+          siteMod.setSiteConfig({ storeServerId: id })
           const prod = economy.upsertProduct(id, {
             id: '',
             type: 'item',
@@ -3893,24 +3917,22 @@ export async function runWebSmoke(): Promise<void> {
             commands: [],
             rewards: []
           } as Product)
-          webAuth.setUserMc(owner.id, 'Auditee')
           economy.addBalance(id, 'Auditee', 10, { by: 'smoke', source: 'panel' })
           auditMod._reset()
           rmSync(af, { force: true })
-          const ot2 = ((await (await post('/api/login', { username: 'owner_t', password: 'ownerpass' })).json()) as { token: string }).token
-          const bought = await post('/api/servers/' + id + '/store/buy', { productId: prod.id }, ot2)
-          if (bought.status !== 200) return fail('panel buy expected 200, got ' + bought.status)
+          webPlayerAuth._testCreateAccount('Auditee', 'auditeepass')
+          const alr = await spost('/api/public/login', { mcName: 'Auditee', password: 'auditeepass' })
+          const apt = ((await alr.json()) as { token: string }).token
+          const bought = await spost('/api/public/store/buy', { productId: prod.id }, apt)
+          if (bought.status !== 200) return fail('public buy expected 200, got ' + bought.status)
           const buys = auditMod.query({ actions: ['purchase'] }).entries
-          if (!buys.some((e) => e.source === 'webpanel' && e.actor === 'owner_t')) {
-            return fail('a purchase made from the admin panel was not audited')
-          }
-          if (!buys.some((e) => e.detail === 'to Auditee')) {
-            return fail('a panel purchase did not record who it was delivered to')
+          if (!buys.some((e) => e.source === 'public' && e.actor === 'Auditee')) {
+            return fail('a purchase made from the public site was not audited')
           }
           economy.deleteProduct(id, prod.id)
-          webAuth.setUserMc(owner.id, '')
+          siteMod.setSiteConfig({ storeServerId: storeServerBefore })
         }
-        console.log('WEB-SMOKE: balance administration + panel purchases audited (per source, applied delta, refusals)')
+        console.log('WEB-SMOKE: balance administration + public purchases audited (per source, applied delta, refusals)')
       } finally {
         if (snap == null) rmSync(af, { force: true })
         else writeFileSync(af, snap, 'utf-8')
@@ -4916,7 +4938,20 @@ export async function runWebSmoke(): Promise<void> {
       // the same shared code, so they cannot disagree about it.
       const evilIcon = 'x" onerror="alert(1)'
       const GIFT_EMOJI = String.fromCodePoint(0x1f381)
+      // #102: each page declares what its storefront is for, by running its own
+      // bootstrap. Setting SF.mode from the test would assert nothing — both
+      // pages paste the same STORE_JS, so the mode only means anything if the
+      // host actually sets it. Grep cannot tell them apart for the same reason.
+      ;(panel.ctx['loadStore'] as () => void)()
+      ;(site.ctx['loadStore'] as () => void)()
+      await sleep(20)
+      const panelMode = (panel.ctx['SF'] as { mode: string }).mode
+      const siteMode = (site.ctx['SF'] as { mode: string }).mode
+      if (panelMode !== 'preview') return fail('the panel storefront is in "' + panelMode + '" mode')
+      if (siteMode !== 'buy') return fail('the public storefront is in "' + siteMode + '" mode')
+
       for (const page of [panel, site]) {
+        const buying = (page.ctx['SF'] as { mode: string }).mode === 'buy'
         const ctx = page.ctx as Record<string, (...a: unknown[]) => unknown> & {
           SF: {
             products: unknown[]
@@ -4952,10 +4987,41 @@ export async function runWebSmoke(): Promise<void> {
         if (box.indexOf('Mythic Crate') > box.indexOf('VIP Rank')) {
           return fail('crates-first put items above crates')
         }
-        // Sold out is stated, and the button is disabled rather than failing on click.
-        if (!box.includes('sold-out') || !box.includes('disabled')) {
+        // Sold out is stated, and where it can be bought the button is disabled
+        // rather than failing on click. In preview there is nothing to spend,
+        // and the product that ran out is the one an operator most wants to
+        // open — so the state is shown and the action stays live.
+        if (!box.includes('sold-out')) return fail('a sold-out product was not marked as one')
+        if (buying && !box.includes('disabled')) {
           return fail('a sold-out product was still offered for sale')
         }
+        // The heart of #102. Not a markup check — both pages paste the same
+        // STORE_JS, so every card in both of them carries the same
+        // `sfAction(...)` attribute. What differs is what that call does, so
+        // that is what is asserted: press the card's own action and watch for a
+        // request that spends money.
+        if (buying) {
+          if (box.includes('sf-previewbar')) return fail('the public storefront claims to be a preview')
+        } else {
+          if (!box.includes('sf-previewbar')) return fail('the panel storefront is not framed as a preview')
+          if (!box.includes('sfEdit(')) return fail('the panel storefront offers no way to author')
+        }
+        // A signed-in visitor, or the buy path stops at the login modal and the
+        // assertion below would pass without ever reaching a purchase.
+        if (buying) ctx['ptoken'] = 'smoke-token'
+        const catalogue = ctx.SF.products
+        page.calls.length = 0
+        ;(ctx['sfAction'] as unknown as (id: string) => void)('p2')
+        await sleep(5)
+        const spent = page.calls.some((c) => String(c[1]).includes('/store/buy'))
+        if (buying && !spent) return fail('the public storefront no longer buys anything')
+        if (!buying && spent) return fail('the panel storefront spent currency from a preview')
+        // The buy path reloads the catalogue on the way out, and the stub
+        // answers with an empty one. Put the fixture back for what follows —
+        // including the signed-out token, which a later block depends on.
+        if (buying) ctx['ptoken'] = ''
+        ctx.SF.products = catalogue
+        ctx['sfRender']()
         if (box.includes('onerror="alert(1)"')) return fail('a product icon escaped its attribute')
 
         // Every inline SVG carries its own width and height. One with only a
@@ -5011,8 +5077,11 @@ export async function runWebSmoke(): Promise<void> {
         ])
         const reopened = page.byId('sfDetail').innerHTML
         if (!reopened.includes('Mythic Crate')) return fail('a catalogue reload dropped the open detail')
-        if (!/sf-actions[\s\S]*disabled/.test(reopened)) {
+        if (buying && !/sf-actions[\s\S]*disabled/.test(reopened)) {
           return fail('the reopened detail still offers a product that just sold out')
+        }
+        if (!buying && /sf-actions[\s\S]*sfBuy\(/.test(reopened)) {
+          return fail('the panel detail view still offers to buy')
         }
         // ...and a product that is gone entirely closes rather than lingering.
         ctx['sfSetProducts']([{ id: 'p2', type: 'item', name: 'VIP Rank', price: 50 }])

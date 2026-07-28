@@ -1625,28 +1625,18 @@ async function handlePanel(req: IncomingMessage, res: ServerResponse): Promise<v
       if (!gate('view')) return
       return sendJson(res, 200, { txns: user.mcName ? economy.getTxns(id, user.mcName) : [] })
     }
-    if (rest === 'buy' && method === 'POST') {
-      if (!gate('view')) return
-      if (!user.mcName) return sendJson(res, 400, { error: 'no-mc-linked' })
-      const b = (await readBody(req).catch(() => ({}))) as { productId?: string }
-      const result = economy.purchase(id, user.mcName, b.productId ?? '')
-      // The public site audits its purchases; this route did not, so the same
-      // action was in the trail or absent from it depending on which page it was
-      // made from. Actor is the panel account that clicked Buy, with the
-      // Minecraft name it delivered to in the detail — they are not always the
-      // same person's identity.
-      audit.record({
-        source: 'webpanel',
-        action: 'purchase',
-        actor: user.username,
-        ok: result.ok,
-        ip,
-        serverId: id,
-        target: b.productId ?? '',
-        detail: result.ok ? 'to ' + user.mcName : result.error
-      })
-      return sendJson(res, result.ok ? 200 : result.error === 'insufficient' ? 402 : 400, result)
-    }
+    // There is deliberately no `buy` here (#102). Buying belongs to the public
+    // site, where the buyer is a player signed in with their own Minecraft name
+    // and their own balance. This route spent currency on a `view` gate — the
+    // scope granted to someone who should be able to look and nothing else —
+    // and the panel's only caller was a Buy button sitting in what an operator
+    // opens to check their own storefront. Removing the button and leaving the
+    // route would keep the part that costs money.
+    //
+    // Breaking change for integrations: POST /api/v1/servers/{id}/store/buy is
+    // gone rather than re-gated. A store-scoped key can already grant balance
+    // and deliver rewards, so re-gating would only move the same capability
+    // behind a name that does not describe it.
     // ---- admin (store scope) ----
     if (rest === 'admin' && method === 'GET') {
       if (!gate('store')) return

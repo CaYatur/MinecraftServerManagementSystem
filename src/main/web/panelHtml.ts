@@ -318,7 +318,12 @@ h2{margin:8px 0;font-weight:800;letter-spacing:-.4px}
     <div id="panelTimeline" class="hidden"><div class="card tight" id="dEvents"></div></div>
     <div id="panelMap" class="hidden"><div class="card">${MAP_HTML}</div></div>
     <div id="panelStore" class="hidden">
-      <div class="row" style="margin-bottom:10px"><b>Store</b><div class="spacer"></div><span id="dBal" class="badge"></span></div>
+      <div class="row" style="margin-bottom:10px"><b>Store</b><div class="spacer"></div>
+        <span id="sfNewRow" class="row hidden" style="gap:6px">
+          <button class="btn sm" onclick="pmNew('item')">＋ Item</button>
+          <button class="btn sm primary" onclick="pmNew('crate')">＋ Crate</button>
+        </span>
+      </div>
       <div id="sfBox"></div>
     </div>
     <div id="panelManage" class="hidden">
@@ -634,13 +639,29 @@ function loadEvents(){
     '<span>'+esc(evText(e))+'</span><span class="when">'+new Date(e.ts).toLocaleString()+'</span></div>'}).join('')})}
 
 /* ---- store ---- */
+/* The panel's storefront is a PREVIEW (#102). It renders what a player sees so
+   an operator can check their own work, and it buys nothing: the panel is where
+   a store is authored, and the buyer is a player on the public site with a
+   linked Minecraft name. The balance badge went with the Buy button — an
+   operator's own balance is not information about the store. */
 function loadStore(){api('/api/servers/'+current.id+'/store').then(function(r){if(!r.ok)return;
+ SF.mode='preview';
+ SF.canEdit=!!(current&&current.scopes.indexOf('store')>=0);
+ var nw=document.getElementById('sfNewRow');if(nw)nw.classList.toggle('hidden',!SF.canEdit);
  SF.layout=r.body.layout||'crates-first';sfCurrencyName=r.body.currency||'';
- api('/api/servers/'+current.id+'/store/balance').then(function(b){var bal=b.ok?b.body:{balance:0,mcName:null};
-  document.getElementById('dBal').textContent=(bal.mcName?bal.mcName+': ':'')+(bal.balance||0)+' '+(r.body.currency||'');
-  /* sfSetProducts, not an assignment: it also refreshes an open detail, which
-     is where stock and per-player counts are read. */
-  sfSetProducts(r.body.products)})})}
+ /* sfSetProducts, not an assignment: it also refreshes an open detail, which
+    is where stock and per-player counts are read. */
+ sfSetProducts(r.body.products)})}
+/* Open the real editor for a previewed product.
+   The storefront holds the PUBLIC shape — rewards trimmed to name/icon/odds,
+   commands stripped at the boundary on purpose — so the id has to be resolved
+   against the admin catalogue before pmEdit can fill a draft. Fetched when it
+   is not already there, because the Store tab does not load the admin one. */
+function sfEdit(id){
+ if((mstore.products||[]).some(function(p){return p.id===id}))return pmEdit(id);
+ api('/api/servers/'+current.id+'/store/admin').then(function(r){
+  if(!r.ok){alert('No access to the product editor.');return}
+  mstore=r.body;renderMProducts();pmEdit(id)})}
 /* The four hooks the shared storefront calls back into. The panel is English
    only, so its translator returns a small table and falls back to the key. */
 var sfCurrencyName='';
@@ -653,10 +674,15 @@ var SF_TEXT={'store.buy':'Buy','store.crate':'Crate','store.search':'Search prod
  'store.sort_name-asc':'Name: A-Z','store.sort_name-desc':'Name: Z-A',
  'store.section_crate':'Crates','store.section_item':'Items','store.contents':'What is inside',
  'store.outOfStock':'Sold out','store.limitReached':'Limit reached','store.stockLeft':'{n} left',
- 'store.limitOf':'Max {n} per player','common.close':'Close'};
+ 'store.limitOf':'Max {n} per player','common.close':'Close',
+ /* Preview-mode copy. Deliberately not in siteI18n: none of it can ever render
+    on the public site, and adding the keys there would hand every operator's
+    custom language pack four entries that translate nothing. */
+ 'store.preview':'▶ Preview','store.edit':'Edit',
+ 'store.previewTitle':'Preview',
+ 'store.previewLead':'This is the storefront exactly as a player sees it. Nothing here buys anything — players buy on the public site.',
+ 'store.previewNote':'Preview — nothing was bought.'};
 function sfText(k){return SF_TEXT[k]||k}
-function sfBuy(pid){buy(pid)}
-function buy(pid){api('/api/servers/'+current.id+'/store/buy',{method:'POST',body:JSON.stringify({productId:pid})}).then(function(r){if(!r.ok){alert(r.body.error==='insufficient'?'Not enough balance':r.body.error==='no-mc-linked'?'No Minecraft name linked to your account':r.body.error==='out-of-stock'?'That sold out.':r.body.error==='limit-reached'?'You already have the maximum of that.':('Error: '+r.body.error));loadStore();return}loadStore();sfCloseDetail();if(r.body.reward&&r.body.reward.crate){openCrate(r.body.reward,{prefix:'🎉 '})}else{alert('You received: '+(r.body.reward?r.body.reward.name:''))}})}
 ${CRATE_JS}
 ${STORE_JS}
 ${MAP_JS}
