@@ -705,6 +705,12 @@ export default {
     mapRound: 'Round to (blocks)',
     mapNames: 'Show names',
     mapHeads: 'Draw skin heads',
+    profile_inventory: 'Publish inventories',
+    profile_enderChest: 'Publish ender chests',
+    profile_stats: 'Publish health and XP',
+    profile_location: 'Publish locations',
+    profileHint:
+      'What a VISITOR may read on a player’s profile. A player always sees their own. Publishing an inventory tells the server who is worth robbing, and a location tells them where.',
     mapHint:
       'Visitors see rounded positions and no height — the panel map is for operators, the same detail in public is a list of every base. Skin heads send each player’s UUID to crafatar.com.',
     open: 'Open site',
