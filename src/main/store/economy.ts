@@ -5,12 +5,17 @@ import { processManager } from '../core/processManager'
 import * as rcon from '../core/rcon'
 import { log } from '../logger'
 import { DEFAULT_CATEGORIES } from '@shared/economy'
-import { DEFAULT_CRATE_ANIMATION, normalizeCrateAnimation } from '@shared/crate'
+import {
+  DEFAULT_CRATE_ANIMATION,
+  normalizeCrateAnimation,
+  resolveCrateAnimation
+} from '@shared/crate'
 import type { CrateAnimation } from '@shared/crate'
 import type {
   BuyResult,
   CrateReward,
   EconomyCategory,
+  PublicReward,
   LedgerEntry,
   Product,
   ProductPublic,
@@ -127,7 +132,13 @@ async function deliverQueued(serverId: string, mcName: string): Promise<void> {
 }
 
 function rollCrate(rewards: CrateReward[]): CrateReward {
-  const total = rewards.reduce((s, r) => s + Math.max(0, r.weight), 0) || 1
+  const total = rewards.reduce((s, r) => s + Math.max(0, r.weight), 0)
+  // An all-zero pool used to fall through the loop every time and land on the
+  // last reward - 10000 out of 10000 rolls - while `publicRewards` published it
+  // as an even split. Publishing odds the roll does not honour is worse than
+  // publishing none, so the degenerate case is now an even split for real. It
+  // is also what an operator who has not filled the weights in yet expects.
+  if (total <= 0) return rewards[Math.floor(Math.random() * rewards.length)]
   let roll = Math.random() * total
   for (const r of rewards) {
     roll -= Math.max(0, r.weight)
@@ -157,7 +168,11 @@ export function purchase(serverId: string, mcName: string, productId: string): B
       name: r.name,
       icon: r.icon,
       crate: true,
-      pool: p.rewards.map((x) => ({ name: x.name, icon: x.icon }))
+      pool: p.rewards.map((x) => ({ name: x.name, icon: x.icon })),
+      // Resolved here, not in the client: the buyer only ever receives the
+      // reward, never the product it came from, so a per-crate animation has
+      // no way to reach the code that plays it unless it rides along (#75).
+      animation: resolveCrateAnimation(p, st.crateAnimation)
     }
   } else {
     commands = p.commands
@@ -190,7 +205,37 @@ export function purchase(serverId: string, mcName: string, productId: string): B
 }
 
 // ---- public / read ----
-function toPublic(p: Product): ProductPublic {
+/**
+ * Weights to percentages (#79).
+ *
+ * A weight only means something next to the other weights in the same pool, so
+ * the normalisation happens here rather than being pushed onto every UI that
+ * wants to display it. A pool whose weights are all zero would divide by zero,
+ * and is treated as an even split - which is what `rollCrate` effectively does
+ * with it anyway.
+ */
+function publicRewards(rewards: CrateReward[]): PublicReward[] {
+  const total = rewards.reduce((s, r) => s + Math.max(0, r.weight), 0)
+  return rewards.map((r) => ({
+    name: r.name,
+    ...(r.icon ? { icon: r.icon } : {}),
+    chancePct:
+      total > 0
+        ? Math.round((Math.max(0, r.weight) / total) * 1000) / 10
+        : Math.round((100 / rewards.length) * 10) / 10
+  }))
+}
+
+/**
+ * The buyer-facing shape. This function is the ONLY boundary between the store
+ * config and anything a player can read, so the one rule it must never break is
+ * that `CrateReward.commands` does not cross it - a reward's commands are
+ * console commands, and publishing them tells every visitor exactly what to ask
+ * a compromised account to run. Fields are listed explicitly rather than spread
+ * for that reason: a new field on `Product` must be opted in, not leaked by
+ * default.
+ */
+function toPublic(p: Product, storeDefault: CrateAnimation): ProductPublic {
   return {
     id: p.id,
     type: p.type,
@@ -198,14 +243,19 @@ function toPublic(p: Product): ProductPublic {
     description: p.description,
     price: p.price,
     icon: p.icon,
-    rewardNames: p.type === 'crate' ? p.rewards.map((r) => r.name) : undefined
+    ...(p.type === 'crate'
+      ? {
+          rewards: publicRewards(p.rewards),
+          crateAnimation: resolveCrateAnimation(p, storeDefault)
+        }
+      : {})
   }
 }
 export function publicStore(serverId: string): StorePublic {
   const st = getStore(serverId)
   return {
     currency: st.currency,
-    products: st.products.map(toPublic),
+    products: st.products.map((p) => toPublic(p, st.crateAnimation)),
     crateAnimation: st.crateAnimation
   }
 }
@@ -241,7 +291,14 @@ export function upsertProduct(serverId: string, product: Product): Product {
     price: Math.max(0, Math.floor(product.price) || 0),
     icon: product.icon,
     commands: Array.isArray(product.commands) ? product.commands : [],
-    rewards: Array.isArray(product.rewards) ? product.rewards : []
+    rewards: Array.isArray(product.rewards) ? product.rewards : [],
+    // Only a crate carries one, and only when it was actually set. Storing an
+    // explicit value for "inherit" would freeze this crate to whatever the
+    // store default happens to be today, so changing the default later would
+    // silently stop affecting it.
+    ...(product.type === 'crate' && product.crateAnimation
+      ? { crateAnimation: normalizeCrateAnimation(product.crateAnimation) }
+      : {})
   }
   const i = st.products.findIndex((x) => x.id === clean.id)
   if (i >= 0) st.products[i] = clean

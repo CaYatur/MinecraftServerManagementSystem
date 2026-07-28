@@ -2,6 +2,7 @@
 // Pages: #/ (home) · #/news · #/news/:id · #/store · #/servers
 // Everything user-authored is escaped before rendering.
 import { pickSiteLang } from './siteLang'
+import { CRATE_CSS, CRATE_JS, CRATE_MODAL_HTML } from '@shared/crateUi'
 
 export function getPublicSiteHtml(): string {
   return `<!doctype html><html lang="en"><head>
@@ -167,16 +168,8 @@ html.anim .reveal.shown{opacity:1!important;transform:none!important;transition:
 input{width:100%;padding:12px 14px;background:color-mix(in srgb,var(--bg) 70%,var(--card));border:1px solid var(--line);border-radius:11px;color:var(--text);margin:7px 0;font-size:15px;font-family:inherit}
 input:focus{outline:none;border-color:var(--accent)}
 .err{color:#f87171;font-size:13.5px;margin-top:8px;min-height:18px}
-/* crate */
-.crate-box{background:var(--card);border:1px solid var(--accent);border-radius:var(--radius);padding:28px;width:min(560px,95vw);text-align:center}
-.reel-mask{position:relative;overflow:hidden;height:118px;border:1px solid var(--line);border-radius:12px;background:color-mix(in srgb,var(--bg) 80%,#000)}
-.reel{display:flex;gap:10px;padding:11px;transition:transform 5.2s cubic-bezier(.07,.72,.15,1)}
-.reel-item{min-width:136px;height:94px;border-radius:11px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;background:var(--elev);border:1px solid var(--line);font-size:13px;font-weight:700;padding:8px;text-align:center}
-.reel-item img{width:42px;height:42px;image-rendering:pixelated}
-.reel-marker{position:absolute;top:0;left:50%;width:3px;height:100%;background:var(--accent);box-shadow:0 0 16px var(--accent);transform:translateX(-50%)}
-.crate-result{margin-top:18px;font-size:23px;font-weight:900;min-height:30px}
-.crate-result.win{color:var(--accent);animation:pop .55s ease 3}
-@keyframes pop{50%{transform:scale(1.13)}}
+/* crate - one implementation, shared with the admin panel (crateUi.ts) */
+${CRATE_CSS}
 footer{border-top:1px solid var(--line);padding:44px 0 34px;color:var(--dim);font-size:13.5px;margin-top:56px;
   background:linear-gradient(180deg,transparent,color-mix(in srgb,var(--accent) 7%,transparent))}
 .foot{display:flex;flex-wrap:wrap;gap:18px;align-items:center;justify-content:space-between}
@@ -239,9 +232,7 @@ body.classic .hero h1{letter-spacing:-1.2px}
   <button class="btn sm ghost" style="margin-top:8px" onclick="closeAuth()" id="closeBtn"></button>
 </div></div>
 
-<div id="crate" class="modal-bg hidden" onclick="closeCrate(event)"><div class="crate-box">
-  <h3 style="margin:0 0 16px" id="crateTitle"></h3>
-  <div class="reel-mask"><div id="reel" class="reel"></div><div class="reel-marker"></div></div>
+${CRATE_MODAL_HTML}
   <div id="crateResult" class="crate-result"></div>
   <button class="btn primary" onclick="closeCrate()" style="margin-top:16px" id="crateOk"></button>
 </div></div>
@@ -251,6 +242,11 @@ body.classic .hero h1{letter-spacing:-1.2px}
 <script>
 var S=null,LANG='en',ptoken=localStorage.getItem('msms_ptoken')||'',pname=localStorage.getItem('msms_pname')||'',STORE=null;
 function esc(t){var d=document.createElement('div');d.textContent=(t==null?'':t);return d.innerHTML}
+/* esc() escapes < > &, which is right for text but NOT for an attribute: it
+   leaves quotes alone, so esc(url) inside src="..." lets a store admin close
+   the attribute and add an onerror handler that runs for every visitor.
+   Anything going between quotes goes through here. */
+function escAttr(t){return esc(t).replace(/"/g,'&quot;').replace(/'/g,'&#39;')}
 function T(k){var L=(S&&S.i18n&&S.i18n.langs[LANG])||{};var E=(S&&S.i18n&&S.i18n.langs.en)||{};return L[k]||E[k]||k}
 function api(p,body,tok){var o={headers:{'Content-Type':'application/json'}};if(body){o.method='POST';o.body=JSON.stringify(body)}if(tok)o.headers.Authorization='Bearer '+tok;
  return fetch(p,o).then(function(r){return r.json().then(function(j){return{s:r.status,ok:r.ok,j:j}}).catch(function(){return{s:r.status,ok:r.ok,j:{}}})})}
@@ -286,7 +282,7 @@ function renderChrome(){
  document.getElementById('footer').innerHTML='<div class="foot">'+
   '<span class="fbrand">'+esc(S.siteName)+'</span>'+
   '<span class="flinks">'+links.map(function(l){return '<a href="'+l[0]+'">'+esc(T(l[1]))+'</a>'}).join('')+
-   (S.discordUrl?'<a target="_blank" rel="noopener" href="'+esc(S.discordUrl)+'">Discord</a>':'')+'</span>'+
+   (S.discordUrl?'<a target="_blank" rel="noopener" href="'+escAttr(S.discordUrl)+'">Discord</a>':'')+'</span>'+
   '<span>'+esc(T('footer.poweredBy'))+'</span></div>';
 }
 /* Fade sections in as they scroll into view. Decoration only: everything is
@@ -333,7 +329,7 @@ function pageHome(){
    '<h1>'+esc(S.siteName)+'</h1><div class="tag">'+esc(S.tagline)+'</div>'+
    '<p class="desc">'+esc(S.description)+'</p><div class="cta">'+
    (S.showStore?'<a class="btn primary lg" href="#/store">'+esc(T('hero.cta'))+'</a>':'')+
-   (S.discordUrl?'<a class="btn lg" target="_blank" rel="noopener" href="'+esc(S.discordUrl)+'">'+esc(T('hero.discord'))+'</a>':'')+
+   (S.discordUrl?'<a class="btn lg" target="_blank" rel="noopener" href="'+escAttr(S.discordUrl)+'">'+esc(T('hero.discord'))+'</a>':'')+
    '</div>'+
    (S.serverIp?'<div class="connect"><span class="connect-lbl">'+esc(T('connect.ip'))+
      '</span><code id="ipVal">'+esc(S.serverIp)+'</code>'+
@@ -398,8 +394,10 @@ function loadStore(){
  api('/api/public/store').then(function(r){STORE=r.j;var box=document.getElementById('storeBox');if(!box)return;
   if(!STORE.products||!STORE.products.length){box.innerHTML='<p class="muted">'+esc(T('store.empty'))+'</p>';return}
   box.innerHTML='<div class="grid c4">'+STORE.products.map(function(p){
-    return '<div class="card reveal'+(p.type==='crate'?' crate':'')+'"><div class="prod">'+(p.icon?'<img class="ico" src="'+esc(p.icon)+'" alt=""/>':'')+
+    return '<div class="card reveal'+(p.type==='crate'?' crate':'')+'"><div class="prod">'+(p.icon?'<img class="ico" src="'+escAttr(p.icon)+'" alt=""/>':'')+
     '<div class="nm">'+esc(p.name)+(p.type==='crate'?' 🎁':'')+'</div><div class="ds">'+esc(p.description||'')+'</div>'+
+    /* What a crate can give you, with odds, before you pay for it (#79). */
+    (p.type==='crate'?crateContentsHtml(p.rewards,4):'')+
     '<div style="display:flex;align-items:center;gap:10px"><span class="price">'+p.price+' '+esc(STORE.currency||'')+'</span>'+
     '<button class="btn primary sm" style="margin-left:auto" onclick="buy(\\''+p.id+'\\')">'+esc(T('store.buy'))+'</button></div></div></div>'}).join('')+'</div>';
   revealAll();refreshBalance()})}
@@ -410,7 +408,15 @@ function refreshBalance(){var el=document.getElementById('balBox');if(!el)return
 function buy(pid){if(!ptoken){openAuth();return}
  api('/api/public/store/buy',{productId:pid},ptoken).then(function(r){
   if(!r.ok){alert(r.j.error==='insufficient'?T('store.insufficient'):('Error: '+(r.j.error||r.s)));return}
-  refreshBalance();if(r.j.reward&&r.j.reward.crate)openCrate(r.j.reward);else alert(T('crate.congrats')+': '+(r.j.reward?r.j.reward.name:''))})}
+  refreshBalance();
+  /* The animation rides on the reward: the server resolved it for this crate,
+     and the buyer never has the product it came from (#75). */
+  if(r.j.reward&&r.j.reward.crate){document.getElementById('crateTitle').textContent=T('crate.opening');
+   /* Localised here, not only in fillAuthTexts: a visitor with a stored token
+      never opens the auth modal, and would meet an English crate. */
+   document.getElementById('crateOk').textContent=T('crate.ok');
+   openCrate(r.j.reward,{prefix:T('crate.congrats')+': '})}
+  else alert(T('crate.congrats')+': '+(r.j.reward?r.j.reward.name:''))})}
 function zoom(src){document.getElementById('lbImg').src=src;document.getElementById('lightbox').classList.remove('hidden')}
 
 /* ---------- router ---------- */
@@ -473,18 +479,13 @@ function doVerify(){document.getElementById('amErr').textContent='';
   ptoken=r.j.token;pname=r.j.mcName;localStorage.setItem('msms_ptoken',ptoken);localStorage.setItem('msms_pname',pname);closeAuth();render();if((location.hash||'#/')==='#/store')loadStore()})}
 function plogout(){api('/api/public/logout',{},ptoken);ptoken='';pname='';localStorage.removeItem('msms_ptoken');localStorage.removeItem('msms_pname');render();if((location.hash||'#/')==='#/store')loadStore()}
 
-/* ---------- crate ---------- */
-function openCrate(reward){var m=document.getElementById('crate');m.classList.remove('hidden');
- var reel=document.getElementById('reel'),res=document.getElementById('crateResult');res.textContent='';res.className='crate-result';
- var pool=(reward.pool&&reward.pool.length)?reward.pool:[{name:reward.name}];var strip=[];
- for(var i=0;i<55;i++)strip.push(pool[Math.floor(Math.random()*pool.length)]);
- var win=strip.length-5;strip[win]={name:reward.name,icon:reward.icon};
- reel.style.transition='none';reel.style.transform='translateX(0)';
- reel.innerHTML=strip.map(function(it){return '<div class="reel-item">'+(it.icon?'<img src="'+esc(it.icon)+'"/>':'')+esc(it.name)+'</div>'}).join('');
- var iw=146,mask=document.querySelector('.reel-mask').clientWidth,off=win*iw-(mask/2-68);
- requestAnimationFrame(function(){reel.style.transition='transform 5.2s cubic-bezier(.07,.72,.15,1)';reel.style.transform='translateX(-'+off+'px)'});
- setTimeout(function(){res.textContent='🎉 '+T('crate.congrats')+': '+reward.name;res.className='crate-result win'},5300)}
-function closeCrate(e){if(e&&e.target&&e.target.id!=='crate'&&e.target.tagName!=='BUTTON')return;document.getElementById('crate').classList.add('hidden')}
+/* ---------- crate ----------
+   Was a hardcoded 5.2s reel that ignored the server's animation setting
+   entirely (#75) — an operator could pick one of five and the website, the
+   place most buyers actually see, played none of them. openCrate now comes
+   from crateUi.ts, the same implementation the admin panel runs, and reads the
+   animation the server resolved for that specific crate. */
+${CRATE_JS}
 
 loadSite();setInterval(pollStatus,15000);
 </script>

@@ -47,3 +47,28 @@ export function crateDuration(animation: unknown): number {
   const id = normalizeCrateAnimation(animation)
   return CRATE_ANIMATIONS.find((a) => a.id === id)?.durationMs ?? 4000
 }
+
+/**
+ * Pure: which animation this particular crate plays (#75).
+ *
+ * A crate's own setting wins; without one it falls back to the store default.
+ * That ordering is what keeps existing stores working - every crate created
+ * before this existed has no `crateAnimation`, so they all keep playing exactly
+ * what the store was already set to and an operator sees no change.
+ *
+ * Both are normalised, so a hand-edited json cannot leave a paying player
+ * staring at a crate that never opens.
+ */
+export function resolveCrateAnimation(
+  product: { crateAnimation?: unknown } | null | undefined,
+  storeDefault: unknown
+): CrateAnimation {
+  const own = product?.crateAnimation
+  // `undefined` means "not set, inherit". Anything else - including a garbage
+  // string - is an attempt to set one, and normalising it to the global default
+  // would be a lie about what this crate is configured to do; it degrades to
+  // the app default instead.
+  return own === undefined || own === null
+    ? normalizeCrateAnimation(storeDefault)
+    : normalizeCrateAnimation(own)
+}
