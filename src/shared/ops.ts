@@ -117,6 +117,38 @@ export function needsConfirm(op: string): op is ConfirmableOp {
   return (CONFIRM_REQUIRED as readonly string[]).includes(op)
 }
 
+// ---- launch configuration ----
+
+/**
+ * Java config fields that may NOT be set over HTTP, whatever scope the caller
+ * holds (#53).
+ *
+ * These three decide what program MSMS executes:
+ *
+ * - `javaPath` is spawned as the process binary. Point it at any executable on
+ *   the host and the next server start runs that instead of Java.
+ * - `customArgs` IS the whole command line when `preset` is `custom`.
+ * - `extraFlags` is appended to the real command line.
+ *
+ * Over IPC that is fine: the caller is the operator sitting at the machine, who
+ * already has full filesystem access, so offering them a text box is not a
+ * privilege they did not have. Over HTTP it is a remote scope that an API key
+ * can hold, and `settings` means "edit server settings" - not "run arbitrary
+ * programs as the MSMS process". Remote code execution is not a settings field.
+ *
+ * Deliberately a denylist rather than an allowlist of safe fields: the safe set
+ * is memory numbers and booleans that grow over time, and a new one being
+ * accidentally blocked is an annoyance, while a new dangerous one being
+ * accidentally allowed is this bug again.
+ */
+export const LOCAL_ONLY_JAVA_FIELDS = ['javaPath', 'customArgs', 'extraFlags'] as const
+
+/** Which forbidden fields does this patch try to set? Empty means it is fine. */
+export function localOnlyJavaFields(patch: Record<string, unknown> | null | undefined): string[] {
+  if (!patch) return []
+  return LOCAL_ONLY_JAVA_FIELDS.filter((f) => patch[f] !== undefined)
+}
+
 // ---- worlds ----
 
 export type WorldAction = 'activate' | 'rename' | 'clone' | 'reset' | 'delete'

@@ -6,6 +6,9 @@ import { getConfig } from '../config'
 import { uploadsDir } from '../paths'
 import { log } from '../logger'
 import { listServers, getServer } from '../core/serverRegistry'
+import * as registry from '../core/serverRegistry'
+import * as files from '../core/serverFiles'
+import type { JavaArgsConfig } from '@shared/types'
 import { processManager } from '../core/processManager'
 import { getPlayers } from '../core/players'
 import * as playersMod from '../core/players'
@@ -16,6 +19,7 @@ import {
   isGamemode,
   isValidMcName,
   isValidWorldName,
+  localOnlyJavaFields,
   moderationAuditAction,
   needsConfirm,
   sanitizeCommandArg
@@ -744,6 +748,178 @@ async function handlePanel(req: IncomingMessage, res: ServerResponse): Promise<v
       const limit = Math.min(5000, Number(url.searchParams.get('limit')) || 1000)
       return sendJson(res, 200, metrics.query(id, { from, to, resolution, limit }))
     }
+  }
+
+  // ---- files + config over HTTP (#53 part 2) ----
+  const fm = path.match(/^\/api\/servers\/([^/]+)\/(files|config)(?:\/([\w-]+))?$/)
+  if (fm) {
+    const id = decodeURIComponent(fm[1])
+    const group = fm[2]
+    const action = fm[3] ?? ''
+    if (!getServer(id)) return sendJson(res, 404, { error: 'server-not-found' })
+    const gate = (scope: Scope): boolean => {
+      if (!can(user, id, scope)) {
+        sendJson(res, 403, { error: 'forbidden', need: scope })
+        return false
+      }
+      return true
+    }
+    const trail = (op: string, target: string, ok: boolean, detail?: string): void => {
+      audit.record({
+        source: user.apiKey ? 'api' : 'webpanel',
+        action: op,
+        actor: user.username,
+        ok,
+        ip,
+        serverId: id,
+        target,
+        ...(detail ? { detail } : {})
+      })
+    }
+    /**
+     * `core/serverFiles.ts` already refuses to leave the server root — every
+     * entry point runs the path through `safe()`. What it does NOT do is stop a
+     * caller reaching the files that decide what runs: replacing a jar or
+     * dropping a plugin is code execution on the next start, and `eula.txt` or
+     * `server.properties` change what the server is.
+     *
+     * That is not a reason to block them (an operator edits these constantly),
+     * but it is a reason every write is audited with its path, and a reason
+     * `files` is its own scope rather than part of `settings`.
+     */
+    const fileErr = (e: unknown): number => {
+      const msg = String((e as Error)?.message ?? e)
+      // A traversal attempt is a bad request; a missing file is a missing file.
+      if (msg === 'path-escape') return 400
+      if (msg.includes('ENOENT')) return 404
+      return 400
+    }
+
+    if (group === 'files') {
+      // Read is `files` too, not `view`: server files hold the RCON password,
+      // and anything else an operator has pasted into a config.
+      if (!gate('files')) return
+      const rel = url.searchParams.get('path') ?? ''
+      try {
+        if (!action && method === 'GET') {
+          // A directory lists; a file reads. One endpoint because a caller
+          // walking a tree does not know which it has until it looks.
+          const stat = url.searchParams.get('as')
+          if (stat === 'file') return sendJson(res, 200, files.readTextFile(id, rel))
+          return sendJson(res, 200, { path: rel, entries: files.listDir(id, rel) })
+        }
+        if (!action && method === 'POST') {
+          const b = (await readBody(req).catch(() => ({}))) as { path?: string; content?: string }
+          if (typeof b.path !== 'string' || typeof b.content !== 'string') {
+            return sendJson(res, 400, { error: 'path-and-content-required' })
+          }
+          files.writeTextFile(id, b.path, b.content)
+          trail('file.write', b.path, true, b.content.length + ' bytes')
+          return sendJson(res, 200, { ok: true })
+        }
+        if (!action && method === 'DELETE') {
+          const confirm = url.searchParams.get('confirm') === 'true'
+          // Deleting a server file is not recoverable from inside MSMS.
+          if (!confirm) {
+            trail('file.delete', rel, false, 'confirm-required')
+            return sendJson(res, 400, { error: 'confirm-required', op: 'file.delete' })
+          }
+          files.deleteEntry(id, rel)
+          trail('file.delete', rel, true)
+          return sendJson(res, 200, { ok: true })
+        }
+        if (action === 'folder' && method === 'POST') {
+          const b = (await readBody(req).catch(() => ({}))) as { path?: string; name?: string }
+          files.createFolder(id, b.path ?? '', b.name ?? '')
+          trail('file.mkdir', (b.path ?? '') + '/' + (b.name ?? ''), true)
+          return sendJson(res, 200, { ok: true })
+        }
+        if (action === 'rename' && method === 'POST') {
+          const b = (await readBody(req).catch(() => ({}))) as { path?: string; newName?: string }
+          files.renameEntry(id, b.path ?? '', b.newName ?? '')
+          trail('file.rename', (b.path ?? '') + ' -> ' + (b.newName ?? ''), true)
+          return sendJson(res, 200, { ok: true })
+        }
+      } catch (e) {
+        const msg = String((e as Error)?.message ?? e)
+        if (method !== 'GET') trail('file.' + (method === 'DELETE' ? 'delete' : 'write'), rel, false, msg)
+        return sendJson(res, fileErr(e), { error: msg })
+      }
+    }
+
+    if (group === 'config') {
+      if (!gate('settings')) return
+      try {
+        if (!action && method === 'GET') {
+          const s = getServer(id)
+          return sendJson(res, 200, {
+            server: {
+              id: s?.id,
+              name: s?.name,
+              type: s?.type,
+              mcVersion: s?.mcVersion,
+              path: s?.path,
+              favorite: s?.favorite ?? false
+            },
+            java: s?.java ?? null,
+            properties: files.readProperties(id)
+          })
+        }
+        if (action === 'properties' && method === 'POST') {
+          const b = (await readBody(req).catch(() => ({}))) as {
+            updates?: Record<string, string>
+            raw?: string
+          }
+          if (typeof b.raw === 'string') {
+            files.writeRawProperties(id, b.raw)
+            trail('config.properties', 'raw', true, b.raw.length + ' bytes')
+          } else {
+            const updates = b.updates ?? {}
+            const keys = Object.keys(updates)
+            if (!keys.length) return sendJson(res, 400, { error: 'updates-required' })
+            // Values are written into a properties file, not a shell or a
+            // console, so the only thing that can corrupt the file is a newline
+            // smuggling in a second key.
+            for (const k of keys) {
+              if (/[\r\n]/.test(String(updates[k]))) {
+                trail('config.properties', k, false, 'newline-in-value')
+                return sendJson(res, 400, { error: 'newline-in-value', key: k })
+              }
+            }
+            files.writeProperties(id, updates)
+            trail('config.properties', keys.join(','), true)
+          }
+          return sendJson(res, 200, { properties: files.readProperties(id) })
+        }
+        if (action === 'java' && method === 'POST') {
+          const b = (await readBody(req).catch(() => ({}))) as Partial<JavaArgsConfig>
+          // javaPath / customArgs / extraFlags decide what binary runs and with
+          // what command line. `settings` means "edit server settings", not "run
+          // arbitrary programs as the MSMS process", so they are desktop-only -
+          // where the caller is the operator at the machine, who already has
+          // full filesystem access anyway.
+          const forbidden = localOnlyJavaFields(b as Record<string, unknown>)
+          if (forbidden.length) {
+            trail('config.java', forbidden.join(','), false, 'local-only-field')
+            return sendJson(res, 403, { error: 'local-only-field', fields: forbidden })
+          }
+          // updateServer merges `java` rather than replacing it, so a partial
+          // patch keeps the rest of the preset intact.
+          const updated = registry.updateServer(id, { java: b as JavaArgsConfig })
+          trail('config.java', b.preset ?? 'update', true, JSON.stringify(b).slice(0, 200))
+          return sendJson(res, 200, { java: updated?.java ?? null })
+        }
+        if (action === 'favorite' && method === 'POST') {
+          const b = (await readBody(req).catch(() => ({}))) as { favorite?: boolean }
+          const updated = registry.updateServer(id, { favorite: !!b.favorite })
+          return sendJson(res, 200, { favorite: updated?.favorite ?? false })
+        }
+      } catch (e) {
+        return sendJson(res, fileErr(e), { error: String((e as Error)?.message ?? e) })
+      }
+    }
+
+    return sendJson(res, 404, { error: 'not-found' })
   }
 
   // ---- operations: moderation / worlds / backups (#53) ----
