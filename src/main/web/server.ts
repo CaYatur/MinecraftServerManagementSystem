@@ -220,12 +220,20 @@ let specJson: string | null = null
 let docsHtml: string | null = null
 
 function cachedSpec(): string {
-  if (specJson === null) specJson = JSON.stringify(openApiDocument())
+  if (specJson === null) {
+    buildCount++
+    buildLog.push('spec')
+    specJson = JSON.stringify(openApiDocument())
+  }
   return specJson
 }
 
 function cachedDocs(): string {
-  if (docsHtml === null) docsHtml = getApiDocsHtml()
+  if (docsHtml === null) {
+    buildCount++
+    buildLog.push('docs')
+    docsHtml = getApiDocsHtml()
+  }
   return docsHtml
 }
 
@@ -253,9 +261,23 @@ interface CachedPage {
 
 const pageCache = new Map<string, CachedPage>()
 
+/**
+ * Counted, not timed.
+ *
+ * The first version of this asserted that twenty requests averaged under 25ms.
+ * Measured: 13.3ms per request uncached against 10.85ms cached — the loopback
+ * round trip dwarfs the work, so the threshold could not fail and the test
+ * proved nothing. A build counter is the same claim without the noise: twenty
+ * requests must cause zero rebuilds, on any machine.
+ */
+let buildCount = 0
+const buildLog: string[] = []
+
 function cachedPage(key: string, build: () => string): CachedPage {
   let hit = pageCache.get(key)
   if (!hit) {
+    buildCount++
+    buildLog.push(key)
     const body = build()
     hit = { body, etag: '"' + createHash('sha1').update(body).digest('base64url') + '"' }
     pageCache.set(key, hit)
@@ -263,7 +285,17 @@ function cachedPage(key: string, build: () => string): CachedPage {
   return hit
 }
 
-/** Test seam: drop the built pages so a rebuild can be observed. */
+/** Test seam: how many times a cached artefact has actually been built. */
+export function _buildCount(): number {
+  return buildCount
+}
+
+/** Test seam: which artefacts were built, in order. Names a surprise rebuild. */
+export function _buildLog(): string[] {
+  return [...buildLog]
+}
+
+/** Test seam: drop the built artefacts so a rebuild can be observed. */
 export function _resetPageCache(): void {
   pageCache.clear()
   specJson = null

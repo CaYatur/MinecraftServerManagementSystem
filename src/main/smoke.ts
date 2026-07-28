@@ -8,7 +8,14 @@ import { processManager } from './core/processManager'
 import { LineSplitter } from './core/lineSplitter'
 import { buildLaunchArgs } from './core/javaArgs'
 import { getConfig, updateConfig } from './config'
-import { startWebServer, stopWebServer, _resetRateLimits } from './web/server'
+import {
+  startWebServer,
+  stopWebServer,
+  _resetRateLimits,
+  _resetPageCache,
+  _buildCount,
+  _buildLog
+} from './web/server'
 import * as webAuth from './web/auth'
 import * as apikeys from './web/apikeys'
 import { DEFAULT_KEY_LIMIT, consumeToken, newBucket, isOriginAllowed } from '@shared/apikeys'
@@ -5446,17 +5453,14 @@ export async function runWebSmoke(): Promise<void> {
       const served = await r.text()
       if (served !== JSON.stringify(doc)) return fail('the served spec is not the generated one')
       // Unauthenticated and ~120 KB, so it is limited by address like the other
-      // credential-less reads, and built once rather than per request. Twenty in
-      // a row must stay fast and identical; the same bucket the public site
-      // spends from allows 300 of burst, so this does not trip it.
-      const t0 = Date.now()
+      // credential-less reads, and built once rather than per request. The same
+      // bucket the public site spends from allows 300 of burst, so twenty in a
+      // row does not trip it.
       for (let i = 0; i < 20; i++) {
         const again = await fetch(base + '/api/v1/openapi.json')
         if (again.status !== 200) return fail('a repeated spec fetch returned ' + again.status)
         if ((await again.text()) !== served) return fail('the spec changed between requests')
       }
-      const per = (Date.now() - t0) / 20
-      if (per > 25) return fail('serving the spec costs ' + per.toFixed(1) + 'ms a request; it is not cached')
 
       // ---- the app shells are built once, and safely so (#100) ----
       //
@@ -5493,14 +5497,40 @@ export async function runWebSmoke(): Promise<void> {
         const p2 = await fetch(base + '/', { headers: { 'If-None-Match': tag } })
         if (p2.status !== 304) return fail('a matching ETag expected 304, got ' + p2.status)
         if ((await p2.text()).length !== 0) return fail('a 304 carried a body')
-        const t1 = Date.now()
+        // Counted, not timed. The first version of this asserted an average
+        // under 25ms across twenty requests; measured, the loopback round trip
+        // is 13.3ms per request uncached against 10.85ms cached, so the
+        // threshold could not fail and the assertion proved nothing. Counting
+        // builds is the same claim with the noise removed.
+        //
+        // Every artefact is warmed first: a baseline taken before something's
+        // FIRST request counts that legitimate build as a cache miss. The
+        // counter caught exactly that here, which a timing threshold never
+        // would have.
+        await fetch(base + '/api/v1/docs')
+        await fetch(base + '/api/v1/openapi.json')
+        const buildsBefore = _buildCount()
         for (let i = 0; i < 20; i++) {
           const again = await fetch(base + '/')
           if ((await again.text()) !== body1) return fail('the panel page changed between requests')
+          await fetch(base + '/api/v1/openapi.json')
+          await fetch(base + '/api/v1/docs')
         }
-        const perPage = (Date.now() - t1) / 20
-        if (perPage > 25) {
-          return fail('serving the panel page costs ' + perPage.toFixed(1) + 'ms; it is not cached')
+        if (_buildCount() !== buildsBefore) {
+          return fail(
+            'sixty requests rebuilt ' +
+              (_buildCount() - buildsBefore) +
+              ' artefact(s): ' +
+              _buildLog().slice(buildsBefore).join(', ')
+          )
+        }
+        // ...and the memo is a memo, not a one-shot: after a reset the next
+        // request builds again rather than serving an empty page.
+        _resetPageCache()
+        const rebuilt = await fetch(base + '/')
+        if ((await rebuilt.text()) !== body1) return fail('the page differed after a cache reset')
+        if (_buildCount() !== buildsBefore + 1) {
+          return fail('a cache reset did not cause exactly one rebuild')
         }
       }
       // ...and nothing about this install may be in them, or "no credential" is
