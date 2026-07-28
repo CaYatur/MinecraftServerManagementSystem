@@ -101,8 +101,20 @@ import {
   heatmap,
   livePlayers,
   mapBounds,
-  normalizeDimension
+  normalizeDimension,
+  clampRound,
+  clampScale,
+  fitView,
+  panBy,
+  redactPlayers,
+  screenToWorld,
+  worldToScreen,
+  zoomAt,
+  MAX_SCALE,
+  MIN_SCALE,
+  PUBLIC_MAP_DEFAULTS
 } from '@shared/livemap'
+import type { LivePlayer, MapView } from '@shared/livemap'
 import { listJavaInstalls, _resetJavaCache } from './core/javaScan'
 import { checkJava, javaRequirement } from '@shared/javaCompat'
 import {
@@ -5352,6 +5364,49 @@ export async function runWebSmoke(): Promise<void> {
         if (!/cannot run/.test(unsupported)) return fail('an unsupported server was told nothing')
         mapState.MAP.bridge = null
 
+        // #104: the page carries its own copy of the view transform, because a
+        // page pasted together as a string cannot import from @shared. So the
+        // two implementations are checked against each other here — that is the
+        // only thing standing between them and a silent divergence.
+        {
+          const pctx = panel.ctx as Record<string, (...a: unknown[]) => unknown>
+          const pmap = panel.ctx as { MAP: { view: MapView; vp: { width: number; height: number } } }
+          // Let the page set its own viewport from the stub's rect: mapDraw
+          // recomputes it every frame, so a value seeded here would be replaced
+          // the moment anything redraws and the comparison would be against a
+          // viewport the page is not using.
+          pctx['mapDraw']()
+          const pvp = { ...pmap.MAP.vp }
+          for (const view of [
+            { cx: 0, cz: 0, scale: 1 },
+            { cx: -4321, cz: 987, scale: 0.05 },
+            { cx: 100, cz: -100, scale: 6 }
+          ]) {
+            pmap.MAP.view = { ...view }
+            for (const p of [{ x: 0, z: 0 }, { x: 5000, z: -5000 }]) {
+              const mine = worldToScreen(p, view, pvp)
+              const theirs = pctx['mapW2S'](p) as { x: number; y: number }
+              if (Math.abs(mine.x - theirs.x) > 1e-6 || Math.abs(mine.y - theirs.y) > 1e-6) {
+                return fail('the page transform disagrees with @shared/livemap at scale ' + view.scale)
+              }
+              const back = pctx['mapS2W']({ x: theirs.x, y: theirs.y }) as { x: number; z: number }
+              if (Math.abs(back.x - p.x) > 1e-6 || Math.abs(back.z - p.z) > 1e-6) {
+                return fail('the page inverse does not round-trip at scale ' + view.scale)
+              }
+            }
+          }
+          // ...and zooming on the page anchors on the cursor too.
+          pmap.MAP.view = { cx: 0, cz: 0, scale: 1 }
+          const anchor = { x: 640, y: 120 }
+          const under = pctx['mapS2W'](anchor) as { x: number; z: number }
+          pctx['mapZoomAt'](anchor, 2)
+          const still = pctx['mapS2W'](anchor) as { x: number; z: number }
+          if (Math.abs(still.x - under.x) > 1e-6 || Math.abs(still.z - under.z) > 1e-6) {
+            return fail('the page zoom moved the point under the cursor')
+          }
+          if (pmap.MAP.view.scale !== 2) return fail('the page zoom did not change scale')
+        }
+
         // ...and with players it stops claiming the plugin is missing.
         mapState.MAP.data.bridge = true
         mapState.MAP.data.players = [{ name: 'Alex', dim: 'overworld', x: 10, y: 64, z: 10 }]
@@ -6406,6 +6461,86 @@ export async function runWebSmoke(): Promise<void> {
       const neg = heatmap([{ x: -1, z: -1 }, { x: 1, z: 1 }], 16)
       if (neg.length !== 2) return fail('negative coordinates shared a cell with positive ones')
 
+      // ---- pan / zoom / readout (#104) ----
+      {
+        const vp = { width: 800, height: 500 }
+        // Round-trip at every zoom level. The readout under the cursor IS this
+        // inverse, so a transform that only works at one scale reads out a
+        // coordinate that is wrong everywhere else.
+        for (const scale of [MIN_SCALE, 0.1, 1, 3.7, MAX_SCALE]) {
+          const view: MapView = { cx: 1234, cz: -5678, scale }
+          for (const p of [{ x: 0, z: 0 }, { x: 1234, z: -5678 }, { x: -99999, z: 88888 }]) {
+            const back = screenToWorld(worldToScreen(p, view, vp), view, vp)
+            if (Math.abs(back.x - p.x) > 1e-6 || Math.abs(back.z - p.z) > 1e-6) {
+              return fail('world/screen round-trip drifted at scale ' + scale)
+            }
+          }
+        }
+        // The centre of the viewport is the centre of the view, by definition.
+        const centred = worldToScreen({ x: 10, z: 20 }, { cx: 10, cz: 20, scale: 2 }, vp)
+        if (centred.x !== 400 || centred.y !== 250) return fail('the view centre is not at the viewport centre')
+
+        // Zoom keeps the world point under the cursor fixed. Scaling around the
+        // centre instead drags whatever the user was looking at away from the
+        // pointer, so zooming towards something walks off it.
+        const anchor = { x: 700, y: 90 }
+        const before: MapView = { cx: 0, cz: 0, scale: 1 }
+        const under = screenToWorld(anchor, before, vp)
+        for (const f of [1.15, 1 / 1.15, 4, 0.25]) {
+          const after = zoomAt(before, vp, anchor, f)
+          const still = screenToWorld(anchor, after, vp)
+          if (Math.abs(still.x - under.x) > 1e-6 || Math.abs(still.z - under.z) > 1e-6) {
+            return fail('zooming by ' + f + ' moved the point under the cursor')
+          }
+        }
+        // ...and it cannot zoom past the limits, in either direction.
+        if (zoomAt(before, vp, anchor, 1e9).scale !== MAX_SCALE) return fail('zoom escaped MAX_SCALE')
+        if (zoomAt(before, vp, anchor, 1e-9).scale !== MIN_SCALE) return fail('zoom escaped MIN_SCALE')
+        if (clampScale(Number.NaN) !== 1) return fail('a non-finite scale did not fall back')
+
+        // Dragging right moves the world right, so the centre moves left.
+        const panned = panBy({ cx: 0, cz: 0, scale: 2 }, 100, -50)
+        if (panned.cx !== -50 || panned.cz !== 25) return fail('pan moved the wrong way or distance')
+        // Fit is a starting position, not a constraint: it must land inside the
+        // scale limits for a world that is millions of blocks across.
+        const wide = fitView({ minX: -3_000_000, maxX: 3_000_000, minZ: -3_000_000, maxZ: 3_000_000 }, vp)
+        if (wide.scale < MIN_SCALE || wide.scale > MAX_SCALE) return fail('fitView escaped the scale limits')
+        if (wide.cx !== 0 || wide.cz !== 0) return fail('fitView did not centre a symmetric world')
+      }
+
+      // ---- what a visitor is allowed to see (#104) ----
+      {
+        const exact: LivePlayer[] = [
+          { name: 'Alex', uuid: 'u-1', world: 'world', dim: 'overworld', x: 1234, y: 12, z: -987 }
+        ]
+        const pub = redactPlayers(exact, { ...PUBLIC_MAP_DEFAULTS, enabled: true, serverId: 's' })
+        const one = pub[0] as unknown as Record<string, unknown>
+        // The panel payload's fields must not arrive here by being spread
+        // through. Height is the sharp one: y=12 says "in a cave", which is
+        // when a player cannot defend the base you would then walk to.
+        for (const leaked of ['y', 'world', 'uuid']) {
+          if (leaked in one) return fail('the public map payload carries "' + leaked + '"')
+        }
+        if (one.x === 1234 || one.z === -987) return fail('the public map published exact coordinates')
+        if (Math.abs((one.x as number) - 1234) > 32) return fail('rounding moved a player more than half a cell')
+        // Deterministic, not jittered: a watcher who samples a stationary
+        // player repeatedly must not be able to average the noise away.
+        const again = redactPlayers(exact, { ...PUBLIC_MAP_DEFAULTS, enabled: true, serverId: 's' })
+        if (again[0].x !== pub[0].x || again[0].z !== pub[0].z) return fail('redaction is not deterministic')
+        // Opt-ins.
+        const withHeads = redactPlayers(exact, { ...PUBLIC_MAP_DEFAULTS, enabled: true, serverId: 's', heads: true })
+        if (withHeads[0].uuid !== 'u-1') return fail('heads on should carry the uuid')
+        const noNames = redactPlayers(exact, { ...PUBLIC_MAP_DEFAULTS, enabled: true, serverId: 's', names: false })
+        if ('name' in (noNames[0] as unknown as Record<string, unknown>)) {
+          return fail('names off still published a name')
+        }
+        if (clampRound(-5) !== 0) return fail('a negative rounding was accepted')
+        if (clampRound(99999) !== 512) return fail('rounding was not capped')
+        if (clampRound('lots') !== PUBLIC_MAP_DEFAULTS.round) return fail('a junk rounding did not fall back')
+        if (PUBLIC_MAP_DEFAULTS.enabled) return fail('the public map is on by default')
+        if (PUBLIC_MAP_DEFAULTS.heads) return fail('avatar heads are on by default')
+      }
+
       // ---- the endpoints ----
       // The map feed is view-gated and honest about the bridge being absent.
       r = await get('/api/servers/' + id + '/map', ft)
@@ -6420,6 +6555,44 @@ export async function runWebSmoke(): Promise<void> {
       if (mapBody.players.length !== 0) return fail('the map invented players')
       if (!(mapBody.bounds.maxX > mapBody.bounds.minX)) return fail('the map served degenerate bounds')
       if (mapBody.dimension !== 'overworld') return fail('the map defaulted to the wrong dimension')
+
+      // ---- the PUBLIC map feed (#104) ----
+      {
+        const mapBefore = siteMod.getSiteConfig().map
+        try {
+          // Off by default, and 404 rather than an empty map: answering 200
+          // tells a prober that a map exists and is merely empty.
+          siteMod.setSiteConfig({ map: { ...mapBefore, enabled: false } })
+          let pr = await sget('/api/public/map')
+          if (pr.status !== 404) return fail('the public map answered ' + pr.status + ' while off')
+          const offSite = (await (await sget('/api/public/site')).json()) as { showMap: boolean }
+          if (offSite.showMap) return fail('the site advertised a map tab while the map was off')
+
+          // On, but pointed at a server that no longer exists. The setting
+          // outliving its server is exactly what a plain boolean misses.
+          siteMod.setSiteConfig({ map: { ...mapBefore, enabled: true, serverId: 'gone-' + Date.now() } })
+          pr = await sget('/api/public/map')
+          if (pr.status !== 404) return fail('the public map served a deregistered server')
+
+          siteMod.setSiteConfig({ map: { ...mapBefore, enabled: true, serverId: id, round: 64 } })
+          pr = await sget('/api/public/map')
+          if (pr.status !== 200) return fail('the public map expected 200 when on, got ' + pr.status)
+          const pub = (await pr.json()) as Record<string, unknown>
+          if (pub.round !== 64) return fail('the public map did not report its rounding')
+          if (pub.heads !== false) return fail('the public map claimed heads without the setting')
+          // The panel's fields must not be here. A heatmap is a density map of
+          // where people are, which is the thing rounding exists to blur.
+          for (const leaked of ['heatmap', 'cell']) {
+            if (leaked in pub) return fail('the public map payload carries "' + leaked + '"')
+          }
+          // And the page only offers the tab when the feed will answer.
+          const onSite = (await (await sget('/api/public/site')).json()) as { showMap: boolean }
+          if (!onSite.showMap) return fail('the map was on and the site did not advertise it')
+          console.log('WEB-SMOKE: public map OK (404 while off or serverless, redacted payload, no heatmap)')
+        } finally {
+          siteMod.setSiteConfig({ map: mapBefore })
+        }
+      }
 
       // Detail is gated harder than the roster: it is one person's inventory,
       // ender chest and coordinates, not "who plays here".

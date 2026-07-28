@@ -14,6 +14,8 @@ import { siteConfigPath, uploadsDir } from '../paths'
 import { getServer, listServers } from '../core/serverRegistry'
 import { processManager } from '../core/processManager'
 import { SITE_STRINGS_EN, SITE_STRINGS_TR } from './siteI18n'
+import { PUBLIC_MAP_DEFAULTS, clampRound } from '@shared/livemap'
+import type { PublicMapConfig } from '@shared/livemap'
 import type { PublicSite, ServerCard, SiteConfig, SitePost } from '@shared/web'
 
 const RASTER = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif'])
@@ -31,6 +33,7 @@ function defaults(): SiteConfig {
     discordUrl: '',
     serverIp: '',
     showStore: true,
+    map: { ...PUBLIC_MAP_DEFAULTS },
     theme: {
       accent: '#dc2727',
       bg: '#0b0b10',
@@ -57,6 +60,10 @@ function migrate(raw: any): SiteConfig {
     ...base,
     ...raw,
     theme: { ...base.theme, ...(raw.theme ?? {}) },
+    // Merged over the defaults rather than taken whole: a config written before
+    // #104 has no `map` at all, and one written by a future build may be
+    // missing a key this one reads. Either way the answer must be "off".
+    map: { ...base.map, ...(raw.map ?? {}) },
     i18n: {
       defaultLang: raw.i18n?.defaultLang ?? base.i18n.defaultLang,
       langs: {
@@ -122,6 +129,17 @@ export function setSiteConfig(patch: Partial<SiteConfig>): SiteConfig {
   // A connect address: no spaces, escaped on display. Trim + cap only.
   if (patch.serverIp !== undefined) s.serverIp = patch.serverIp.trim().slice(0, 120)
   if (patch.showStore !== undefined) s.showStore = !!patch.showStore
+  // Each field individually, and every boolean coerced. A spread would let a
+  // hand-edited or future-shaped config put a string into `enabled`, and
+  // `"false"` is truthy — which reads as "publish every player's position".
+  if (patch.map) {
+    const m = patch.map
+    if (m.enabled !== undefined) s.map.enabled = !!m.enabled
+    if (m.serverId !== undefined) s.map.serverId = String(m.serverId)
+    if (m.round !== undefined) s.map.round = clampRound(m.round)
+    if (m.heads !== undefined) s.map.heads = !!m.heads
+    if (m.names !== undefined) s.map.names = !!m.names
+  }
   if (patch.theme) {
     const t = patch.theme
     const hex = (v?: string): boolean => !!v && /^#[0-9a-fA-F]{6}$/.test(v)
@@ -280,6 +298,11 @@ export function publicSite(): PublicSite {
     discordUrl: s.discordUrl,
     serverIp: s.serverIp,
     showStore: s.showStore && !!getServer(s.storeServerId),
+    // Both halves must hold, here and at the feed. A tab whose endpoint 404s
+    // is worse than no tab, and a feed that answers when the tab is hidden is
+    // the setting not being a setting.
+    showMap: s.map.enabled && !!getServer(s.map.serverId),
+    mapHeads: s.map.enabled && s.map.heads,
     theme: s.theme,
     i18n: s.i18n,
     servers: ids.map(card).filter((c): c is ServerCard => !!c),
@@ -289,4 +312,17 @@ export function publicSite(): PublicSite {
 
 export function siteServerId(): string {
   return get().storeServerId
+}
+
+/**
+ * The map settings, or null when nothing is published.
+ *
+ * One function so the feed and the page cannot disagree about whether the map
+ * is on — the check is "enabled AND the server still exists", and a server
+ * deregistered after the setting was made is the case a plain boolean misses.
+ */
+export function publicMapConfig(): PublicMapConfig | null {
+  const s = get()
+  if (!s.map.enabled || !getServer(s.map.serverId)) return null
+  return { ...s.map, round: clampRound(s.map.round) }
 }

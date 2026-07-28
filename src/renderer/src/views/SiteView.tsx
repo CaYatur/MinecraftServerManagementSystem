@@ -50,6 +50,8 @@ export function SiteView(): JSX.Element {
   const patch = (p: Partial<SiteConfig>): void => setCfg({ ...cfg, ...p })
   const patchTheme = (p: Partial<SiteConfig['theme']>): void =>
     setCfg({ ...cfg, theme: { ...cfg.theme, ...p } })
+  const patchMap = (p: Partial<SiteConfig['map']>): void =>
+    setCfg({ ...cfg, map: { ...cfg.map, ...p } })
 
   const save = async (): Promise<void> => {
     const next = await window.msms.setSiteConfig({
@@ -61,6 +63,7 @@ export function SiteView(): JSX.Element {
       discordUrl: cfg.discordUrl,
       serverIp: cfg.serverIp,
       showStore: cfg.showStore,
+      map: cfg.map,
       theme: cfg.theme,
       i18n: cfg.i18n
     })
@@ -154,6 +157,45 @@ export function SiteView(): JSX.Element {
               {t('site.showStore')}
             </label>
           </div>
+
+          {/* Publishing the live map (#104). Off, rounded and dots by default:
+              the panel's map is for operators, and the same detail on a public
+              page is a list of every base on the server. */}
+          <div className="row wrap" style={{ gap: 12, alignItems: 'flex-end', marginTop: 14 }}>
+            <div className="field" style={{ minWidth: 190, marginBottom: 0 }}>
+              <label>{t('site.mapServer')}</label>
+              <select className="select" value={cfg.map.serverId} onChange={(e) => patchMap({ serverId: e.target.value })}>
+                <option value="">{t('site.none')}</option>
+                {servers.map((s) => (
+                  <option key={s.id} value={s.id}>{s.name}</option>
+                ))}
+              </select>
+            </div>
+            <label className="switch" style={{ paddingBottom: 8 }}>
+              <input type="checkbox" checked={cfg.map.enabled} onChange={(e) => patchMap({ enabled: e.target.checked })} />
+              {t('site.showMap')}
+            </label>
+            <div className="field" style={{ width: 150, marginBottom: 0 }}>
+              <label>{t('site.mapRound')}</label>
+              <input
+                className="input"
+                type="number"
+                min={0}
+                max={512}
+                value={cfg.map.round}
+                onChange={(e) => patchMap({ round: Number(e.target.value) })}
+              />
+            </div>
+            <label className="switch" style={{ paddingBottom: 8 }}>
+              <input type="checkbox" checked={cfg.map.names} onChange={(e) => patchMap({ names: e.target.checked })} />
+              {t('site.mapNames')}
+            </label>
+            <label className="switch" style={{ paddingBottom: 8 }}>
+              <input type="checkbox" checked={cfg.map.heads} onChange={(e) => patchMap({ heads: e.target.checked })} />
+              {t('site.mapHeads')}
+            </label>
+          </div>
+          <p className="hint">{t('site.mapHint')}</p>
         </div>
       )}
 

@@ -1,5 +1,6 @@
 import type { CrateAnimation } from './crate'
 import type { StoreLayout } from './storefront'
+import type { PublicMapConfig } from './livemap'
 
 // Per-server permission scopes for web-panel users.
 export type Scope =
@@ -278,6 +279,8 @@ export interface SiteConfig {
   /** Address players connect with, shown on the public site (host or host:port). */
   serverIp: string
   showStore: boolean
+  /** Live map on the public site (#104). Off by default; see PublicMapConfig. */
+  map: PublicMapConfig
   theme: SiteTheme
   i18n: SiteI18n
   posts: SitePost[]
@@ -300,6 +303,12 @@ export interface PublicSite {
   discordUrl: string
   serverIp: string
   showStore: boolean
+  /**
+   * Whether the map tab exists, and how to draw it. Never the serverId — a
+   * visitor has no use for it and the feed endpoint does not take one.
+   */
+  showMap: boolean
+  mapHeads: boolean
   theme: SiteTheme
   i18n: SiteI18n
   servers: ServerCard[]

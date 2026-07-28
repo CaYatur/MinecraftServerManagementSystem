@@ -4,6 +4,7 @@
 import { pickSiteLang } from './siteLang'
 import { CRATE_CSS, CRATE_JS, CRATE_MODAL_HTML } from '@shared/crateUi'
 import { STORE_CSS, STORE_JS, STORE_MODAL_HTML, CRATE_ICON_SVG } from '@shared/storeUi'
+import { MAP_CSS, MAP_HTML, MAP_JS } from '@shared/mapUi'
 
 export function getPublicSiteHtml(): string {
   return `<!doctype html><html lang="en"><head>
@@ -176,6 +177,7 @@ input:focus{outline:none;border-color:var(--accent)}
 /* crate + storefront - one implementation, shared with the admin panel */
 ${CRATE_CSS}
 ${STORE_CSS}
+${MAP_CSS}
 footer{border-top:1px solid var(--line);padding:44px 0 34px;color:var(--dim);font-size:13.5px;margin-top:56px;
   background:linear-gradient(180deg,transparent,color-mix(in srgb,var(--accent) 7%,transparent))}
 .foot{display:flex;flex-wrap:wrap;gap:18px;align-items:center;justify-content:space-between}
@@ -271,6 +273,7 @@ function renderChrome(){
  var route=location.hash||'#/';
  var links=[['#/','nav.home'],['#/news','nav.news']];
  if(S.showStore)links.push(['#/store','nav.store']);
+ if(S.showMap)links.push(['#/map','nav.map']);
  if(S.servers&&S.servers.length)links.push(['#/servers','nav.servers']);
  document.getElementById('navlinks').innerHTML=links.map(function(l){
    var act=(route===l[0]||(l[0]!=='#/'&&route.indexOf(l[0])===0))?' active':'';
@@ -282,6 +285,7 @@ function renderChrome(){
   : '<button class="btn sm primary" onclick="openAuth()">'+esc(T('auth.login'))+'</button>';
  var links=[['#/','nav.home'],['#/news','nav.news']];
  if(S.showStore)links.push(['#/store','nav.store']);
+ if(S.showMap)links.push(['#/map','nav.map']);
  if(S.servers&&S.servers.length)links.push(['#/servers','nav.servers']);
  document.getElementById('footer').innerHTML='<div class="foot">'+
   '<span class="fbrand">'+esc(S.siteName)+'</span>'+
@@ -388,6 +392,23 @@ function pagePost(id){
   ((p.images&&p.images.length)?'<h3 style="margin-top:30px">'+esc(T('news.gallery'))+'</h3><div class="gal">'+
      p.images.map(function(im){return '<img src="'+up(im)+'" alt="" onclick="zoom(this.src)"/>'}).join('')+'</div>':'')+
   '</article></div></section>'}
+/* The live map (#104). The same engine the panel uses — pan, zoom and the
+   coordinate readout are client-side, so nothing here depends on the bridge
+   beyond the positions themselves. What differs is the FEED: the public one
+   rounds coordinates, drops the height, and only sends a uuid when the operator
+   turned heads on. */
+function pageMap(){
+ setTimeout(function(){mapStart()},0);
+ return '<section class="section"><div class="wrap"><div class="section-head"><h2>'+esc(T('map.title'))+'</h2>'+
+  '<span class="muted" id="mapRoundNote"></span></div>'+${JSON.stringify(MAP_HTML)}+'</div></section>'}
+function mapFeedUrl(dim,cell){
+ return '/api/public/map?dim='+encodeURIComponent(dim)+'&cell='+encodeURIComponent(cell)}
+/* No admin server id on the public site: the bridge install affordance is an
+   operator's, and a visitor offered it would get a 404. */
+function mapServerId(){return ''}
+/* Only ever called when the feed said heads are on, which is only when the
+   operator agreed to send uuids to a third party. */
+function mapAvatarUrl(uuid){return 'https://crafatar.com/avatars/'+encodeURIComponent(uuid)+'?size=32&overlay'}
 function pageServers(){
  return '<section class="section"><div class="wrap"><div class="section-head"><h2>'+esc(T('servers.title'))+'</h2></div>'+
   (S.servers.length?serverGrid():'<p class="muted">'+esc(T('servers.empty'))+'</p>')+'</div></section>'}
@@ -454,7 +475,12 @@ function render(){
  else if(h==='#/news')app.innerHTML=pageNews();
  else if(h==='#/store')app.innerHTML=pageStore();
  else if(h==='#/servers')app.innerHTML=pageServers();
+ else if(h==='#/map'&&S.showMap)app.innerHTML=pageMap();
  else app.innerHTML=pageHome();
+ /* Stop the 2s feed on the way OUT of the map. Without this a visitor who
+    opened it once keeps polling for as long as the tab is open, from every
+    page of the site. */
+ if(h!=='#/map')mapStop();
  var hero=document.getElementById('hero');
  if(hero&&S.theme&&S.theme.heroStyle==='image'&&S.theme.heroImage){
    hero.style.setProperty('background-image','none');
@@ -514,6 +540,7 @@ function plogout(){api('/api/public/logout',{},ptoken);ptoken='';pname='';localS
    animation the server resolved for that specific crate. */
 ${CRATE_JS}
 ${STORE_JS}
+${MAP_JS}
 var CRATE_ICON_SVG=${JSON.stringify(CRATE_ICON_SVG)};
 
 loadSite();setInterval(pollStatus,15000);

@@ -32,7 +32,7 @@ import {
 } from '@shared/ops'
 import type { PlayerInfo } from '@shared/types'
 import { bridgeFresh, bridgePlayers } from '@shared/bridge'
-import { heatmap, livePlayers, mapBounds, normalizeDimension } from '@shared/livemap'
+import { heatmap, livePlayers, mapBounds, normalizeDimension, redactPlayers } from '@shared/livemap'
 import * as metrics from '../core/metrics'
 import * as events from '../core/events'
 import * as alerts from '../core/alerts'
@@ -464,6 +464,39 @@ async function handlePublic(
     const t = bearer(req)
     if (t) playerAuth.logoutPlayer(t)
     return sendJson(res, 200, { ok: true })
+  }
+
+  // ---- the public live map (#104) ----
+  //
+  // A separate payload from the panel's, not the same one with fields hidden in
+  // the client. `redactPlayers` returns a different TYPE, so a field the panel
+  // gains later cannot arrive here by being spread through.
+  if (sub === 'map' && method === 'GET') {
+    const cfg = site.publicMapConfig()
+    // 404, not an empty map: with the setting off there is no such resource,
+    // and answering 200 would tell a prober that a map exists and is empty.
+    if (!cfg) return sendJson(res, 404, { error: 'not-found' })
+    const rt = processManager.getRuntime(cfg.serverId)
+    const now = Date.now()
+    const all = rt ? livePlayers(bridgePlayers(rt.bridge, now)) : []
+    // `path` here is already stripped of the query, so the dimension is read
+    // from the raw url. A missing or unparseable one is the overworld.
+    const q = new URL(req.url ?? '/', 'http://localhost').searchParams
+    const dim = normalizeDimension(q.get('dim') ?? 'overworld')
+    const players = redactPlayers(all.filter((p) => p.dim === dim), cfg)
+    return sendJson(res, 200, {
+      bridge: rt ? bridgeFresh(rt.bridge, now) : false,
+      dimension: dim,
+      dimensions: [...new Set(all.map((p) => p.dim))].sort(),
+      players,
+      // Bounds from the ROUNDED positions. Deriving them from the exact ones
+      // would publish a tighter box than the dots inside it, and the corner of
+      // that box is a player's real coordinate to within a pixel.
+      bounds: mapBounds(players.map((p) => ({ ...p, name: p.name ?? '', y: 0 }))),
+      round: cfg.round,
+      heads: cfg.heads,
+      at: now
+    })
   }
 
   const sid = site.siteServerId()

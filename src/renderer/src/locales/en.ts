@@ -700,6 +700,13 @@ export default {
     discord: 'Discord URL',
     serverIp: 'Server IP (shown on the site)',
     showStore: 'Show store on the site',
+    mapServer: 'Live map server',
+    showMap: 'Show live map on the site',
+    mapRound: 'Round to (blocks)',
+    mapNames: 'Show names',
+    mapHeads: 'Draw skin heads',
+    mapHint:
+      'Visitors see rounded positions and no height — the panel map is for operators, the same detail in public is a list of every base. Skin heads send each player’s UUID to crafatar.com.',
     open: 'Open site',
     posts: 'News posts',
     addPost: 'Add post',

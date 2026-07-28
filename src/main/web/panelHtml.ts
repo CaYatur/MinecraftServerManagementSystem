@@ -693,6 +693,12 @@ ${CRATE_JS}
 ${STORE_JS}
 ${MAP_JS}
 function mapServerId(){return current?current.id:''}
+function mapFeedUrl(dim,cell){
+ return '/api/servers/'+mapServerId()+'/map?dim='+encodeURIComponent(dim)+'&cell='+encodeURIComponent(cell)}
+/* The avatar service, by uuid. Named here rather than hardcoded in the shared
+   map so an operator running an air-gapped panel can point it elsewhere, and so
+   the public site can refuse to draw heads at all (#104). */
+function mapAvatarUrl(uuid){return 'https://crafatar.com/avatars/'+encodeURIComponent(uuid)+'?size=32&overlay'}
 var CRATE_ICON_SVG=${JSON.stringify(CRATE_ICON_SVG)};
 
 /* ---- store admin: configuration (store scope) ---- */

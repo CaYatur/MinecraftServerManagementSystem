@@ -29,7 +29,14 @@ export const MAP_CSS = `
 .mp-empty{position:absolute;inset:0;display:grid;place-content:center;justify-items:center;gap:9px;
   text-align:center;padding:20px;font-size:13px}
 .mp-empty .mp-note{font-size:12.5px;opacity:.65;max-width:380px}
+.mp-canvas-wrap canvas{cursor:grab}
+.mp-canvas-wrap canvas:active{cursor:grabbing}
+.mp-cursor{position:absolute;left:10px;bottom:10px;padding:4px 9px;border-radius:8px;
+  font-size:12px;font-variant-numeric:tabular-nums;pointer-events:none;
+  background:rgba(0,0,0,.55);color:#fff}
+.mp-cursor:empty{display:none}
 .mp-legend{display:flex;flex-wrap:wrap;gap:10px;font-size:12px;opacity:.75}
+.mp-legend .mp-hint{margin-left:auto;opacity:.6}
 .mp-legend b{font-weight:800;opacity:1}
 .mp-list{display:flex;flex-wrap:wrap;gap:6px}
 .mp-chip{padding:4px 9px;border-radius:999px;font-size:12px;font-weight:700;
@@ -50,17 +57,27 @@ export const MAP_HTML = `
       <option value="128">128 blocks</option>
     </select>
     <button onclick="mapToggleHeat()" id="mpHeatBtn">Heatmap: on</button>
+    <button onclick="mapToggleHeads()" id="mpHeadsBtn">Heads: off</button>
+    <button onclick="mapResetView()" title="Fit the view to everyone online">Reset view</button>
   </div>
-  <div class="mp-canvas-wrap"><canvas id="mpCanvas"></canvas><div id="mpEmpty" class="mp-empty"></div></div>
+  <div class="mp-canvas-wrap">
+    <canvas id="mpCanvas"></canvas>
+    <div id="mpEmpty" class="mp-empty"></div>
+    <!-- The readout that makes a map a map. Outside the canvas so it is text a
+         reader can select, and outside #mpEmpty so it survives an empty map. -->
+    <div id="mpCursor" class="mp-cursor"></div>
+  </div>
   <div class="mp-legend">
     <span id="mpBounds"></span>
     <span id="mpCount"></span>
+    <span class="mp-hint">Drag to pan · wheel to zoom</span>
   </div>
   <div id="mpList" class="mp-list"></div>
 </div>`
 
 export const MAP_JS = `
-var MAP={data:null,heat:true,timer:null,dim:'overworld',bridge:null,busy:false,msg:''};
+var MAP={data:null,heat:true,timer:null,dim:'overworld',bridge:null,busy:false,msg:'',
+ view:null,vp:{width:640,height:400},fitFor:null,drag:null,cursor:null,headsOn:false};
 /* The bridge warning and its install button (#103).
    Deliberately here, in the empty map, and nowhere else: this is where an
    operator finds out positions are missing, so it is the only place the answer
@@ -77,15 +94,21 @@ function mapNoBridgeHtml(){
   (b.offline?' GitHub is unreachable; the copy shipped with the app will be used.':'')+'</div>'+
   '<button class="btn primary" onclick="mapInstallBridge()"'+(MAP.busy?' disabled':'')+'>'+
   (MAP.busy?'Installing…':'Install MSMS-Bridge '+mapEsc(b.latest||''))+'</button>'}
+function mapAdminId(){
+ /* '' on the public site, which has no bridge routes and no operator to offer
+    them to. The install affordance is an admin one; a visitor seeing "Install
+    MSMS-Bridge" would be offered a button that answers 404. */
+ return (typeof mapServerId==='function'&&mapServerId())||''}
 function mapBridgeCheck(){
  /* Once per tab open, not on the 2s position poll: the answer changes when
     somebody installs a jar, and the check reaches GitHub. */
- api('/api/servers/'+mapServerId()+'/bridge').then(function(r){
+ if(!mapAdminId())return;
+ api('/api/servers/'+mapAdminId()+'/bridge').then(function(r){
   MAP.bridge=r.ok?r.body:null;mapDraw()})}
 function mapInstallBridge(){
- if(MAP.busy)return;
+ if(MAP.busy||!mapAdminId())return;
  MAP.busy=true;MAP.msg='';mapDraw();
- api('/api/servers/'+mapServerId()+'/bridge/install',{method:'POST'}).then(function(r){
+ api('/api/servers/'+mapAdminId()+'/bridge/install',{method:'POST'}).then(function(r){
   MAP.busy=false;
   /* "Installed" is not "working". Bukkit loads plugins at startup, so the jar
      does nothing until a restart — an operator watching a still-empty map
@@ -96,13 +119,15 @@ function mapInstallBridge(){
 function mapEsc(t){var d=document.createElement('div');d.textContent=(t==null?'':t);return d.innerHTML}
 function mapToggleHeat(){MAP.heat=!MAP.heat;
  document.getElementById('mpHeatBtn').textContent='Heatmap: '+(MAP.heat?'on':'off');mapDraw()}
+function mapToggleHeads(){MAP.headsOn=!MAP.headsOn;
+ document.getElementById('mpHeadsBtn').textContent='Heads: '+(MAP.headsOn?'on':'off');mapDraw()}
 function mapStart(){mapStop();mapRefresh();mapBridgeCheck();MAP.timer=setInterval(mapRefresh,2000)}
 function mapStop(){if(MAP.timer){clearInterval(MAP.timer);MAP.timer=null}}
 function mapRefresh(){
  var sel=document.getElementById('mpDim');
  var dim=sel&&sel.value?sel.value:MAP.dim;
  var cell=document.getElementById('mpCell').value||'16';
- api('/api/servers/'+mapServerId()+'/map?dim='+encodeURIComponent(dim)+'&cell='+cell).then(function(r){
+ api(mapFeedUrl(dim,cell)).then(function(r){
   if(!r.ok)return;MAP.data=r.body;MAP.dim=r.body.dimension;
   var dot=document.getElementById('mpDot'),state=document.getElementById('mpState');
   dot.className='mp-dot'+(r.body.bridge?' on':'');
@@ -114,7 +139,76 @@ function mapRefresh(){
   if(dims.indexOf(r.body.dimension)<0)dims=dims.concat([r.body.dimension]);
   var want=dims.map(function(d){return '<option value="'+mapEsc(d)+'"'+(d===r.body.dimension?' selected':'')+'>'+mapEsc(d)+'</option>'}).join('');
   if(sel.innerHTML!==want)sel.innerHTML=want;
+  /* Said plainly, where the map is. A visitor comparing a dot to their own F3
+     screen and finding it 40 blocks out should know the map is rounding, not
+     that it is broken. */
+  var note=document.getElementById('mapRoundNote');
+  if(note)note.textContent=(r.body.round>0&&typeof T==='function')?T('map.rounded').replace('{n}',r.body.round):'';
   mapDraw()})}
+/* ---- navigation (#104) ----
+   The same maths as shared/livemap.ts, which cannot be imported into a page
+   pasted together as a string. The smoke cross-checks the two implementations
+   against each other so they cannot drift apart silently. */
+function mapClampScale(s){return Math.min(8,Math.max(0.02,(isFinite(s)?s:1)))}
+function mapW2S(p){var v=MAP.view,vp=MAP.vp;
+ return {x:vp.width/2+(p.x-v.cx)*v.scale,y:vp.height/2+(p.z-v.cz)*v.scale}}
+function mapS2W(pt){var v=MAP.view,vp=MAP.vp;
+ return {x:v.cx+(pt.x-vp.width/2)/v.scale,z:v.cz+(pt.y-vp.height/2)/v.scale}}
+function mapFit(b,vp){
+ var w=Math.max(1,b.maxX-b.minX),h=Math.max(1,b.maxZ-b.minZ);
+ return {cx:(b.minX+b.maxX)/2,cz:(b.minZ+b.maxZ)/2,
+  scale:mapClampScale(Math.min(vp.width/w,vp.height/h)*0.9)}}
+/* Zoom around the cursor, not the centre. Scaling around the centre drags
+   whatever the user was looking at away from the pointer, so zooming towards
+   something walks off it and every wheel notch needs a correcting pan. */
+function mapZoomAt(anchor,factor){
+ var before=mapS2W(anchor);
+ MAP.view={cx:MAP.view.cx,cz:MAP.view.cz,scale:mapClampScale(MAP.view.scale*factor)};
+ var after=mapS2W(anchor);
+ MAP.view.cx+=before.x-after.x;MAP.view.cz+=before.z-after.z;
+ MAP.followed=false;mapDraw()}
+function mapPanBy(dx,dy){
+ MAP.view.cx-=dx/MAP.view.scale;MAP.view.cz-=dy/MAP.view.scale;
+ MAP.followed=false;mapDraw()}
+function mapResetView(){MAP.followed=false;MAP.view=null;mapDraw()}
+function mapLocalPoint(e,cv){var r=cv.getBoundingClientRect();
+ return {x:e.clientX-r.left,y:e.clientY-r.top}}
+function mapBindNav(){
+ var cv=document.getElementById('mpCanvas');if(!cv||cv._mpBound)return;cv._mpBound=true;
+ cv.addEventListener('mousedown',function(e){MAP.drag={x:e.clientX,y:e.clientY};e.preventDefault()});
+ /* On window, not the canvas: a drag that leaves the canvas and releases
+    outside it would otherwise never end, and the map would keep following the
+    pointer after the button was let go. */
+ window.addEventListener('mouseup',function(){MAP.drag=null});
+ window.addEventListener('mousemove',function(e){
+  if(MAP.drag){mapPanBy(e.clientX-MAP.drag.x,e.clientY-MAP.drag.y);MAP.drag={x:e.clientX,y:e.clientY};return}
+  if(!MAP.view)return;
+  var r=cv.getBoundingClientRect();
+  var inside=e.clientX>=r.left&&e.clientX<=r.right&&e.clientY>=r.top&&e.clientY<=r.bottom;
+  MAP.cursor=inside?mapS2W(mapLocalPoint(e,cv)):null;mapCursorText()});
+ cv.addEventListener('wheel',function(e){
+  if(!MAP.view)return;
+  e.preventDefault();
+  mapZoomAt(mapLocalPoint(e,cv),e.deltaY<0?1.15:1/1.15)},{passive:false});
+ cv.addEventListener('mouseleave',function(){MAP.cursor=null;mapCursorText()})}
+function mapCursorText(){
+ var el=document.getElementById('mpCursor');if(!el)return;
+ el.textContent=MAP.cursor?('X '+Math.round(MAP.cursor.x)+'  Z '+Math.round(MAP.cursor.z)):''}
+/* Heads are drawn from an avatar service by uuid, and a fetch that fails must
+   leave a dot rather than a hole. Cached per uuid so a 2s redraw does not
+   re-request every avatar on the server. */
+var MAP_HEADS={};
+function mapHead(uuid){
+ if(!uuid)return null;
+ var hit=MAP_HEADS[uuid];
+ if(hit!==undefined)return hit;
+ MAP_HEADS[uuid]=null;
+ var img=new Image();
+ img.crossOrigin='anonymous';
+ img.onload=function(){MAP_HEADS[uuid]=img;mapDraw()};
+ img.onerror=function(){MAP_HEADS[uuid]=false};
+ img.src=mapAvatarUrl(uuid);
+ return null}
 function mapDraw(){
  var d=MAP.data;var cv=document.getElementById('mpCanvas');if(!cv||!d)return;
  /* Match the backing store to the CSS size and the device pixel ratio, or the
@@ -122,41 +216,61 @@ function mapDraw(){
  var rect=cv.getBoundingClientRect();var dpr=window.devicePixelRatio||1;
  var w=Math.max(1,Math.round(rect.width*dpr)),h=Math.max(1,Math.round(rect.height*dpr));
  if(cv.width!==w||cv.height!==h){cv.width=w;cv.height=h}
+ MAP.vp={width:rect.width||w,height:rect.height||h};
+ /* The view is client-side and survives the feed: once the operator has moved
+    it, a poll two seconds later must not yank it back to wherever the players
+    happen to be. It is only fitted when there is no view yet, or when the
+    dimension changed under it. */
+ if(!MAP.view||MAP.fitFor!==d.dimension){MAP.view=mapFit(d.bounds,MAP.vp);MAP.fitFor=d.dimension}
+ mapBindNav();
  var g=cv.getContext('2d');g.clearRect(0,0,w,h);
- var b=d.bounds;var spanX=(b.maxX-b.minX)||1,spanZ=(b.maxZ-b.minZ)||1;
- var px=function(x){return (x-b.minX)/spanX*w};
- var pz=function(z){return (z-b.minZ)/spanZ*h};
- /* Grid every 64 blocks, so distances on screen mean something. */
+ var sx=w/MAP.vp.width,sy=h/MAP.vp.height;
+ var px=function(x){return mapW2S({x:x,z:0}).x*sx};
+ var pz=function(z){return mapW2S({x:0,z:z}).y*sy};
+ /* A grid that adapts to the zoom: a fixed 64-block step is invisible when
+    zoomed out to a whole world and a solid wall when zoomed in. */
+ var step=64;while(step*MAP.view.scale<48)step*=4;while(step*MAP.view.scale>220&&step>1)step/=4;
+ var tl=mapS2W({x:0,y:0}),br=mapS2W({x:MAP.vp.width,y:MAP.vp.height});
  g.strokeStyle='rgba(255,255,255,.06)';g.lineWidth=1*dpr;
- var step=64;var startX=Math.ceil(b.minX/step)*step;
- for(var gx=startX;gx<=b.maxX;gx+=step){g.beginPath();g.moveTo(px(gx),0);g.lineTo(px(gx),h);g.stroke()}
- var startZ=Math.ceil(b.minZ/step)*step;
- for(var gz=startZ;gz<=b.maxZ;gz+=step){g.beginPath();g.moveTo(0,pz(gz));g.lineTo(w,pz(gz));g.stroke()}
+ for(var gx=Math.ceil(tl.x/step)*step;gx<=br.x;gx+=step){g.beginPath();g.moveTo(px(gx),0);g.lineTo(px(gx),h);g.stroke()}
+ for(var gz=Math.ceil(tl.z/step)*step;gz<=br.z;gz+=step){g.beginPath();g.moveTo(0,pz(gz));g.lineTo(w,pz(gz));g.stroke()}
  /* Origin, when it is in view - the one landmark every Minecraft player shares. */
- if(b.minX<=0&&b.maxX>=0&&b.minZ<=0&&b.maxZ>=0){
+ if(tl.x<=0&&br.x>=0&&tl.z<=0&&br.z>=0){
   g.strokeStyle='rgba(220,39,39,.5)';g.lineWidth=1*dpr;
   g.beginPath();g.moveTo(px(0),0);g.lineTo(px(0),h);g.stroke();
   g.beginPath();g.moveTo(0,pz(0));g.lineTo(w,pz(0));g.stroke()}
  if(MAP.heat&&d.heatmap&&d.heatmap.length){
-  var max=d.heatmap[0].count||1;var cw=(d.cell/spanX)*w,ch=(d.cell/spanZ)*h;
+  var max=d.heatmap[0].count||1;var cw=d.cell*MAP.view.scale*sx,ch=d.cell*MAP.view.scale*sy;
   for(var i=0;i<d.heatmap.length;i++){var c=d.heatmap[i];
    g.fillStyle='rgba(220,39,39,'+(0.12+0.55*(c.count/max)).toFixed(3)+')';
    g.fillRect(px(c.x),pz(c.z),Math.max(2*dpr,cw),Math.max(2*dpr,ch))}}
  var ps=d.players||[];
  g.font=(11*dpr)+'px Inter,system-ui,sans-serif';g.textAlign='center';g.textBaseline='bottom';
  for(var j=0;j<ps.length;j++){var p=ps[j];var x=px(p.x),y=pz(p.z);
-  g.beginPath();g.arc(x,y,4.5*dpr,0,Math.PI*2);
-  g.fillStyle='#4ade80';g.fill();
-  g.lineWidth=1.5*dpr;g.strokeStyle='rgba(0,0,0,.55)';g.stroke();
-  g.fillStyle='rgba(255,255,255,.92)';g.fillText(p.name,x,y-7*dpr)}
+  /* heads:false from the public feed is the operator saying they did not agree
+     to send uuids to an avatar service — and without a uuid there is nothing to
+     draw anyway. The toggle cannot override the server's answer. */
+  var head=(MAP.headsOn&&d.heads!==false)?mapHead(p.uuid):null;
+  if(head){var hs=18*dpr;
+   g.drawImage(head,x-hs/2,y-hs/2,hs,hs);
+   g.lineWidth=1.5*dpr;g.strokeStyle='rgba(0,0,0,.55)';g.strokeRect(x-hs/2,y-hs/2,hs,hs)}
+  else{
+   g.beginPath();g.arc(x,y,4.5*dpr,0,Math.PI*2);
+   g.fillStyle='#4ade80';g.fill();
+   g.lineWidth=1.5*dpr;g.strokeStyle='rgba(0,0,0,.55)';g.stroke()}
+  if(p.name){g.fillStyle='rgba(255,255,255,.92)';g.fillText(p.name,x,y-(head?12:7)*dpr)}}
  /* innerHTML rather than textContent: the empty state now carries an action
     (#103). Everything interpolated into it is generated here or run through
     mapEsc — nothing from the server reaches it unescaped. */
  document.getElementById('mpEmpty').innerHTML=
   ps.length?'':(d.bridge?'Nobody in this dimension right now.':mapNoBridgeHtml());
- document.getElementById('mpBounds').innerHTML='<b>X</b> '+Math.round(b.minX)+' … '+Math.round(b.maxX)+
-  ' &nbsp; <b>Z</b> '+Math.round(b.minZ)+' … '+Math.round(b.maxZ);
+ document.getElementById('mpBounds').innerHTML='<b>X</b> '+Math.round(tl.x)+' … '+Math.round(br.x)+
+  ' &nbsp; <b>Z</b> '+Math.round(tl.z)+' … '+Math.round(br.z);
  document.getElementById('mpCount').innerHTML='<b>'+ps.length+'</b> shown';
+ /* Height only when the payload carries one. The public map redacts it —
+    knowing a player is 12 blocks down says they are in a cave, which is when
+    they cannot defend the base you would then be walking to. */
  document.getElementById('mpList').innerHTML=ps.map(function(p){
-  return '<span class="mp-chip">'+mapEsc(p.name)+'<span>'+p.x+', '+p.y+', '+p.z+'</span></span>'}).join('')}
+  var pos=(typeof p.y==='number')?(p.x+', '+p.y+', '+p.z):(p.x+', '+p.z);
+  return '<span class="mp-chip">'+mapEsc(p.name||'?')+'<span>'+pos+'</span></span>'}).join('')}
 `
