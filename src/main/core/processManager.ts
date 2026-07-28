@@ -203,6 +203,13 @@ export class ProcessManager extends EventEmitter {
    * Emit whatever each stream was still holding, without waiting for a newline
    * that is never coming. A server that dies mid-line takes its last words —
    * usually the reason it died — to the grave otherwise.
+   *
+   * Safe to call twice, which is why 'exit' and 'close' both do. Node only
+   * guarantees the stdio pipes are drained by 'close'; 'exit' just means the
+   * process is gone. Flushing on 'exit' puts the last line above the "stopped"
+   * notice where it reads correctly, and the 'close' pass catches anything that
+   * arrived in between — which today would be lost entirely, so half a line is
+   * strictly better than none.
    */
   private flushStreams(mp: ManagedProcess): void {
     for (const stream of ['stdout', 'stderr'] as const) {
@@ -370,6 +377,9 @@ export class ProcessManager extends EventEmitter {
 
     child.stdout?.on('data', (c: Buffer) => this.consumeStream(mp, c, 'stdout'))
     child.stderr?.on('data', (c: Buffer) => this.consumeStream(mp, c, 'stderr'))
+
+    // 'close' is the only point Node guarantees the pipes are drained.
+    child.on('close', () => this.flushStreams(mp))
 
     child.on('error', (err) => {
       this.systemLine(mp, `[MSMS] Process error: ${err.message}`)

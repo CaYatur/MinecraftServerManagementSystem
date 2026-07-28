@@ -2058,6 +2058,10 @@ export async function runSmoke(): Promise<void> {
     if (!tail.pending) return fail('an unterminated line was not held')
     if (tail.flush() !== 'java.lang.OutOfMemoryError: Çöp') return fail('flush lost the last line')
     if (tail.flush() !== '') return fail('flush returned the same line twice')
+    // Flushed on both 'exit' and 'close', so it has to stay usable afterwards:
+    // decoder.end() must not leave the splitter unable to decode a later chunk.
+    const late = [...tail.push(Buffer.from('geç', 'utf-8')), tail.flush()]
+    if (late.join('') !== 'geç') return fail('the splitter stopped working after a flush')
 
     // Multiple lines in one chunk, and CRLF, both still work.
     const multi = new LineSplitter().push(Buffer.from('bir\r\niki\r\nüç\n', 'utf-8'))
