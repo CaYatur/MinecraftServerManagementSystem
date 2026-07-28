@@ -133,7 +133,8 @@ ${STORE_CSS}
 /* store admin */
 .mrow{display:flex;gap:10px;align-items:center;padding:9px 0;border-bottom:1px solid var(--border)}
 .mrow:last-child{border-bottom:none}
-.mrow .ic{width:20px;text-align:center;flex:none}
+.mrow .ic{width:20px;text-align:center;flex:none;display:inline-flex;align-items:center;justify-content:center}
+.mrow .ic svg{width:15px;height:15px;color:var(--accent)}
 .pm-modal{position:fixed;inset:0;background:rgba(0,0,0,.72);display:grid;place-items:center;z-index:50;padding:16px}
 .pm-box{background:linear-gradient(160deg,#17151b,#0c0c11);border:1px solid var(--border);border-radius:16px;padding:20px;width:min(560px,95vw);max-height:88vh;overflow:auto;box-shadow:0 30px 70px rgba(0,0,0,.65)}
 .pm-box label{display:block;font-size:12px;color:var(--dim);margin-top:8px}
@@ -731,7 +732,7 @@ function saveCurrency(){var c=document.getElementById('mCur').value.trim()||'Coi
  api('/api/servers/'+current.id+'/store/admin/currency',{method:'POST',body:JSON.stringify({currency:c})}).then(function(r){if(!r.ok){alert('Could not save currency');return}loadManage()})}
 function renderMProducts(){var el=document.getElementById('mProducts');var ps=mstore.products||[];
  if(!ps.length){el.innerHTML='<div class="dim">No products yet.</div>';return}
- el.innerHTML=ps.map(function(p){return '<div class="mrow"'+(p.hidden?' style="opacity:.55"':'')+'><span class="ic">'+(p.type==='crate'?'🎁':'📦')+'</span>'+
+ el.innerHTML=ps.map(function(p){return '<div class="mrow"'+(p.hidden?' style="opacity:.55"':'')+'><span class="ic">'+(p.type==='crate'?CRATE_ICON_SVG:'📦')+'</span>'+
   '<div style="flex:1;min-width:0"><div style="font-weight:700">'+esc(p.name)+
    (p.hidden?' <span class="badge">hidden</span>':'')+
    (typeof p.stock==='number'?' <span class="badge">'+(p.stock?p.stock+' left':'sold out')+'</span>':'')+'</div>'+

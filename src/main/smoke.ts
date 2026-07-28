@@ -2284,6 +2284,87 @@ export async function runSmoke(): Promise<void> {
   )
   await sleep(300)
   if (await viewCrashed()) return fail('create view crashed')
+  // ---- the Store view, mounted for real ----
+  //
+  // The tab sweep above proves nothing crashes, which is not the same as
+  // nothing being broken. A `t()` call for a key that exists in neither locale
+  // renders the key itself - `common.clear` did exactly that - and TypeScript
+  // cannot catch it, because `tr` is typed as `typeof en` and both were simply
+  // missing it. So: open the product editor and assert no raw key is on screen.
+  {
+    await win.webContents.executeJavaScript(`document.querySelector('.server-item')?.click()`)
+    await sleep(250)
+    await win.webContents.executeJavaScript(
+      `[...document.querySelectorAll('.tab')].find(b=>/Store|Mağaza/i.test(b.textContent||''))?.click()`
+    )
+    await sleep(300)
+    // The catalogue lives behind the second section tab.
+    await win.webContents.executeJavaScript(
+      `[...document.querySelectorAll('.tabs .tab')].pop()?.click()`
+    )
+    await sleep(250)
+    // "Add crate" opens the editor with every new control on it.
+    await win.webContents.executeJavaScript(
+      `[...document.querySelectorAll('button')].find(b=>/Add crate|Sandık ekle|Kasa ekle/i.test(b.textContent||''))?.click()`
+    )
+    await sleep(400)
+    if (await viewCrashed()) return fail('the store product editor crashed on mount')
+
+    // Put a value in the icon field first. Half the controls on an image field
+    // only exist once it has one - the clear button among them - so probing an
+    // untouched editor would miss exactly the strings least likely to be
+    // translated. React owns the input, so the native setter plus a bubbling
+    // event is what makes it notice.
+    await win.webContents.executeJavaScript(`(()=>{
+      const inp = document.querySelector('input[placeholder*="uploads"]');
+      if (!inp) return;
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+      setter.call(inp, 'https://example.invalid/icon.png');
+      inp.dispatchEvent(new Event('input', { bubbles: true }));
+    })()`)
+    await sleep(250)
+
+    const storeProbe = await win.webContents.executeJavaScript(`(()=>{
+      // Attributes as well as text. A missing key is just as broken in a
+      // tooltip, and innerText does not contain one - the first version of this
+      // assertion read only innerText and passed with common.clear missing,
+      // which is the exact bug it was written for.
+      let hay = document.body.innerText || '';
+      for (const el of document.querySelectorAll('[title],[placeholder],[aria-label]')) {
+        hay += ' ' + (el.getAttribute('title') || '') +
+               ' ' + (el.getAttribute('placeholder') || '') +
+               ' ' + (el.getAttribute('aria-label') || '');
+      }
+      // A translation key that resolved to nothing looks exactly like its key.
+      const raw = (hay.match(/\\b(?:store|common|web)\\.[a-zA-Z_][a-zA-Z0-9_.-]*/g) || []);
+      return JSON.stringify({
+        raw: [...new Set(raw)],
+        modal: !!document.querySelector('.modal'),
+        anim: [...document.querySelectorAll('select')].some(s =>
+          [...s.options].some(o => /reel/i.test(o.value))),
+        imageFields: document.querySelectorAll('input[placeholder*="uploads"]').length
+      })
+    })()`)
+    const sp = JSON.parse(storeProbe) as {
+      raw: string[]
+      modal: boolean
+      anim: boolean
+      imageFields: number
+    }
+    if (!sp.modal) return fail('the store product editor did not open; probe=' + storeProbe)
+    if (sp.raw.length) return fail('untranslated keys rendered in the store view: ' + sp.raw.join(', '))
+    if (!sp.anim) return fail('the crate editor has no animation picker (#75)')
+    if (sp.imageFields < 1) return fail('the crate editor has no image field (#76)')
+    // Close it again so the file-editor assertions below start from a clean view.
+    await win.webContents.executeJavaScript(
+      `[...document.querySelectorAll('.modal-actions button')][0]?.click()`
+    )
+    await sleep(200)
+    console.log(
+      'SMOKE: store editor OK (opens, animation picker + image fields present, no untranslated keys)'
+    )
+  }
+
   // Return to a server view (settings/create have no tab bar), then open a file
   // to verify the CodeMirror editor mounts.
   await win.webContents.executeJavaScript(`document.querySelector('.server-item')?.click()`)

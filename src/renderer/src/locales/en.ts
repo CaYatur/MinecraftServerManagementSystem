@@ -871,6 +871,7 @@ export default {
     yes: 'Yes',
     no: 'No',
     close: 'Close',
+    clear: 'Clear',
     loading: 'Loading…',
     refresh: 'Refresh',
     apply: 'Apply',
