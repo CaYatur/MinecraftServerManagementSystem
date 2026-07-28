@@ -579,9 +579,28 @@ async function handlePanel(req: IncomingMessage, res: ServerResponse): Promise<v
         forgetTrail(false, 'server-running')
         return sendJson(res, 409, { error: 'server-running' })
       }
+      // `filesKept: true` on its own would be a half-truth. `removeServer` also
+      // calls `metrics.dropServer` and `events.dropServer` — a recursive delete
+      // of this server's metric folder and its event log. Those are MSMS's own
+      // records, not the server's files, and nothing brings them back: a rescan
+      // re-adds the folder under a NEW id, with no history attached. So the
+      // response says what was destroyed, rather than only what was spared.
+      //
+      // `alerts.dropServer` is a separate call because `removeServer` does not
+      // make it — the desktop handler in `ipc/register.ts` pairs them by hand,
+      // and this route has to as well. Left out, the rules for a server that no
+      // longer exists stay in the store until the next launch, when initAlerts
+      // sweeps them.
+      const rulesDropped = alerts.listRules(id).length
       registry.removeServer(id, false)
-      forgetTrail(true, 'files kept')
-      return sendJson(res, 200, { ok: true, filesKept: true })
+      alerts.dropServer(id)
+      forgetTrail(true, `files kept; history + ${rulesDropped} alert rule(s) dropped`)
+      return sendJson(res, 200, {
+        ok: true,
+        filesKept: true,
+        historyDropped: true,
+        alertRulesRemoved: rulesDropped
+      })
     }
     if (sub === 'console' && method === 'GET') {
       if (!gate('view')) return

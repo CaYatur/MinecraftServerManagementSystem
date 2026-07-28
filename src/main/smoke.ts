@@ -5126,6 +5126,15 @@ export async function runWebSmoke(): Promise<void> {
             path: forgetRoot
           })
         })
+        // Seeded so the response's claim about what it destroyed can be checked
+        // against something, rather than trusted.
+        alertsMod.createRule({
+          serverId: forgetId,
+          name: 'smoke forget rule',
+          metric: 'tps',
+          comparison: 'below',
+          threshold: 5
+        })
         const fBaseId = '/api/servers/' + forgetId
         r = await del(fBaseId + '?confirm=true', ft)
         if (r.status !== 403) return fail('deregister as a non-owner expected 403, got ' + r.status)
@@ -5138,12 +5147,24 @@ export async function runWebSmoke(): Promise<void> {
         }
         r = await del(fBaseId + '?confirm=true', ot)
         if (r.status !== 200) return fail('deregister expected 200, got ' + r.status + ' ' + (await r.text()))
+        const forgot = (await r.json()) as { alertRulesRemoved?: number; historyDropped?: boolean }
         if (getConfig().servers.some((s) => s.id === forgetId)) {
           return fail('the server is still registered after a deregister')
         }
         // The whole reason this half is exposed and `deleteFiles` is not.
         if (!existsSync(join(forgetRoot, 'server.jar'))) {
           return fail('deregister deleted the server files')
+        }
+        // ...but MSMS's own records for it DO go, so the response must say so
+        // rather than reporting `filesKept: true` and letting that read as
+        // "nothing was lost".
+        if (alertsMod.listRules(forgetId).length) {
+          return fail('a rule for the forgotten server survived, so the response is wrong')
+        }
+        if (forgot.historyDropped !== true || forgot.alertRulesRemoved !== 1) {
+          return fail(
+            'deregister under-reported what it destroyed: ' + JSON.stringify(forgot)
+          )
         }
         if (!auditMod.query({ actions: ['server.forget'] }).entries.some((e) => e.ok === true)) {
           return fail('a deregister was not audited')

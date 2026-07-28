@@ -295,10 +295,24 @@ truthy, so it reads as *on* while the operator believes they turned it off.
 DELETE /api/servers/:id?confirm=true    owner session
 ```
 
-Removes the server from MSMS and **leaves every file on disk** (the response says
-`filesKept: true`). Refused with `409 server-running` while it is up — dropping a
-running server from the registry orphans the process, because every lookup that
-would reach for its config to stop it then 404s.
+Removes the server from MSMS and **leaves every file on disk**. Refused with
+`409 server-running` while it is up — dropping a running server from the registry
+orphans the process, because every lookup that would reach for its config to stop
+it then 404s.
+
+```json
+{ "ok": true, "filesKept": true, "historyDropped": true, "alertRulesRemoved": 2 }
+```
+
+`filesKept` on its own would be a half-truth, which is why the other two fields
+are there. Deregistering also deletes **MSMS's own records** for that server: the
+metrics folder, the event timeline, and every alert rule aimed at it. Nothing
+brings those back — a rescan re-adds the folder under a **new id**, with no
+history attached. The server's files are recoverable; its history is not.
+
+`alertRulesRemoved` is a count, not a flag, because it is the one part of that a
+caller can be surprised by: an integration that set up rules through the API
+loses them here, silently, unless the response says how many.
 
 ### Creating a server, and deleting its files, are not exposed
 
@@ -307,9 +321,10 @@ would reach for its config to stop it then 404s.
 same class of thing `javaPath` was refused for above: an HTTP caller does not
 name paths on the host, and does not erase directories.
 
-Deregistering is exposed because it is recoverable — the folder is untouched and
-a rescan finds it again. That is the whole line: the reversible half is on the
-surface, the irreversible half is not.
+Deregistering is exposed because its worst case is bounded: the folder is
+untouched and a rescan finds it again. That is the line — the half whose worst
+case is "re-add it and lose the graphs" is on the surface; the half whose worst
+case is "the world is gone" is not.
 
 ## Not in this surface
 
