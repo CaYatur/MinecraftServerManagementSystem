@@ -232,16 +232,18 @@ function mapCursorText(){
    leave a dot rather than a hole. Cached per uuid so a 2s redraw does not
    re-request every avatar on the server. */
 var MAP_HEADS={};
-function mapHead(uuid){
- if(!uuid)return null;
- var hit=MAP_HEADS[uuid];
+function mapHead(name){
+ /* Keyed by NAME since #116: the uuid MSMS holds is the offline-mode one on a
+    cracked server, which no skin service has ever seen. */
+ if(!name)return null;
+ var hit=MAP_HEADS[name];
  if(hit!==undefined)return hit;
- MAP_HEADS[uuid]=null;
+ MAP_HEADS[name]=null;
  var img=new Image();
  img.crossOrigin='anonymous';
- img.onload=function(){MAP_HEADS[uuid]=img;mapDraw()};
- img.onerror=function(){MAP_HEADS[uuid]=false};
- img.src=mapAvatarUrl(uuid);
+ img.onload=function(){MAP_HEADS[name]=img;mapDraw()};
+ img.onerror=function(){MAP_HEADS[name]=false};
+ img.src=mapAvatarUrl(name);
  return null}
 function mapDraw(){
  var d=MAP.data;var cv=document.getElementById('mpCanvas');if(!cv||!d)return;
@@ -293,7 +295,7 @@ function mapDraw(){
   /* heads:false from the public feed is the operator saying they did not agree
      to send uuids to an avatar service — and without a uuid there is nothing to
      draw anyway. The toggle cannot override the server's answer. */
-  var head=(MAP.headsOn&&d.heads!==false)?mapHead(p.uuid):null;
+  var head=(MAP.headsOn&&d.heads!==false)?mapHead(p.name):null;
   if(head){var hs=18*dpr;
    g.drawImage(head,x-hs/2,y-hs/2,hs,hs);
    g.lineWidth=1.5*dpr;g.strokeStyle='rgba(0,0,0,.55)';g.strokeRect(x-hs/2,y-hs/2,hs,hs)}

@@ -140,7 +140,55 @@ export function redactProfile(
  * Named here so the live map's head markers and the profile head cannot end up
  * pointing at two different third parties, and so an operator changing it
  * changes both.
+ *
+ * By NAME, not by uuid. The uuid MSMS holds comes from `usercache.json`, and on
+ * an offline-mode server that is the derived offline id (a v3 uuid over
+ * `OfflinePlayer:<name>`) which no skin service has ever seen — so every head
+ * rendered as a broken image on exactly the servers this app is most used on.
+ * A name-keyed service does the Mojang lookup itself and falls back to Steve,
+ * which is a face rather than a broken-image icon.
  */
-export function avatarUrl(uuid: string, size = 32): string {
-  return 'https://crafatar.com/avatars/' + encodeURIComponent(uuid) + '?size=' + size + '&overlay'
+export function avatarUrl(name: string, size = 32): string {
+  const clean = /^[A-Za-z0-9_]{1,16}$/.test(name) ? name : 'Steve'
+  return 'https://minotar.net/helm/' + clean + '/' + Math.max(8, Math.min(512, Math.round(size))) + '.png'
+}
+
+/**
+ * A Minecraft item id, reduced to what can safely go in a URL path.
+ *
+ * The id comes out of a player's NBT, which is not a trusted source: a modded
+ * or hand-edited item can carry anything. Returns '' for anything that is not
+ * a plain namespaced id, and the caller draws the text tile instead.
+ */
+export function itemIconId(rawId: string): string {
+  const id = String(rawId || '').replace(/^minecraft:/, '').trim().toLowerCase()
+  return /^[a-z0-9_]{1,64}$/.test(id) ? id : ''
+}
+
+/**
+ * Where an item's picture comes from.
+ *
+ * Externally hosted for now, and every use of it must fall back to the item's
+ * name on error — the fallback is not politeness, it is the only thing standing
+ * between an unreachable third party and a grid of broken-image icons. An
+ * offline LAN server is a normal place to run this.
+ *
+ * The right long-term answer is to extract the textures from the client jar
+ * Mojang already publishes, which needs no third party and works offline. That
+ * is tracked with the block-colour work, which needs exactly the same textures.
+ */
+export function itemIconUrl(rawId: string): string {
+  const id = itemIconId(rawId)
+  return id ? 'https://mc.nerothe.com/img/1.21.4/minecraft_' + id + '.png' : ''
+}
+
+/** `netherite_ingot` -> `Netherite Ingot`. The fallback, and every tooltip. */
+export function itemLabel(rawId: string): string {
+  const id = String(rawId || '').replace(/^minecraft:/, '').trim()
+  if (!id) return '?'
+  return id
+    .split('_')
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ')
 }

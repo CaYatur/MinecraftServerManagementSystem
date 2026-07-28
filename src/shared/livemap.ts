@@ -225,7 +225,6 @@ export interface PublicMapPlayer {
   dim: string
   x: number
   z: number
-  uuid?: string
 }
 
 export interface PublicMapConfig {
@@ -272,13 +271,16 @@ export function redactPlayers(list: LivePlayer[], cfg: PublicMapConfig): PublicM
   const r = clampRound(cfg.round)
   const snap = (v: number): number => (r > 0 ? Math.round(v / r) * r : Math.round(v))
   return list.map((p) => ({
-    ...(cfg.names ? { name: p.name } : {}),
+    // Heads are drawn from the NAME (#116) — the uuid MSMS holds is the offline
+    // one on a cracked server and no skin service knows it. So a head needs the
+    // name, and publishing a recognisable face while claiming names are hidden
+    // would be a lie: a head identifies a player exactly as well as their name.
+    ...(cfg.names || cfg.heads ? { name: p.name } : {}),
     dim: p.dim,
     x: snap(p.x),
-    z: snap(p.z),
-    // Only when heads are on: a uuid is both an identity and the thing that
-    // gets sent to a third-party avatar service.
-    ...(cfg.heads && p.uuid ? { uuid: p.uuid } : {})
+    z: snap(p.z)
+    // No uuid. It was here to key the avatar service and nothing else asks for
+    // it, so the public payload is one identifier lighter.
   }))
 }
 
