@@ -8,6 +8,19 @@ import { log } from '../logger'
 import { listServers, getServer } from '../core/serverRegistry'
 import { processManager } from '../core/processManager'
 import { getPlayers } from '../core/players'
+import * as playersMod from '../core/players'
+import * as worldsMod from '../core/worlds'
+import * as backupsMod from '../core/backups'
+import {
+  isModerationAction,
+  isGamemode,
+  isValidMcName,
+  isValidWorldName,
+  moderationAuditAction,
+  needsConfirm,
+  sanitizeCommandArg
+} from '@shared/ops'
+import type { PlayerInfo } from '@shared/types'
 import * as metrics from '../core/metrics'
 import * as events from '../core/events'
 import * as alerts from '../core/alerts'
@@ -703,6 +716,247 @@ async function handlePanel(req: IncomingMessage, res: ServerResponse): Promise<v
       const limit = Math.min(5000, Number(url.searchParams.get('limit')) || 1000)
       return sendJson(res, 200, metrics.query(id, { from, to, resolution, limit }))
     }
+  }
+
+  // ---- operations: moderation / worlds / backups (#53) ----
+  //
+  // Its own matcher rather than widening the single-segment one above: that
+  // regex is `(?:\/(\w+))?$`, so a nested path silently falls through to the
+  // generic 404 — the trap already documented on the alert routes. Widening it
+  // would also have swallowed the `/store/...` block below.
+  const om = path.match(/^\/api\/servers\/([^/]+)\/(players|worlds|backups)(?:\/([\w-]+))?$/)
+  if (om) {
+    const id = decodeURIComponent(om[1])
+    const group = om[2]
+    const action = om[3] ?? ''
+    if (!getServer(id)) return sendJson(res, 404, { error: 'server-not-found' })
+    const gate = (scope: Scope): boolean => {
+      if (!can(user, id, scope)) {
+        sendJson(res, 403, { error: 'forbidden', need: scope })
+        return false
+      }
+      return true
+    }
+    const trail = (op: string, target: string, ok: boolean, detail?: string): void => {
+      audit.record({
+        source: user.apiKey ? 'api' : 'webpanel',
+        action: op,
+        actor: user.username,
+        ok,
+        ip,
+        serverId: id,
+        target,
+        ...(detail ? { detail } : {})
+      })
+    }
+    /**
+     * A destructive op needs `confirm: true` on top of its scope. Not security —
+     * a caller with the scope can always pass it — but a retry loop or a
+     * mis-set variable should not be able to erase a world.
+     */
+    const confirmed = (op: string, body: { confirm?: boolean }): boolean => {
+      if (!needsConfirm(op) || body.confirm === true) return true
+      trail(op, '', false, 'confirm-required')
+      sendJson(res, 400, { error: 'confirm-required', op })
+      return false
+    }
+
+    // ---- moderation (players scope) ----
+    //
+    // No GET here: `/api/servers/:id/players` is a single path segment, so the
+    // matcher above claims it and returns. A second handler would be dead code
+    // that looks like the authoritative one.
+    if (group === 'players') {
+      if (method === 'POST' && isModerationAction(action)) {
+        if (!gate('players')) return
+        const b = (await readBody(req).catch(() => ({}))) as {
+          player?: string
+          reason?: string
+          gamemode?: string
+        }
+        const op = moderationAuditAction(action)
+        // Validated before anything else: these values end up in a console
+        // command, and `sendCommand` appends a newline — a name carrying one is
+        // a second command run as the server operator.
+        if (!isValidMcName(b.player)) {
+          trail(op, String(b.player ?? ''), false, 'invalid-player-name')
+          return sendJson(res, 400, { error: 'invalid-player-name' })
+        }
+        const name = b.player
+        const reason = sanitizeCommandArg(b.reason)
+
+        // Prefer the roster entry: op/ban/whitelist edit json files by uuid when
+        // the server is stopped, and only the roster knows the uuid. A name that
+        // has never joined can still be moderated on a RUNNING server, because
+        // that path routes a console command by name.
+        const roster = await getPlayers(id).catch(() => [])
+        const known = roster.find((p) => p.name.toLowerCase() === name.toLowerCase())
+        const target: PlayerInfo =
+          known ?? { uuid: '', name, online: false, op: false, whitelisted: false, banned: false }
+
+        try {
+          switch (action) {
+            case 'op':
+            case 'deop':
+              await playersMod.setOp(id, target, action === 'op')
+              break
+            case 'whitelist-add':
+            case 'whitelist-remove':
+              await playersMod.setWhitelist(id, target, action === 'whitelist-add')
+              break
+            case 'ban':
+            case 'pardon':
+              await playersMod.setBan(id, target, action === 'ban', reason || undefined)
+              break
+            case 'kick':
+              await playersMod.kick(id, target, reason || undefined)
+              break
+            case 'gamemode': {
+              if (!isGamemode(b.gamemode)) {
+                trail(op, name, false, 'invalid-gamemode')
+                return sendJson(res, 400, { error: 'invalid-gamemode' })
+              }
+              await playersMod.setGamemode(id, target, b.gamemode)
+              break
+            }
+          }
+          trail(op, name, true, reason || undefined)
+          return sendJson(res, 200, { ok: true, player: name })
+        } catch (e) {
+          const msg = String((e as Error)?.message ?? e)
+          trail(op, name, false, msg)
+          // 'requires-running' and 'uuid-unknown' are the caller's problem to
+          // act on (start the server, or use a name that has joined), not ours.
+          return sendJson(res, msg === 'requires-running' || msg === 'uuid-unknown' ? 409 : 400, {
+            error: msg
+          })
+        }
+      }
+    }
+
+    // ---- worlds (worlds scope; reads need only view) ----
+    if (group === 'worlds') {
+      if (!action && method === 'GET') {
+        if (!gate('view')) return
+        return sendJson(res, 200, { worlds: await worldsMod.listWorlds(id) })
+      }
+      if (method === 'POST' || method === 'DELETE') {
+        if (!gate('worlds')) return
+        const b = (await readBody(req).catch(() => ({}))) as {
+          name?: string
+          newName?: string
+          dimension?: string
+          confirm?: boolean
+        }
+        const name = method === 'DELETE' ? (url.searchParams.get('name') ?? '') : (b.name ?? '')
+        // A world name is a path component. `core/worlds.ts` builds paths from
+        // it, so '..' would address the server directory itself.
+        if (!isValidWorldName(name)) {
+          return sendJson(res, 400, { error: 'invalid-world-name' })
+        }
+        const act = method === 'DELETE' ? 'delete' : action
+        const op = 'world.' + act
+        // A DELETE carries no body, so its confirmation is a query parameter -
+        // the same split the backup routes make. Reading only the body here
+        // meant `?confirm=true` was ignored and world deletion was unreachable.
+        const confirm =
+          method === 'DELETE' ? url.searchParams.get('confirm') === 'true' : b.confirm === true
+        if (!confirmed(op, { confirm })) return
+        try {
+          switch (act) {
+            case 'activate':
+              worldsMod.activateWorld(id, name)
+              break
+            case 'rename':
+              if (!isValidWorldName(b.newName)) return sendJson(res, 400, { error: 'invalid-world-name' })
+              worldsMod.renameWorld(id, name, b.newName)
+              break
+            case 'clone':
+              if (!isValidWorldName(b.newName)) return sendJson(res, 400, { error: 'invalid-world-name' })
+              await worldsMod.cloneWorld(id, name, b.newName)
+              break
+            case 'reset':
+              if (b.dimension !== 'overworld' && b.dimension !== 'nether' && b.dimension !== 'end') {
+                return sendJson(res, 400, { error: 'invalid-dimension' })
+              }
+              worldsMod.resetDimension(id, name, b.dimension)
+              break
+            case 'delete':
+              worldsMod.deleteWorld(id, name)
+              break
+            default:
+              return sendJson(res, 404, { error: 'not-found' })
+          }
+          trail(op, name, true, b.newName ?? b.dimension ?? undefined)
+          return sendJson(res, 200, { ok: true, worlds: await worldsMod.listWorlds(id) })
+        } catch (e) {
+          const msg = String((e as Error)?.message ?? e)
+          trail(op, name, false, msg)
+          // The refusals worlds.ts raises are all "you cannot do that to this
+          // world right now" — a running server, the active world, a name that
+          // is taken — which is a conflict, not a malformed request.
+          return sendJson(res, 409, { error: msg })
+        }
+      }
+    }
+
+    // ---- backups (backups scope; reads need only view) ----
+    if (group === 'backups') {
+      if (!action && method === 'GET') {
+        if (!gate('view')) return
+        return sendJson(res, 200, { backups: backupsMod.listBackups(id) })
+      }
+      if (!action && method === 'POST') {
+        if (!gate('backups')) return
+        const b = (await readBody(req).catch(() => ({}))) as { kind?: 'world' | 'full' }
+        try {
+          // `destDir` is deliberately not accepted from the body: it is an
+          // arbitrary filesystem path, and a backups-scoped API caller writing a
+          // zip anywhere on the host is a different privilege from backing up a
+          // world. The default location stands.
+          const rec = await backupsMod.createBackup(id, {
+            kind: b.kind === 'full' ? 'full' : 'world'
+          })
+          trail('backup.create', rec.fileName, true, Math.round(rec.size / 1048576) + ' MB')
+          return sendJson(res, 200, rec)
+        } catch (e) {
+          const msg = String((e as Error)?.message ?? e)
+          trail('backup.create', '', false, msg)
+          return sendJson(res, 400, { error: msg })
+        }
+      }
+      if (method === 'POST' && action === 'restore') {
+        if (!gate('backups')) return
+        const b = (await readBody(req).catch(() => ({}))) as { backupId?: string; confirm?: boolean }
+        if (!confirmed('backup.restore', b)) return
+        const rec = backupsMod.listBackups(id).find((x) => x.id === b.backupId)
+        // Looked up within THIS server's backups: a backup id from another
+        // server must not be restorable by someone scoped to this one.
+        if (!rec) return sendJson(res, 404, { error: 'backup-not-found' })
+        try {
+          backupsMod.restoreBackup(rec.id)
+          trail('backup.restore', rec.fileName, true)
+          return sendJson(res, 200, { ok: true })
+        } catch (e) {
+          const msg = String((e as Error)?.message ?? e)
+          trail('backup.restore', rec.fileName, false, msg)
+          return sendJson(res, 409, { error: msg })
+        }
+      }
+      if (method === 'DELETE' && !action) {
+        if (!gate('backups')) return
+        const backupId = url.searchParams.get('backupId') ?? ''
+        const confirm = url.searchParams.get('confirm') === 'true'
+        if (!confirmed('backup.delete', { confirm })) return
+        const rec = backupsMod.listBackups(id).find((x) => x.id === backupId)
+        if (!rec) return sendJson(res, 404, { error: 'backup-not-found' })
+        backupsMod.deleteBackup(rec.id)
+        trail('backup.delete', rec.fileName, true)
+        return sendJson(res, 200, { ok: true })
+      }
+    }
+
+    return sendJson(res, 404, { error: 'not-found' })
   }
 
   // ---- /api/servers/:id/store... ----

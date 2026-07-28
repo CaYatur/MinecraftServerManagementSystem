@@ -55,6 +55,11 @@ import * as metrics from './core/metrics'
 import * as eventsMod from './core/events'
 import * as alertsMod from './core/alerts'
 import * as worldsMod from './core/worlds'
+import {
+  isValidMcName,
+  isValidWorldName,
+  sanitizeCommandArg
+} from '@shared/ops'
 import { listJavaInstalls, _resetJavaCache } from './core/javaScan'
 import { checkJava, javaRequirement } from '@shared/javaCompat'
 import {
@@ -2447,6 +2452,24 @@ export async function runSmoke(): Promise<void> {
     const live = await worldsMod.listWorlds(id)
     if (!Array.isArray(live)) return fail('listWorlds did not return a list while running')
     console.log(`SMOKE: world guard OK (delete refused while running, ${live.length} world(s) listed)`)
+
+    // Restoring a backup over a LIVE world corrupts it - the server holds region
+    // files open and writes its in-memory state back on its own schedule. The
+    // desktop only ever warned about it in a dialog ("Stop the server first"),
+    // which an API caller never reads, and core had no guard at all until #53
+    // made restore reachable over HTTP.
+    const made = await backupsMod.createBackup(id, { kind: 'full' })
+    let restoreRefused = ''
+    try {
+      backupsMod.restoreBackup(made.id)
+    } catch (e) {
+      restoreRefused = String((e as Error)?.message ?? e)
+    }
+    backupsMod.deleteBackup(made.id)
+    if (restoreRefused !== 'server-running') {
+      return fail('restoring a backup while running was refused with "' + restoreRefused + '"')
+    }
+    console.log('SMOKE: restore refused while the server is running')
   }
 
   // --- 2c. RCON auto-enable + player JSON merge ---
@@ -4708,6 +4731,243 @@ export async function runWebSmoke(): Promise<void> {
         if (detail.includes('onerror="alert(1)"')) return fail('the detail view escaped nothing')
       }
       console.log('WEB-SMOKE: panel + site scripts parse; crate picker, storefront sections, search, detail and escaping OK')
+    }
+
+    // ---- operations API: moderation / worlds / backups (#53) ----
+    {
+      const opsBase = '/api/servers/' + id
+      const af = join(auditDir(), 'audit.jsonl')
+      const snap = existsSync(af) ? readFileSync(af, 'utf-8') : null
+      // A key scoped to exactly one group, to prove the scopes are real rather
+      // than "any authenticated caller can do anything".
+      const modKey = apikeys.createKey({ label: 'smoke_mod', scopes: ['view', 'players'], servers: [id] })
+      const worldKey = apikeys.createKey({ label: 'smoke_world', scopes: ['view', 'worlds'], servers: [id] })
+      const bkKey = apikeys.createKey({ label: 'smoke_bk', scopes: ['view', 'backups'], servers: [id] })
+      const kpost = (p: string, body: unknown, k: string): Promise<Response> =>
+        fetch(base + p, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-API-Key': k },
+          body: JSON.stringify(body)
+        })
+      const kdel = (p: string, k: string): Promise<Response> =>
+        fetch(base + p, { method: 'DELETE', headers: { 'X-API-Key': k } })
+
+      let seededHere = false
+      try {
+        rmSync(af, { force: true })
+        auditMod._reset()
+
+        // ---- pure validators first ----
+        for (const good of ['Steve', 'Notch_1', 'abc']) {
+          if (!isValidMcName(good)) return fail('a legitimate player name was refused: ' + good)
+        }
+        for (const bad of ['ab', 'a'.repeat(17), 'Steve Smith', 'Steve\nstop', 'Steve;stop', '', 42]) {
+          if (isValidMcName(bad as string)) return fail('an unsafe player name was accepted: ' + String(bad))
+        }
+        // The reason is free text and reaches a console command, so what matters
+        // is that nothing in it can end the command or start another.
+        const nasty = sanitizeCommandArg('grief\nstop\r\nop Mallory say hi')
+        if (new RegExp('[\\r\\n\\u2028\\u2029]').test(nasty)) return fail('sanitizeCommandArg left a line break: ' + JSON.stringify(nasty))
+        if (sanitizeCommandArg('x'.repeat(500)).length !== 120) return fail('reason not capped')
+        for (const bad of [
+          '..',
+          '.',
+          'a/b',
+          'a\\b',
+          'C:',
+          'con',
+          'CON.txt',
+          // Windows drops a trailing dot or space, so each of these would
+          // silently address an existing world while looking like a new one.
+          'world.',
+          'world ',
+          ' world',
+          'world\t',
+          'x'.repeat(65),
+          ''
+        ]) {
+          if (isValidWorldName(bad)) return fail('an unsafe world name was accepted: ' + JSON.stringify(bad))
+        }
+        for (const good of ['world', 'my_world-2', 'Dünya']) {
+          if (!isValidWorldName(good)) return fail('a legitimate world name was refused: ' + good)
+        }
+
+        // ---- scope enforcement ----
+        // friend_t holds view+console on this server, so every group refuses it.
+        r = await post(opsBase + '/players/op', { player: 'Steve' }, ft)
+        if (r.status !== 403) return fail('moderation without players expected 403, got ' + r.status)
+        r = await post(opsBase + '/worlds/activate', { name: 'world' }, ft)
+        if (r.status !== 403) return fail('world change without worlds expected 403, got ' + r.status)
+        r = await post(opsBase + '/backups', {}, ft)
+        if (r.status !== 403) return fail('backup create without backups expected 403, got ' + r.status)
+        // ...and a key scoped to one group cannot reach another.
+        r = await kpost(opsBase + '/worlds/activate', { name: 'world' }, modKey.secret)
+        if (r.status !== 403) return fail('a players key reached worlds, got ' + r.status)
+        r = await kpost(opsBase + '/players/op', { player: 'Steve' }, worldKey.secret)
+        if (r.status !== 403) return fail('a worlds key reached moderation, got ' + r.status)
+
+        // ---- moderation: injection is refused before anything runs ----
+        r = await kpost(opsBase + '/players/op', { player: 'Steve\nstop' }, modKey.secret)
+        if (r.status !== 400) return fail('a newline in a player name expected 400, got ' + r.status)
+        if (((await r.json()) as { error: string }).error !== 'invalid-player-name') {
+          return fail('a newline name was refused for the wrong reason')
+        }
+        // The refusal is audited: somebody trying it is worth seeing.
+        if (!auditMod.query({ actions: ['player.op'] }).entries.some((e) => e.ok === false)) {
+          return fail('a refused moderation call was not audited')
+        }
+        r = await kpost(opsBase + '/players/gamemode', { player: 'Steve', gamemode: 'god' }, modKey.secret)
+        if (r.status !== 400) return fail('an invalid gamemode expected 400, got ' + r.status)
+        // An unknown action is not a route.
+        r = await kpost(opsBase + '/players/nuke', { player: 'Steve' }, modKey.secret)
+        if (r.status !== 404) return fail('an unknown moderation action expected 404, got ' + r.status)
+
+        // A valid call against a stopped server cannot reach ops.json without a
+        // uuid, and says so as a conflict rather than a bad request.
+        r = await kpost(opsBase + '/players/op', { player: 'NeverJoined' }, modKey.secret)
+        if (r.status !== 409) return fail('op on a stopped server expected 409, got ' + r.status)
+        const opErr = ((await r.json()) as { error: string }).error
+        if (opErr !== 'uuid-unknown' && opErr !== 'requires-running') {
+          return fail('unexpected error for offline op: ' + opErr)
+        }
+
+        // Whitelist by uuid works offline once the player is in the roster, so
+        // seed one the way the server itself would.
+        {
+          const srv = getConfig().servers.find((s) => s.id === id)
+          const wl = join(srv?.path ?? '', 'whitelist.json')
+          const cache = join(srv?.path ?? '', 'usercache.json')
+          writeFileSync(cache, JSON.stringify([{ uuid: 'aaaa-bbbb', name: 'Rosterd' }]), 'utf-8')
+          writeFileSync(wl, '[]', 'utf-8')
+          r = await kpost(opsBase + '/players/whitelist-add', { player: 'Rosterd' }, modKey.secret)
+          if (r.status !== 200) return fail('offline whitelist-add expected 200, got ' + r.status + ' ' + (await r.text()))
+          const after = JSON.parse(readFileSync(wl, 'utf-8')) as { name: string }[]
+          if (!after.some((w) => w.name === 'Rosterd')) return fail('whitelist-add did not reach whitelist.json')
+          if (!auditMod.query({ actions: ['player.whitelist-add'] }).entries.some((e) => e.ok && e.target === 'Rosterd')) {
+            return fail('a successful moderation call was not audited')
+          }
+          rmSync(wl, { force: true })
+          rmSync(cache, { force: true })
+        }
+
+        // ---- worlds ----
+        // The web gate never starts a server, so the fixture has no world of its
+        // own. Seed one: `isWorldFolder` is "contains level.dat", and without it
+        // the clone/delete assertions below would quietly skip - a test that
+        // silently does nothing is the failure mode this suite keeps hitting.
+        const srvPath = getConfig().servers.find((s) => s.id === id)?.path ?? ''
+        const seededWorld = join(srvPath, 'world')
+        if (!existsSync(join(seededWorld, 'level.dat'))) {
+          mkdirSync(seededWorld, { recursive: true })
+          writeFileSync(join(seededWorld, 'level.dat'), 'not-real-nbt', 'utf-8')
+          seededHere = true
+        }
+        r = await get(opsBase + '/worlds', ot)
+        if (r.status !== 200) return fail('world list expected 200, got ' + r.status)
+        const worldNames = ((await r.json()) as { worlds: { name: string }[] }).worlds.map((w) => w.name)
+        // A traversal must never reach worlds.ts.
+        r = await kpost(opsBase + '/worlds/activate', { name: '../../etc' }, worldKey.secret)
+        if (r.status !== 400) return fail('a traversing world name expected 400, got ' + r.status)
+        // Destructive ops demand confirm on top of the scope.
+        r = await kpost(opsBase + '/worlds/reset', { name: 'world', dimension: 'nether' }, worldKey.secret)
+        if (r.status !== 400) return fail('reset without confirm expected 400, got ' + r.status)
+        if (((await r.json()) as { error: string }).error !== 'confirm-required') {
+          return fail('reset without confirm gave the wrong error')
+        }
+        r = await kdel(opsBase + '/worlds?name=world', worldKey.secret)
+        if (r.status !== 400) return fail('world delete without confirm expected 400, got ' + r.status)
+        // ...and a bad dimension is still refused with confirm present.
+        r = await kpost(opsBase + '/worlds/reset', { name: 'world', dimension: 'moon', confirm: true }, worldKey.secret)
+        if (r.status !== 400) return fail('an invalid dimension expected 400, got ' + r.status)
+
+        if (!worldNames.length) return fail('the world fixture did not register as a world')
+        // A real, reversible change: clone then delete the copy.
+        {
+          const src = worldNames[0]
+          r = await kpost(opsBase + '/worlds/clone', { name: src, newName: 'smoke_copy' }, worldKey.secret)
+          if (r.status !== 200) return fail('world clone expected 200, got ' + r.status + ' ' + (await r.text()))
+          if (!(await worldsMod.listWorlds(id)).some((w) => w.name === 'smoke_copy')) {
+            return fail('clone reported success but produced no world')
+          }
+          if (!auditMod.query({ actions: ['world.clone'] }).entries.some((e) => e.ok)) {
+            return fail('world.clone was not audited')
+          }
+          r = await kdel(opsBase + '/worlds?name=smoke_copy&confirm=true', worldKey.secret)
+          if (r.status !== 200) return fail('world delete expected 200, got ' + r.status + ' ' + (await r.text()))
+          if ((await worldsMod.listWorlds(id)).some((w) => w.name === 'smoke_copy')) {
+            return fail('delete reported success but the world is still there')
+          }
+        }
+
+        // ---- backups ----
+        r = await kpost(opsBase + '/backups', { kind: 'world' }, bkKey.secret)
+        if (r.status !== 200) return fail('backup create expected 200, got ' + r.status + ' ' + (await r.text()))
+        const made = (await r.json()) as { id: string; fileName: string }
+        if (!backupsMod.listBackups(id).some((x) => x.id === made.id)) {
+          return fail('backup create returned a record that is not in the list')
+        }
+        if (!auditMod.query({ actions: ['backup.create'] }).entries.some((e) => e.ok)) {
+          return fail('backup.create was not audited')
+        }
+        // Restore and delete both demand confirm.
+        r = await kpost(opsBase + '/backups/restore', { backupId: made.id }, bkKey.secret)
+        if (r.status !== 400) return fail('restore without confirm expected 400, got ' + r.status)
+        r = await kdel(opsBase + '/backups?backupId=' + made.id, bkKey.secret)
+        if (r.status !== 400) return fail('backup delete without confirm expected 400, got ' + r.status)
+        // An id that is not this server's is not restorable from this server.
+        r = await kpost(opsBase + '/backups/restore', { backupId: 'not-a-real-id', confirm: true }, bkKey.secret)
+        if (r.status !== 404) return fail('restoring an unknown backup expected 404, got ' + r.status)
+        r = await kdel(opsBase + '/backups?backupId=' + made.id + '&confirm=true', bkKey.secret)
+        if (r.status !== 200) return fail('backup delete expected 200, got ' + r.status)
+        if (backupsMod.listBackups(id).some((x) => x.id === made.id)) return fail('backup was not deleted')
+        if (!auditMod.query({ actions: ['backup.delete'] }).entries.some((e) => e.ok)) {
+          return fail('backup.delete was not audited')
+        }
+
+        // Every operation entry is attributed to the key, under the api source,
+        // and names the server it acted on.
+        //
+        // Filtered to the operation actions on purpose: the api source ALSO
+        // carries the generic `api.post`/`api.delete` entry that #85 writes for
+        // every mutating key call, and that one records the path rather than a
+        // server. It is the safety net for routes that do not audit themselves,
+        // so it stays - but it is not what this assertion is about.
+        const opsEntries = auditMod
+          .query({ sources: ['api'] })
+          .entries.filter((e) => /^(player|world|backup)\./.test(e.action))
+        if (!opsEntries.length) return fail('no operation was recorded under the api source')
+        if (!opsEntries.every((e) => e.actor.startsWith('key:'))) {
+          return fail('an operation audit entry lost its key: ' + opsEntries.map((e) => e.actor).join(','))
+        }
+        if (!opsEntries.every((e) => e.serverId === id)) {
+          return fail('an operation audit entry lost its server')
+        }
+        // ...and the generic net fired too, so a route that forgets to audit
+        // itself still leaves a trace.
+        if (!auditMod.query({ sources: ['api'], actions: ['api.post'] }).entries.length) {
+          return fail('the generic api mutation entry stopped being written')
+        }
+        console.log(
+          'WEB-SMOKE: operations API OK (scopes per group, injection + traversal refused, confirm gate, all audited)'
+        )
+      } finally {
+        // Purge the fixture even on a failed assertion, or the next run starts
+        // with a stale 'smoke_copy' and the clone reports name-taken.
+        try {
+          const sp = getConfig().servers.find((s) => s.id === id)?.path ?? ''
+          rmSync(join(sp, 'smoke_copy'), { recursive: true, force: true })
+          // Only remove the world if THIS run created it. A real world here
+          // (from the spine gate, which does start a server) must survive.
+          if (seededHere) rmSync(join(sp, 'world'), { recursive: true, force: true })
+        } catch {
+          /* best effort */
+        }
+        apikeys.deleteKey(modKey.key.id)
+        apikeys.deleteKey(worldKey.key.id)
+        apikeys.deleteKey(bkKey.key.id)
+        if (snap == null) rmSync(af, { force: true })
+        else writeFileSync(af, snap, 'utf-8')
+      }
     }
 
     // ---- API keys (#48) + safety rails (#50) ----

@@ -864,7 +864,8 @@ const tr: typeof en = {
       files: 'Dosyaları düzenle',
       backups: 'Yedekler',
       settings: 'Ayarları düzenle',
-      store: 'Mağazayı yönet'
+      store: 'Mağazayı yönet',
+      worlds: 'Dünyaları yönet (geri alınamaz)'
     }
   },
   common: {
