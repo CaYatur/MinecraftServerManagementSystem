@@ -22,8 +22,13 @@ export const MAP_CSS = `
 .mp-canvas-wrap{position:relative;border:1px solid var(--line,var(--border,rgba(255,255,255,.14)));
   border-radius:12px;overflow:hidden;background:#0a0a0f;aspect-ratio:16/10}
 .mp-canvas-wrap canvas{width:100%;height:100%;display:block}
-.mp-empty{position:absolute;inset:0;display:grid;place-items:center;text-align:center;padding:20px;
-  font-size:13px;opacity:.65;pointer-events:none}
+/* The empty state carries an action since #103: it stacks, and it is clickable.
+   Turning pointer events off was right when it was one line of text over a
+   canvas and is exactly wrong now — it would swallow every click on the install
+   button while leaving it looking enabled. */
+.mp-empty{position:absolute;inset:0;display:grid;place-content:center;justify-items:center;gap:9px;
+  text-align:center;padding:20px;font-size:13px}
+.mp-empty .mp-note{font-size:12.5px;opacity:.65;max-width:380px}
 .mp-legend{display:flex;flex-wrap:wrap;gap:10px;font-size:12px;opacity:.75}
 .mp-legend b{font-weight:800;opacity:1}
 .mp-list{display:flex;flex-wrap:wrap;gap:6px}
@@ -55,11 +60,43 @@ export const MAP_HTML = `
 </div>`
 
 export const MAP_JS = `
-var MAP={data:null,heat:true,timer:null,dim:'overworld'};
+var MAP={data:null,heat:true,timer:null,dim:'overworld',bridge:null,busy:false,msg:''};
+/* The bridge warning and its install button (#103).
+   Deliberately here, in the empty map, and nowhere else: this is where an
+   operator finds out positions are missing, so it is the only place the answer
+   is useful. A global banner would be shown to people whose servers cannot run
+   the plugin at all. */
+function mapNoBridgeHtml(){
+ var b=MAP.bridge;
+ var head='<div>No live positions — this server has no MSMS-Bridge plugin.</div>';
+ if(MAP.msg)return head+'<div class="mp-note">'+mapEsc(MAP.msg)+'</div>';
+ if(!b)return head;
+ if(b.state==='unsupported')return '<div>This server type cannot run the Bridge plugin.</div>';
+ if(b.state!=='missing'||!b.actionable)return head;
+ return head+'<div class="mp-note">Positions arrive over the server console, so no extra port is opened.'+
+  (b.offline?' GitHub is unreachable; the copy shipped with the app will be used.':'')+'</div>'+
+  '<button class="btn primary" onclick="mapInstallBridge()"'+(MAP.busy?' disabled':'')+'>'+
+  (MAP.busy?'Installing…':'Install MSMS-Bridge '+mapEsc(b.latest||''))+'</button>'}
+function mapBridgeCheck(){
+ /* Once per tab open, not on the 2s position poll: the answer changes when
+    somebody installs a jar, and the check reaches GitHub. */
+ api('/api/servers/'+mapServerId()+'/bridge').then(function(r){
+  MAP.bridge=r.ok?r.body:null;mapDraw()})}
+function mapInstallBridge(){
+ if(MAP.busy)return;
+ MAP.busy=true;MAP.msg='';mapDraw();
+ api('/api/servers/'+mapServerId()+'/bridge/install',{method:'POST'}).then(function(r){
+  MAP.busy=false;
+  /* "Installed" is not "working". Bukkit loads plugins at startup, so the jar
+     does nothing until a restart — an operator watching a still-empty map
+     would otherwise read that as a failed install. */
+  MAP.msg=r.ok?('Installed '+(r.body.version||'')+'. Restart the server to load it.')
+   :('Install failed: '+((r.body&&r.body.error)||r.status));
+  mapBridgeCheck();mapDraw()})}
 function mapEsc(t){var d=document.createElement('div');d.textContent=(t==null?'':t);return d.innerHTML}
 function mapToggleHeat(){MAP.heat=!MAP.heat;
  document.getElementById('mpHeatBtn').textContent='Heatmap: '+(MAP.heat?'on':'off');mapDraw()}
-function mapStart(){mapStop();mapRefresh();MAP.timer=setInterval(mapRefresh,2000)}
+function mapStart(){mapStop();mapRefresh();mapBridgeCheck();MAP.timer=setInterval(mapRefresh,2000)}
 function mapStop(){if(MAP.timer){clearInterval(MAP.timer);MAP.timer=null}}
 function mapRefresh(){
  var sel=document.getElementById('mpDim');
@@ -112,9 +149,11 @@ function mapDraw(){
   g.fillStyle='#4ade80';g.fill();
   g.lineWidth=1.5*dpr;g.strokeStyle='rgba(0,0,0,.55)';g.stroke();
   g.fillStyle='rgba(255,255,255,.92)';g.fillText(p.name,x,y-7*dpr)}
- document.getElementById('mpEmpty').textContent=
-  ps.length?'':(d.bridge?'Nobody in this dimension right now.'
-   :'No live positions. Install the MSMS-Bridge plugin on the server to see players here.');
+ /* innerHTML rather than textContent: the empty state now carries an action
+    (#103). Everything interpolated into it is generated here or run through
+    mapEsc — nothing from the server reaches it unescaped. */
+ document.getElementById('mpEmpty').innerHTML=
+  ps.length?'':(d.bridge?'Nobody in this dimension right now.':mapNoBridgeHtml());
  document.getElementById('mpBounds').innerHTML='<b>X</b> '+Math.round(b.minX)+' … '+Math.round(b.maxX)+
   ' &nbsp; <b>Z</b> '+Math.round(b.minZ)+' … '+Math.round(b.maxZ);
  document.getElementById('mpCount').innerHTML='<b>'+ps.length+'</b> shown';

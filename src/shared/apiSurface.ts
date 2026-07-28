@@ -197,6 +197,8 @@ export const API_ROUTES: ApiRoute[] = [
   { method: 'GET', path: '/servers/{id}/store', gate: 'view', group: 'store', summary: 'The storefront as a player sees it.', params: [serverId] },
   { method: 'GET', path: '/servers/{id}/store/balance', gate: 'view', group: 'store', summary: 'The caller’s balance, if a Minecraft name is linked.', params: [serverId] },
   { method: 'GET', path: '/servers/{id}/store/txns', gate: 'view', group: 'store', summary: 'The caller’s transactions.', params: [serverId] },
+  { method: 'GET', path: '/servers/{id}/bridge', gate: 'files', group: 'mods', summary: 'Whether this server needs the MSMS Bridge plugin, and where one would come from.', params: [serverId], notes: 'Answers `state: unsupported` for a server type that cannot run it, and `offline: true` when the GitHub release check failed — the bundled jar still installs.' },
+  { method: 'POST', path: '/servers/{id}/bridge/install', gate: 'files', group: 'mods', summary: 'Install the newest Bridge plugin jar, replacing any older one.', params: [serverId], notes: 'Takes no body. The version and the download URL are resolved by the app from this project\'s own GitHub releases, falling back to the jar shipped with it; a caller naming either would turn a `files` request into an arbitrary write.' },
   // No store/buy: removed in #102. It spent currency on a `view` gate, and the
   // panel that called it is the authoring surface, not a shop. Players buy on
   // the public site with their own session.

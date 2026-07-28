@@ -18,6 +18,7 @@ import * as files from '../core/serverFiles'
 import * as players from '../core/players'
 import * as rcon from '../core/rcon'
 import * as mods from '../core/mods'
+import * as bridgeInstall from '../core/bridgeInstall'
 import * as backups from '../core/backups'
 import * as worlds from '../core/worlds'
 import * as scheduler from '../core/scheduler'
@@ -293,6 +294,12 @@ export function registerIpc(): void {
   H(IPC.modCheckUpdates, (_e, id: string) => mods.checkUpdates(id))
   H(IPC.modApplyUpdate, (_e, id: string, path: string, versionId: string) =>
     mods.applyUpdate(id, path, versionId)
+  )
+
+  // --- bridge plugin (#103) ---
+  H(IPC.bridgeStatus, (_e, id: string) => bridgeInstall.bridgeStatus(id))
+  H(IPC.bridgeInstall, (_e, id: string) =>
+    bridgeInstall.installBridge(id, { by: 'desktop', source: 'panel' })
   )
 
   // --- java installs ---

@@ -41,6 +41,7 @@ import type { JavaInstallProgress } from './javaProvision'
 import type { AlertRule, NewAlertRule } from './alerts'
 import type { McVersion, BuildInfo, CreateServerOptions, CreateProgress } from './versions'
 import type { ModEntry, ModrinthDetail, ModrinthHit, ModUpdateReport } from './mods'
+import type { BridgeInstallResult, BridgeStatus } from './bridgeRelease'
 import type {
   WebStatus,
   WebUserView,
@@ -129,6 +130,9 @@ export const IPC = {
   modInstall: 'mods:install',
   modCheckUpdates: 'mods:check-updates',
   modApplyUpdate: 'mods:apply-update',
+
+  bridgeStatus: 'bridge:status',
+  bridgeInstall: 'bridge:install',
 
   javaList: 'java:list',
   javaResolve: 'java:resolve',
@@ -322,6 +326,14 @@ export interface MsmsApi {
   installMod(id: string, projectId: string, versionId?: string): Promise<string>
   checkModUpdates(id: string): Promise<ModUpdateReport>
   applyModUpdate(id: string, path: string, versionId: string): Promise<string>
+
+  /** Whether this server needs the Bridge plugin, and where one would come from. */
+  bridgeStatus(id: string): Promise<BridgeStatus>
+  /**
+   * Install it. Takes no version and no URL — the app resolves what "the
+   * bridge" means, so a caller can never point the download somewhere else.
+   */
+  installBridge(id: string): Promise<BridgeInstallResult>
 
   listJava(refresh?: boolean): Promise<JavaInstall[]>
   /** The Java that will actually launch, given a per-server override ('' = auto). */

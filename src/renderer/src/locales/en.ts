@@ -123,7 +123,13 @@ export default {
     shown: '{{n}} shown',
     emptyDimension: 'Nobody is in this dimension right now.',
     needsBridge:
-      'No live positions yet. Install the MSMS-Bridge plugin in the plugins folder of the server and restart it — positions arrive over the server console, so no extra port is opened.'
+      'No live positions yet — this server has no MSMS-Bridge plugin. Positions arrive over the server console, so installing it opens no extra port.',
+    installBridge: 'Install MSMS-Bridge {{version}}',
+    installing: 'Installing…',
+    bridgeInstalled: 'Installed {{version}}. Restart the server to load it.',
+    bridgeFailed: 'Install failed: {{error}}',
+    bridgeUnsupported: 'This server type cannot run the Bridge plugin.',
+    bridgeOutdated: 'Bridge {{installed}} → update to {{latest}}'
   },
   audit: {
     title: 'Audit log',

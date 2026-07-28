@@ -125,7 +125,13 @@ const tr: typeof en = {
     shown: '{{n}} gösteriliyor',
     emptyDimension: 'Şu anda bu boyutta kimse yok.',
     needsBridge:
-      'Henüz canlı konum yok. MSMS-Bridge eklentisini sunucunun plugins klasörüne koyup yeniden başlat — konumlar sunucu konsolu üzerinden geliyor, ek bir port açılmıyor.'
+      'Henüz canlı konum yok — bu sunucuda MSMS-Bridge eklentisi yok. Konumlar sunucu konsolu üzerinden geldiği için kurmak ek bir port açmaz.',
+    installBridge: 'MSMS-Bridge {{version}} kur',
+    installing: 'Kuruluyor…',
+    bridgeInstalled: '{{version}} kuruldu. Yüklenmesi için sunucuyu yeniden başlat.',
+    bridgeFailed: 'Kurulum başarısız: {{error}}',
+    bridgeUnsupported: 'Bu sunucu türü Bridge eklentisini çalıştıramaz.',
+    bridgeOutdated: 'Bridge {{installed}} → {{latest}} sürümüne güncelle'
   },
   audit: {
     title: 'Denetim kaydı',

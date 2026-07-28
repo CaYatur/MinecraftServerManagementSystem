@@ -11,6 +11,16 @@ files:
   - package.json
   - '!**/{.eslintrc,.editorconfig,tsconfig*.json,electron.vite.config.ts}'
 
+# The Bridge plugin jar, kept OUT of the asar on purpose (#103). It is a file an
+# operator may reasonably want to find and drop into plugins/ by hand — that was
+# the only way to install it before the app could — and burying it inside an
+# archive would remove that escape hatch to save nothing.
+extraResources:
+  - from: resources
+    to: bridge
+    filter:
+      - '*.jar'
+
 # We deliberately ship a single portable exe: it stores all data next to itself
 # (the launch directory), which is exactly the "portable" behaviour we want.
 win:
