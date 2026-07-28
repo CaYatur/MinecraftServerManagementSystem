@@ -5,6 +5,8 @@ import { gzipSync } from 'node:zlib'
 import AdmZip from 'adm-zip'
 import * as nbt from 'prismarine-nbt'
 import { processManager } from './core/processManager'
+import { LineSplitter } from './core/lineSplitter'
+import { buildLaunchArgs } from './core/javaArgs'
 import { getConfig, updateConfig } from './config'
 import { startWebServer, stopWebServer, _resetRateLimits } from './web/server'
 import * as webAuth from './web/auth'
@@ -2008,6 +2010,100 @@ export async function runSmoke(): Promise<void> {
   const pass = (): void => {
     console.log('SMOKE: PASS')
     app.exit(0)
+  }
+
+  // ---- console line decoding (#83) ----
+  // Pure and instant, so it runs before the heavy part: if the console mangles
+  // text there is no point starting a server to watch it happen.
+  {
+    // Turkish, a section-sign colour code, and an emoji: 2-, 2- and 4-byte
+    // sequences, which is the whole range of ways a chunk boundary can cut a
+    // character in half.
+    const line = 'Oyuncu Çağan bağlandı — §aTamam ✅ ğüşiöç\n'
+    const bytes = Buffer.from(line, 'utf-8')
+
+    // Split at every single byte offset. Any offset that lands inside a
+    // multi-byte sequence is the bug: the old `chunk.toString('utf-8')` emitted
+    // U+FFFD there and mis-decoded the continuation bytes in the next chunk.
+    for (let cut = 1; cut < bytes.length; cut++) {
+      const ls = new LineSplitter()
+      const out = [...ls.push(bytes.subarray(0, cut)), ...ls.push(bytes.subarray(cut))]
+      if (out.length !== 1 || out[0] !== line.trimEnd()) {
+        return fail(`a chunk boundary at byte ${cut} corrupted the line: ${JSON.stringify(out)}`)
+      }
+    }
+
+    // Prove the assertion above is actually testing something - a naive decode
+    // of the same split must fail, or the loop is checking nothing.
+    const mid = bytes.indexOf(0xc3) + 1 // inside the two bytes of 'Ç'
+    const naive =
+      bytes.subarray(0, mid).toString('utf-8') + bytes.subarray(mid).toString('utf-8')
+    if (!naive.includes('�')) return fail('the split-character fixture no longer splits one')
+
+    // A shared splitter across two streams must be impossible by construction;
+    // interleaving halves through one is exactly the corruption to avoid.
+    const shared = new LineSplitter()
+    shared.push(bytes.subarray(0, mid))
+    const strayOut = shared.push(Buffer.from('stderr noise\n', 'utf-8'))
+    if (strayOut.length && strayOut[0] === 'stderr noise') {
+      return fail('a shared splitter passed the other stream through cleanly, hiding the hazard')
+    }
+
+    // A line with no trailing newline is held, then released on flush - a
+    // crashing server ends mid-line and that line is the reason it crashed.
+    const tail = new LineSplitter()
+    if (tail.push(Buffer.from('java.lang.OutOfMemoryError: Çöp', 'utf-8')).length !== 0) {
+      return fail('an unterminated line was emitted before its newline')
+    }
+    if (!tail.pending) return fail('an unterminated line was not held')
+    if (tail.flush() !== 'java.lang.OutOfMemoryError: Çöp') return fail('flush lost the last line')
+    if (tail.flush() !== '') return fail('flush returned the same line twice')
+    // Flushed on both 'exit' and 'close', so it has to stay usable afterwards:
+    // decoder.end() must not leave the splitter unable to decode a later chunk.
+    const late = [...tail.push(Buffer.from('geç', 'utf-8')), tail.flush()]
+    if (late.join('') !== 'geç') return fail('the splitter stopped working after a flush')
+
+    // Multiple lines in one chunk, and CRLF, both still work.
+    const multi = new LineSplitter().push(Buffer.from('bir\r\niki\r\nüç\n', 'utf-8'))
+    if (multi.join('|') !== 'bir|iki|üç') return fail('multi-line chunk split wrong: ' + multi.join('|'))
+    console.log('SMOKE: console decoding OK (no byte offset can split a character)')
+
+    // Decoding correctly only helps if the server wrote UTF-8 in the first
+    // place. It does not by default: on a Turkish Windows with Temurin 21,
+    // `System.out` used cp1254 and dropped a checkmark to a literal `?`.
+    const argCfg = {
+      preset: 'aikars' as const,
+      javaPath: '',
+      minMemoryMB: 2048,
+      maxMemoryMB: 4096,
+      extraFlags: '',
+      customArgs: '',
+      nogui: true,
+      jarFile: 'server.jar'
+    }
+    for (const preset of ['aikars', 'basic', 'proxy', 'custom'] as const) {
+      const args = buildLaunchArgs({ ...argCfg, preset, customArgs: '-jar server.jar' }, 'paper')
+      for (const p of ['stdout.encoding', 'stderr.encoding', 'sun.stdout.encoding', 'sun.stderr.encoding']) {
+        if (!args.includes('-D' + p + '=UTF-8')) return fail(`${preset} preset does not set -D${p}`)
+      }
+      // Before -jar / @argsfile, or the JVM treats them as program arguments.
+      const firstProgramArg = args.findIndex((a) => a === '-jar' || a.startsWith('@'))
+      const lastEnc = args.map((a) => a.startsWith('-Dstdout.encoding')).lastIndexOf(true)
+      if (firstProgramArg >= 0 && lastEnc > firstProgramArg) {
+        return fail(`${preset} put an encoding flag after -jar, where the JVM ignores it`)
+      }
+    }
+    // ...and the user still gets the last word, because the JVM takes the last
+    // definition of a property on the command line.
+    const overridden = buildLaunchArgs(
+      { ...argCfg, extraFlags: '-Dstdout.encoding=windows-1254' },
+      'paper'
+    )
+    const encFlags = overridden.filter((a) => a.startsWith('-Dstdout.encoding='))
+    if (encFlags[encFlags.length - 1] !== '-Dstdout.encoding=windows-1254') {
+      return fail('a user-set console encoding did not survive as the last one')
+    }
+    console.log('SMOKE: launch args force UTF-8 console output on every preset, user-overridable')
   }
 
   const id = getConfig().servers[0]?.id

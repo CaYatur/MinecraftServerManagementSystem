@@ -55,10 +55,38 @@ export function tokenize(input: string): string[] {
   return out
 }
 
+/**
+ * Make the server write its console in UTF-8 (#83).
+ *
+ * Without this, `System.out` uses the platform console code page. Measured on a
+ * Turkish Windows with Temurin 21, `Çağan` came out as the cp1254 bytes
+ * `C7 61 F0 61 6E` and `✅` was replaced by a literal `?` before it ever left
+ * the JVM. MSMS then decodes those bytes as UTF-8 and shows mojibake - and the
+ * `?` is gone for good, no decoder can bring it back.
+ *
+ * Four properties for two settings: `stdout.encoding`/`stderr.encoding` are the
+ * names JDK 19+ documents, `sun.*` the ones JDK 18 and earlier read. Both pairs
+ * are honoured on 21, and an unrecognised `-D` is just a system property nobody
+ * looks at, so setting all four is safe across every JDK a server might run on.
+ *
+ * Deliberately NOT `-Dfile.encoding=UTF-8`: that changes the *default charset*,
+ * so on JDK 17 it would also change how plugins read their own config files.
+ * Fixing the console must not quietly re-encode somebody's data.
+ *
+ * Prepended, so a user's own `-Dstdout.encoding=...` in extra flags still wins -
+ * the JVM takes the last definition on the command line.
+ */
+const CONSOLE_UTF8 = [
+  '-Dstdout.encoding=UTF-8',
+  '-Dstderr.encoding=UTF-8',
+  '-Dsun.stdout.encoding=UTF-8',
+  '-Dsun.stderr.encoding=UTF-8'
+]
+
 /** JVM flags only (memory + preset + extra) — no `-jar`, no program args. */
 export function buildJvmFlags(cfg: JavaArgsConfig, type: ServerType): string[] {
   const max = clampMem(cfg.maxMemoryMB)
-  const jvm: string[] = []
+  const jvm: string[] = [...CONSOLE_UTF8]
   switch (cfg.preset) {
     case 'aikars':
     case 'aikars-large': {
@@ -95,7 +123,11 @@ export function buildJvmFlags(cfg: JavaArgsConfig, type: ServerType): string[] {
  */
 export function buildLaunchArgs(cfg: JavaArgsConfig, type: ServerType): string[] {
   if (cfg.preset === 'custom') {
-    return [...tokenize(cfg.customArgs), ...tokenize(cfg.extraFlags)]
+    // Even here, where the user's string is the whole definition. These go in
+    // front of it, and the JVM takes the last definition of a property, so
+    // anything they write still wins — but a custom command line should not be
+    // the one place the console silently mangles Turkish.
+    return [...CONSOLE_UTF8, ...tokenize(cfg.customArgs), ...tokenize(cfg.extraFlags)]
   }
 
   const isProxy = PROXY_TYPES.includes(type)

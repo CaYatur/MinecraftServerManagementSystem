@@ -1,4 +1,5 @@
 import { spawn, execFile, type ChildProcess } from 'node:child_process'
+import { LineSplitter } from './lineSplitter'
 import { EventEmitter } from 'node:events'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
@@ -46,8 +47,13 @@ interface ManagedProcess {
   restartAfterStop: boolean
   restartOpts?: StopOptions
   history: LogLine[]
-  stdoutBuf: string
-  stderrBuf: string
+  /**
+   * One splitter per stream, never one shared: stdout and stderr are separate
+   * byte streams, and a shared decoder would splice one's half-finished
+   * character onto the other's next chunk and corrupt both.
+   */
+  stdoutLines: LineSplitter
+  stderrLines: LineSplitter
   exitCode: number | null
   exitResolvers: Array<() => void>
   players: { online: number; max: number; names: string[] }
@@ -177,21 +183,38 @@ export class ProcessManager extends EventEmitter {
   }
 
   private consumeStream(mp: ManagedProcess, chunk: Buffer, stream: 'stdout' | 'stderr'): void {
-    const key = stream === 'stdout' ? 'stdoutBuf' : 'stderrBuf'
-    mp[key] += chunk.toString('utf-8')
-    let idx: number
-    while ((idx = mp[key].indexOf('\n')) >= 0) {
-      const raw = mp[key].slice(0, idx).replace(/\r$/, '')
-      mp[key] = mp[key].slice(idx + 1)
-      // Bridge lines are protocol, not console output — never show them in the
-      // log, whether they parse or not (spam in the console is worse than one
-      // hidden bad line). A malformed one is still worth a warning.
-      if (hasBridgeMarker(raw)) {
-        this.handleBridgeLine(mp, raw)
-        continue
-      }
-      this.pushLog(mp, raw, stream)
-      this.inspectLine(mp, raw)
+    const splitter = stream === 'stdout' ? mp.stdoutLines : mp.stderrLines
+    for (const raw of splitter.push(chunk)) this.consumeLine(mp, raw, stream)
+  }
+
+  private consumeLine(mp: ManagedProcess, raw: string, stream: 'stdout' | 'stderr'): void {
+    // Bridge lines are protocol, not console output — never show them in the
+    // log, whether they parse or not (spam in the console is worse than one
+    // hidden bad line). A malformed one is still worth a warning.
+    if (hasBridgeMarker(raw)) {
+      this.handleBridgeLine(mp, raw)
+      return
+    }
+    this.pushLog(mp, raw, stream)
+    this.inspectLine(mp, raw)
+  }
+
+  /**
+   * Emit whatever each stream was still holding, without waiting for a newline
+   * that is never coming. A server that dies mid-line takes its last words —
+   * usually the reason it died — to the grave otherwise.
+   *
+   * Safe to call twice, which is why 'exit' and 'close' both do. Node only
+   * guarantees the stdio pipes are drained by 'close'; 'exit' just means the
+   * process is gone. Flushing on 'exit' puts the last line above the "stopped"
+   * notice where it reads correctly, and the 'close' pass catches anything that
+   * arrived in between — which today would be lost entirely, so half a line is
+   * strictly better than none.
+   */
+  private flushStreams(mp: ManagedProcess): void {
+    for (const stream of ['stdout', 'stderr'] as const) {
+      const rest = (stream === 'stdout' ? mp.stdoutLines : mp.stderrLines).flush()
+      if (rest) this.consumeLine(mp, rest, stream)
     }
   }
 
@@ -318,8 +341,8 @@ export class ProcessManager extends EventEmitter {
       stopRequested: false,
       restartAfterStop: false,
       history: this.procs.get(id)?.history ?? [],
-      stdoutBuf: '',
-      stderrBuf: '',
+      stdoutLines: new LineSplitter(),
+      stderrLines: new LineSplitter(),
       exitCode: null,
       exitResolvers: [],
       players: { online: 0, max: 0, names: [] },
@@ -355,6 +378,9 @@ export class ProcessManager extends EventEmitter {
     child.stdout?.on('data', (c: Buffer) => this.consumeStream(mp, c, 'stdout'))
     child.stderr?.on('data', (c: Buffer) => this.consumeStream(mp, c, 'stderr'))
 
+    // 'close' is the only point Node guarantees the pipes are drained.
+    child.on('close', () => this.flushStreams(mp))
+
     child.on('error', (err) => {
       this.systemLine(mp, `[MSMS] Process error: ${err.message}`)
       mp.status = 'crashed'
@@ -370,6 +396,9 @@ export class ProcessManager extends EventEmitter {
     })
 
     child.on('exit', (code, signal) => {
+      // Before anything else: a crash usually ends mid-line, and that last
+      // unterminated line is the one worth reading.
+      this.flushStreams(mp)
       mp.exitCode = code
       rcon.disconnect(id)
       // Persist the buckets still open, or a short run leaves no 1h row at all.
@@ -407,8 +436,8 @@ export class ProcessManager extends EventEmitter {
         stopRequested: false,
         restartAfterStop: false,
         history: [],
-        stdoutBuf: '',
-        stderrBuf: '',
+        stdoutLines: new LineSplitter(),
+        stderrLines: new LineSplitter(),
         exitCode: null,
         exitResolvers: [],
         players: { online: 0, max: 0, names: [] },
