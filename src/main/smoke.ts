@@ -66,6 +66,7 @@ import { getPanelHtml } from './web/panelHtml'
 import { getPublicSiteHtml } from './web/publicSiteHtml'
 import { CRATE_CSS } from '@shared/crateUi'
 import { openApiDocument } from '@shared/openapi'
+import { clampGrace, deliveryDecision } from '@shared/delivery'
 import { API_PREFIX } from '@shared/apiSurface'
 import { MODERATION_ACTIONS, WORLD_ACTIONS } from '@shared/ops'
 import { removeServer } from './core/serverRegistry'
@@ -3985,6 +3986,59 @@ export async function runWebSmoke(): Promise<void> {
       'WEB-SMOKE: store config admin OK (GET config, currency, crate upsert round-trip, delete; 403 for non-store)'
     )
 
+    // ---- a paid reward is never dropped (#106) ----
+    {
+      const pendUrl = '/api/servers/' + id + '/store/admin/pending'
+      const relUrl = '/api/servers/' + id + '/store/admin/deliver'
+      const item: Product = {
+        id: '',
+        type: 'item',
+        name: 'Delivery Probe',
+        description: '',
+        price: 1,
+        commands: ['give {player} minecraft:stone 1'],
+        rewards: []
+      } as Product
+      r = await post('/api/servers/' + id + '/store/admin/product', item, ot)
+      const probe = (await r.json()) as Product
+      const before = economy.pendingDeliveries(id).length
+      economy.setBalance(id, 'Steve', 50, { by: 'smoke', source: 'system', reason: 'probe' })
+      const bought = economy.purchase(id, 'Steve', probe.id)
+      if (!bought.ok) return fail('the delivery probe purchase failed: ' + JSON.stringify(bought))
+      // The fixture server is not running, so nothing can carry the command.
+      // The old code called runCommands anyway — it did nothing, and the entry
+      // had already been removed from the queue. The reward simply vanished.
+      await sleep(50)
+      const pend = economy.pendingDeliveries(id)
+      if (pend.length !== before + 1) {
+        return fail('a purchase with no running server left ' + (pend.length - before) + ' entries, expected 1')
+      }
+      const held = pend[0]
+      if (held.reason !== 'server-down') return fail('held for the wrong reason: ' + held.reason)
+      if (held.rewardName !== 'Delivery Probe') return fail('the held entry lost the reward name')
+
+      // Visible to an operator, scope-gated like the rest of the store.
+      r = await get(pendUrl, ft)
+      if (r.status !== 403) return fail('pending list without store scope expected 403, got ' + r.status)
+      r = await get(pendUrl, ot)
+      if (r.status !== 200) return fail('pending list expected 200, got ' + r.status)
+      const listed = (await r.json()) as { pending: { id: string; reason: string }[] }
+      if (!listed.pending.some((p) => p.id === held.id)) return fail('the held reward is not listed')
+
+      // Releasing while nothing can carry the command must fail AND keep it.
+      // The whole point of the rewrite: a failed hand-over never dequeues.
+      r = await post(relUrl, { queueId: held.id }, ot)
+      if (r.status !== 409) return fail('releasing with the server down expected 409, got ' + r.status)
+      if (!economy.pendingDeliveries(id).some((p) => p.id === held.id)) {
+        return fail('a failed release removed the reward anyway')
+      }
+      r = await post(relUrl, { queueId: 'no-such-entry' }, ot)
+      if (r.status !== 404) return fail('releasing an unknown entry expected 404, got ' + r.status)
+
+      await post('/api/servers/' + id + '/store/admin/delete', { productId: probe.id }, ot)
+      console.log('WEB-SMOKE: delivery queue OK (held with a reason, listed, and a failed release keeps it)')
+    }
+
     // ---- public site (SITE listener) + separation + traversal ----
     r = await sget('/api/public/site')
     if (r.status !== 200) return fail('site /api/public/site expected 200, got ' + r.status)
@@ -5421,6 +5475,95 @@ export async function runWebSmoke(): Promise<void> {
         if (snap == null) rmSync(af, { force: true })
         else writeFileSync(af, snap, 'utf-8')
       }
+    }
+
+    // ---- reward delivery safety (#106) ----
+    {
+      // The decision table, enumerated with the expected verdict written out
+      // here rather than computed from the same helper the route calls. Every
+      // row is a real situation, and the answer is either "deliver on evidence"
+      // or "keep it" — never "drop it".
+      const base = {
+        serverRunning: true,
+        canSend: true,
+        playerOnline: true,
+        bridgeInWorld: false,
+        onlineMode: true,
+        joinedAgoMs: undefined as number | undefined,
+        graceMs: 20_000,
+        holdWhenUnverified: true
+      }
+      const rows: [string, Partial<typeof base>, string][] = [
+        // Nothing can carry the command — the old code ran it anyway, into
+        // nowhere, having already dequeued the reward.
+        ['server stopped', { serverRunning: false }, 'hold:server-down'],
+        ['no rcon and no process', { canSend: false }, 'hold:server-down'],
+        ['player not connected', { playerOnline: false }, 'hold:player-offline'],
+        // Online mode: Mojang authenticated the session, so being connected is
+        // enough — but not in the first seconds after joining.
+        ['online mode, settled', {}, 'deliver'],
+        ['online mode, just joined', { joinedAgoMs: 500 }, 'wait'],
+        ['online mode, grace elapsed', { joinedAgoMs: 25_000 }, 'deliver'],
+        // Cracked: anyone can be connected as this name, and a login plugin is
+        // probably holding them where an item would be lost.
+        ['cracked, nothing else', { onlineMode: false }, 'hold:needs-approval'],
+        ['cracked, just joined', { onlineMode: false, joinedAgoMs: 500 }, 'hold:needs-approval'],
+        // ...unless the bridge can locate them in a world.
+        ['cracked but bridge sees them', { onlineMode: false, bridgeInWorld: true }, 'deliver'],
+        [
+          'cracked, bridge sees them, still in grace',
+          { onlineMode: false, bridgeInWorld: true, joinedAgoMs: 100 },
+          'wait'
+        ],
+        // ...or unless the operator turned the safety off.
+        ['cracked, holding disabled', { onlineMode: false, holdWhenUnverified: false }, 'deliver'],
+        [
+          'cracked, holding disabled, just joined',
+          { onlineMode: false, holdWhenUnverified: false, joinedAgoMs: 10 },
+          'wait'
+        ],
+        // Offline beats everything: there is nobody to give it to.
+        [
+          'offline outranks the bridge',
+          { playerOnline: false, bridgeInWorld: true, onlineMode: false },
+          'hold:player-offline'
+        ]
+      ]
+      for (const [label, patch, expected] of rows) {
+        const d = deliveryDecision({ ...base, ...patch })
+        const got = d.action === 'hold' ? 'hold:' + d.reason : d.action
+        if (got !== expected) {
+          return fail('delivery "' + label + '" gave ' + got + ', expected ' + expected)
+        }
+        if (d.action === 'wait' && !(d.ms > 0)) return fail('delivery "' + label + '" waits 0ms')
+      }
+      // No input combination may lose the reward.
+      for (const running of [true, false]) {
+        for (const online of [true, false]) {
+          for (const bridge of [true, false]) {
+            for (const mode of [true, false]) {
+              for (const hold of [true, false]) {
+                const d = deliveryDecision({
+                  ...base,
+                  serverRunning: running,
+                  canSend: running,
+                  playerOnline: online,
+                  bridgeInWorld: bridge,
+                  onlineMode: mode,
+                  holdWhenUnverified: hold
+                })
+                if (!['deliver', 'wait', 'hold'].includes(d.action)) {
+                  return fail('delivery produced an unknown action: ' + JSON.stringify(d))
+                }
+              }
+            }
+          }
+        }
+      }
+      if (clampGrace(0) < 1000) return fail('the grace clamp allows an instant delivery')
+      if (clampGrace('nonsense') !== 20_000) return fail('a junk grace did not fall back to the default')
+
+      console.log('WEB-SMOKE: delivery decision OK (13 rows, no combination drops a paid reward)')
     }
 
     // ---- the documented surface matches the router (#51) ----

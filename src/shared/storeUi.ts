@@ -66,7 +66,27 @@ export const STORE_CSS = `
 .sf-meta{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;font-size:12px;opacity:.75}
 .sf-meta span{padding:4px 9px;border-radius:999px;border:1px solid var(--line,var(--border,rgba(255,255,255,.14)))}
 .sf-actions{display:flex;align-items:center;gap:10px;margin-top:16px}
-@media(max-width:520px){.sf-grid{grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}}
+/* Purchase result, in the page (#106). It used to be a browser alert(): the one
+   part of the storefront that looked nothing like the storefront, could not
+   show the item, and on mobile is a system dialog over a page mid-scroll. */
+.sf-toasts{position:fixed;right:16px;bottom:16px;z-index:96;display:flex;flex-direction:column;gap:9px;
+  max-width:min(360px,92vw)}
+.sf-toast{display:flex;align-items:center;gap:11px;padding:11px 13px;border-radius:12px;cursor:pointer;
+  border:1px solid var(--line,var(--border,rgba(255,255,255,.14)));
+  background:var(--card,var(--panel,#16151b));box-shadow:0 18px 40px -18px #000;
+  animation:sfToastIn .18s ease}
+.sf-toast.err{border-color:#e0524a}
+.sf-toast.ok{border-color:color-mix(in srgb,var(--accent,#dc2727) 55%,transparent)}
+.sf-toast .ti{width:42px;height:42px;flex:none;display:grid;place-items:center;border-radius:9px;
+  background:rgba(0,0,0,.32);overflow:hidden;font-size:19px}
+/* Item size, and pixelated: a 16x16 Minecraft icon smoothed up to 42px is mush. */
+.sf-toast .ti img{width:32px;height:32px;object-fit:contain;image-rendering:pixelated}
+.sf-toast .tt{flex:1;min-width:0}
+.sf-toast .tt b{display:block;font-size:14px;letter-spacing:-.2px}
+.sf-toast .tt span{font-size:12.5px;opacity:.72;display:block;overflow-wrap:anywhere}
+@keyframes sfToastIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+@media(max-width:520px){.sf-grid{grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}
+  .sf-toasts{left:16px;right:16px;max-width:none}}
 `
 
 /**
@@ -182,6 +202,21 @@ function sfRender(){
     last character would throw focus away mid-edit. */
  var q=box.querySelector('.sf-search');
  if(q&&SF._typing){q.focus();var n=(SF.text||'').length;q.setSelectionRange(n,n)}}
+/* An in-page notice, replacing alert() on the purchase path (#106).
+   The icon argument is the item's own image when it has one, drawn at item
+   size. Click to dismiss; auto-dismissed after a while, because a purchase
+   result is news, not a state the page should keep.
+   (No backticks in here - this whole block is a template literal.) */
+function sfNotice(kind,title,text,icon){
+ var box=document.getElementById('sfToasts');if(!box)return;
+ var el=document.createElement('div');
+ el.className='sf-toast '+(kind==='err'?'err':'ok');
+ el.innerHTML='<div class="ti">'+(icon?'<img src="'+sAttr(sfImg(icon))+'" alt=""/>':(kind==='err'?'&#9888;':'&#10003;'))+'</div>'+
+  '<div class="tt"><b>'+sEsc(title)+'</b>'+(text?'<span>'+sEsc(text)+'</span>':'')+'</div>';
+ var kill=function(){if(el.parentNode)el.parentNode.removeChild(el)};
+ el.onclick=kill;
+ box.appendChild(el);
+ setTimeout(kill,kind==='err'?9000:6500)}
 function sfFind(id){var l=SF.products||[];for(var i=0;i<l.length;i++){if(l[i].id===id)return l[i]}return null}
 /* Replace the catalogue.
    Both pages used to assign SF.products and call sfRender, which leaves an open
@@ -232,8 +267,9 @@ function sfRenderDetail(){
  m.classList.remove('hidden')}
 `
 
-/** The detail modal both pages need in their markup. */
+/** The detail modal and the notice area both pages need in their markup. */
 export const STORE_MODAL_HTML = `
 <div id="sfModal" class="sf-modal hidden" onclick="sfCloseDetail(event)">
   <div class="sf-detail" id="sfDetail" onclick="event.stopPropagation()"></div>
-</div>`
+</div>
+<div id="sfToasts" class="sf-toasts"></div>`
