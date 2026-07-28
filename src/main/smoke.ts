@@ -57,6 +57,7 @@ import {
 import { runInNewContext } from 'node:vm'
 import { getPanelHtml } from './web/panelHtml'
 import { getPublicSiteHtml } from './web/publicSiteHtml'
+import { CRATE_CSS } from '@shared/crateUi'
 import { removeServer } from './core/serverRegistry'
 import * as sf from './core/serverFiles'
 import * as files from './core/serverFiles'
@@ -4853,7 +4854,14 @@ export async function runWebSmoke(): Promise<void> {
       const GIFT_EMOJI = String.fromCodePoint(0x1f381)
       for (const page of [panel, site]) {
         const ctx = page.ctx as Record<string, (...a: unknown[]) => unknown> & {
-          SF: { products: unknown[]; layout: string; text: string; type: string; sort: string }
+          SF: {
+            products: unknown[]
+            layout: string
+            text: string
+            type: string
+            sort: string
+            detail: unknown
+          }
         }
         ctx.SF.products = [
           {
@@ -4886,6 +4894,24 @@ export async function runWebSmoke(): Promise<void> {
         }
         if (box.includes('onerror="alert(1)"')) return fail('a product icon escaped its attribute')
 
+        // Every inline SVG carries its own width and height. One with only a
+        // viewBox has no intrinsic size, so a host that does not happen to
+        // style it renders the replaced-element default — 300x150px — and the
+        // glyph swallows the page. That shipped: the icon was sized in
+        // .sf-badge and nowhere else.
+        for (const tag of box.match(/<svg[^>]*>/g) ?? []) {
+          if (!/\bwidth=/.test(tag) || !/\bheight=/.test(tag)) {
+            return fail('an inline svg has no intrinsic size: ' + tag.slice(0, 60))
+          }
+        }
+        // ...and the section heading does not repeat the glyph next to its own
+        // label.
+        const head = /<div class="sf-sec-head">([\s\S]*?)<\/div>/.exec(box)?.[1] ?? ''
+        if (head.includes('<svg')) return fail('the section heading still carries a crate glyph')
+
+        // Set here so the detail assertions below can check it is NOT shown.
+        ;(ctx.SF.products[0] as { crateAnimation?: string }).crateAnimation = 'spin'
+
         // Search reaches into a crate's contents, which is how people look for one.
         ctx.SF.text = 'netherite'
         ctx['sfRender']()
@@ -4906,6 +4932,67 @@ export async function runWebSmoke(): Promise<void> {
         if (!detail.includes('Mythic Crate')) return fail('the detail view did not open the product')
         if (!detail.includes('5%')) return fail('the detail view did not list the crate odds')
         if (detail.includes('onerror="alert(1)"')) return fail('the detail view escaped nothing')
+        // ...and does not name the animation. "Opens with: spin" told a buyer
+        // the internal id of a transition they are about to watch anyway.
+        if (/\bspin\b/.test(detail)) return fail('the detail view leaks the crate animation id')
+
+        // Reloading the catalogue with the detail open refreshes it. Assigning
+        // SF.products left the open detail pointing at the previous load's
+        // object, so a refused purchase re-rendered the grid with the new stock
+        // while the detail kept showing the old — Buy still enabled, next click
+        // failing the same way.
+        ctx['sfSetProducts']([
+          { id: 'p1', type: 'crate', name: 'Mythic Crate', price: 100, stock: 0, rewards: [] },
+          { id: 'p2', type: 'item', name: 'VIP Rank', price: 50 }
+        ])
+        const reopened = page.byId('sfDetail').innerHTML
+        if (!reopened.includes('Mythic Crate')) return fail('a catalogue reload dropped the open detail')
+        if (!/sf-actions[\s\S]*disabled/.test(reopened)) {
+          return fail('the reopened detail still offers a product that just sold out')
+        }
+        // ...and a product that is gone entirely closes rather than lingering.
+        ctx['sfSetProducts']([{ id: 'p2', type: 'item', name: 'VIP Rank', price: 50 }])
+        if (ctx.SF.detail) return fail('the detail stayed open for a product that no longer exists')
+      }
+
+      // Buying while signed out closes the product first. Both overlays are
+      // fixed, so without this the login form opened underneath the detail the
+      // visitor had just clicked Buy in.
+      {
+        const ctx = site.ctx as Record<string, (...a: unknown[]) => unknown> & {
+          SF: { detail: unknown }
+          ptoken: string
+        }
+        // Seeded here rather than inherited: the block above deliberately ends
+        // with p1 removed from the catalogue.
+        ctx['sfSetProducts']([{ id: 'p1', type: 'item', name: 'VIP Rank', price: 50 }])
+        // The page starts with no stored token, so this is the signed-out path.
+        site.byId('authModal').classList.add('hidden')
+        ctx['sfOpen']('p1')
+        if (!ctx.SF.detail) return fail('the site detail did not open')
+        ctx['buy']('p1')
+        if (ctx.SF.detail) return fail('buying while signed out left the product detail open')
+        if (site.byId('authModal').classList.contains('hidden')) {
+          return fail('buying while signed out did not open the login')
+        }
+      }
+
+      // The crate overlay has to outrank the desktop app's own modal layer
+      // (.modal-backdrop, z-index 90) — the crate editor launches the preview,
+      // so at 80 the animation played behind the dialog that asked for it — and
+      // stay under the toast layer (100), so an error about a purchase is
+      // readable over the animation announcing it.
+      {
+        const z = Number(/\.crate-modal\{[^}]*z-index:(\d+)/.exec(CRATE_CSS)?.[1] ?? 0)
+        if (!(z > 90 && z < 100)) return fail('the crate overlay z-index is ' + z + ', expected 91-99')
+      }
+
+      // The public page has exactly one crate modal. It had two of its buttons:
+      // the shared modal was pasted in beside the leftovers of the hand-written
+      // one it replaced, so a bare OK button sat at the bottom of the site.
+      for (const dupe of ['id="crateOk"', 'id="crateResult"', 'class="crate-modal', 'id="sfModal"']) {
+        const n = siteHtml.split(dupe).length - 1
+        if (n !== 1) return fail('the public page has ' + n + ' of ' + dupe + ', expected 1')
       }
       // #26: the map tab draws from a feed, on a canvas the stub cannot paint —
       // so this asserts the wiring and the empty-state copy, which is what a

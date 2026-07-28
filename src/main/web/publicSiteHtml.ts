@@ -161,7 +161,11 @@ html.anim .reveal.shown{opacity:1!important;transform:none!important;transition:
 .lb{position:fixed;inset:0;background:rgba(0,0,0,.9);display:grid;place-items:center;z-index:80;padding:24px;cursor:zoom-out}
 .lb img{max-width:94vw;max-height:90vh;border-radius:12px;object-fit:contain}
 /* modal */
-.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.74);display:grid;place-items:center;z-index:70;padding:18px}
+/* Above the product detail (.sf-modal, 75) and the lightbox (80): signing in is
+   a blocking step, so whatever opened it must not sit on top of it. buy() also
+   closes the detail; this is the rule that holds if a later path forgets to.
+   No backticks in here - the whole stylesheet is a template literal. */
+.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.74);display:grid;place-items:center;z-index:88;padding:18px}
 .modal{background:linear-gradient(165deg,var(--card),color-mix(in srgb,var(--bg) 55%,var(--card)));
   border:1px solid var(--line);border-radius:var(--radius);padding:28px;width:min(430px,95vw);
   box-shadow:0 40px 90px -40px #000,0 0 0 1px color-mix(in srgb,var(--accent) 18%,transparent)}
@@ -236,9 +240,6 @@ body.classic .hero h1{letter-spacing:-1.2px}
 
 ${CRATE_MODAL_HTML}
 ${STORE_MODAL_HTML}
-  <div id="crateResult" class="crate-result"></div>
-  <button class="btn primary" onclick="closeCrate()" style="margin-top:16px" id="crateOk"></button>
-</div></div>
 
 <div id="lightbox" class="lb hidden" onclick="this.classList.add('hidden')"><img id="lbImg" alt=""/></div>
 
@@ -395,8 +396,12 @@ function pageStore(){
  setTimeout(loadStore,0);return h}
 function loadStore(){
  api('/api/public/store').then(function(r){STORE=r.j;
-  SF.products=STORE.products||[];SF.layout=STORE.layout||'crates-first';
-  sfRender();revealAll();refreshBalance()})}
+  SF.layout=STORE.layout||'crates-first';
+  /* sfSetProducts, not an assignment: it also refreshes an open detail, which
+     is where the stock and per-player numbers a failed purchase just changed
+     are actually read. */
+  sfSetProducts(STORE.products);
+  revealAll();refreshBalance()})}
 /* The hooks the shared storefront calls back into. */
 function sfCurrency(){return (STORE&&STORE.currency)||''}
 function sfImg(src){return src}
@@ -406,7 +411,11 @@ function refreshBalance(){var el=document.getElementById('balBox');if(!el)return
  if(!ptoken){el.innerHTML='<button class="btn sm primary" onclick="openAuth()">'+esc(T('store.loginToBuy'))+'</button>';return}
  api('/api/public/store/balance',null,ptoken).then(function(b){if(!b.ok)return;
   el.innerHTML='<span class="pill">'+esc(T('store.balance'))+': <b style="color:var(--accent)">'+b.j.balance+' '+esc(b.j.currency||'')+'</b></span>'})}
-function buy(pid){if(!ptoken){openAuth();return}
+function buy(pid){if(!ptoken){
+ /* Close the product first. Both overlays are position:fixed, and the detail
+    sits above the auth modal, so opening the login without this dimmed the
+    screen and put the form behind the thing the visitor just clicked in. */
+ sfCloseDetail();openAuth();return}
  api('/api/public/store/buy',{productId:pid},ptoken).then(function(r){
   if(!r.ok){alert(r.j.error==='insufficient'?T('store.insufficient')
    :r.j.error==='out-of-stock'?T('store.outOfStock')
