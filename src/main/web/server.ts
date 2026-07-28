@@ -436,10 +436,31 @@ async function handlePublic(
   if (sub === 'status' && method === 'GET')
     return sendJson(res, 200, { servers: site.publicSite().servers })
 
-  if (sub === 'register/start' && method === 'POST') {
+  // Registration and reset are the same claim ("I own this name") and share one
+  // decision (#105). Registration could already overwrite an existing account's
+  // password, so it WAS a reset — hardening reset while leaving that open would
+  // secure the harder door and leave the easier one ajar.
+  if ((sub === 'register/start' || sub === 'reset/start') && method === 'POST') {
     const b = (await readBody(req).catch(() => ({}))) as { mcName?: string }
-    const r = await playerAuth.registerStart(site.siteServerId(), (b.mcName ?? '').trim(), ip)
-    return sendJson(res, r.ok ? 200 : r.error === 'rate-limited' ? 429 : 400, r)
+    const r = await playerAuth.verifyStart(
+      site.siteServerId(),
+      (b.mcName ?? '').trim(),
+      ip,
+      sub === 'reset/start' ? 'reset' : 'register'
+    )
+    return sendJson(res, r.status, r.body)
+  }
+  // Reset's second step IS `verify`: it consumes the same single-use code and
+  // sets the password. A separate route would be a second way into the same
+  // state, and two places to get the attempt counting right.
+  if (sub === 'reset/verify' && method === 'POST') {
+    const b = (await readBody(req).catch(() => ({}))) as {
+      mcName?: string
+      code?: string
+      password?: string
+    }
+    const r = playerAuth.verify((b.mcName ?? '').trim(), b.code ?? '', b.password ?? '')
+    return sendJson(res, r.ok ? 200 : 400, r.ok ? { token: r.token, mcName: r.mcName } : r)
   }
   if (sub === 'register/verify' && method === 'POST') {
     const b = (await readBody(req).catch(() => ({}))) as {
@@ -1189,6 +1210,33 @@ async function handlePanel(req: IncomingMessage, res: ServerResponse): Promise<v
       }
     }
 
+    return sendJson(res, 404, { error: 'not-found' })
+  }
+
+  // ---- account claims waiting for a human (#105) ----
+  //
+  // `settings`, not `players`. Approving is granting somebody the credentials to
+  // a website account with a balance and a purchase history; the scope that
+  // already means "change how this server is secured" is the honest home for it.
+  // `players` means kick/ban/gamemode, which is authority over a session, not
+  // over an identity.
+  const am = path.match(/^\/api\/servers\/([^/]+)\/player-requests(?:\/(approve|deny))?$/)
+  if (am) {
+    const id = decodeURIComponent(am[1])
+    if (!getServer(id)) return sendJson(res, 404, { error: 'server-not-found' })
+    if (!can(user, id, 'settings')) return sendJson(res, 403, { error: 'forbidden', need: 'settings' })
+    if (!am[2] && method === 'GET') {
+      return sendJson(res, 200, { requests: playerAuth.pendingApprovals(id) })
+    }
+    const b2 = (await readBody(req).catch(() => ({}))) as { id?: string }
+    if (am[2] === 'approve' && method === 'POST') {
+      const out = await playerAuth.approveRequest(b2.id ?? '', user.username)
+      return sendJson(res, out.ok ? 200 : 409, out)
+    }
+    if (am[2] === 'deny' && method === 'POST') {
+      const ok = playerAuth.denyRequest(b2.id ?? '', user.username)
+      return sendJson(res, ok ? 200 : 404, { ok })
+    }
     return sendJson(res, 404, { error: 'not-found' })
   }
 

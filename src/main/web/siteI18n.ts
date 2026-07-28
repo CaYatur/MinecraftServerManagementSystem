@@ -48,6 +48,12 @@ export const SITE_STRINGS_EN: Record<string, string> = {
   'auth.codeHint': 'Check your in-game chat, enter the code and choose a password.',
   'auth.backToLogin': 'Back to log in',
   'auth.noAccount': 'No account?',
+  'auth.forgot': 'Forgot your password?',
+  'auth.resetTitle': 'Reset password',
+  'auth.resetHint':
+    'Enter your Minecraft username. You must be online on the server — we send a code to your in-game chat.',
+  'auth.needsApproval':
+    'This server runs in offline mode, so anyone can join under any name. A staff member has to approve your request before a code is sent. Ask in Discord if it takes a while.',
   'auth.invalid': 'Invalid username or password',
   'auth.notOnline': 'You must be online on the server first',
   'auth.serverOffline': 'Server is offline — join once it is online',
@@ -134,6 +140,12 @@ export const SITE_STRINGS_TR: Record<string, string> = {
   'auth.codeHint': 'Oyun içi sohbetinizi kontrol edin, kodu girin ve bir parola belirleyin.',
   'auth.backToLogin': 'Girişe dön',
   'auth.noAccount': 'Hesabınız yok mu?',
+  'auth.forgot': 'Parolanızı mı unuttunuz?',
+  'auth.resetTitle': 'Parola sıfırlama',
+  'auth.resetHint':
+    'Minecraft kullanıcı adınızı girin. Sunucuda çevrimiçi olmalısınız — kodu oyun içi sohbetinize göndeririz.',
+  'auth.needsApproval':
+    'Bu sunucu offline modda çalışıyor, yani herkes herhangi bir adla girebilir. Kod gönderilmeden önce bir yetkilinin isteğinizi onaylaması gerekiyor. Uzun sürerse Discord’dan sorun.',
   'auth.invalid': 'Geçersiz kullanıcı adı veya parola',
   'auth.notOnline': 'Önce sunucuda çevrimiçi olmalısınız',
   'auth.serverOffline': 'Sunucu çevrimdışı — çevrimiçi olunca katılın',
