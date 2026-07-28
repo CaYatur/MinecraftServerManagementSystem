@@ -4147,6 +4147,33 @@ export async function runWebSmoke(): Promise<void> {
         return fail('an all-zero weight pool produced ' + String(inheritPub?.rewards?.[0]?.chancePct))
       }
 
+      // ...and the roll has to honour what was published. An all-zero pool used
+      // to land on the last reward every single time while the storefront
+      // advertised an even split. Publishing odds the roll ignores is worse
+      // than publishing none.
+      {
+        const flat = economy.upsertProduct(cs, {
+          id: '',
+          type: 'crate',
+          name: 'Unweighted',
+          description: '',
+          price: 0,
+          commands: [],
+          rewards: ['A', 'B', 'C', 'D'].map((n) => ({ name: n, weight: 0, commands: [] }))
+        } as Product)
+        const seen = new Set<string>()
+        for (let i = 0; i < 400; i++) {
+          const r = economy.purchase(cs, 'Steve', flat.id)
+          if (!r.ok) return fail('free crate purchase failed: ' + String(r.error))
+          seen.add(r.reward?.name ?? '')
+        }
+        // 400 draws from 4 outcomes missing one is ~1 in 10^49; a fixed pick
+        // shows up as a single name, which is what this is here to catch.
+        if (seen.size !== 4) {
+          return fail('an unweighted pool only ever rolled: ' + [...seen].join(','))
+        }
+      }
+
       // The invariant that matters: a reward's commands are console commands,
       // and telling every visitor what they are is telling them exactly what to
       // get a compromised account to run.

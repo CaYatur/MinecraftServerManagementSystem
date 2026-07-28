@@ -412,6 +412,9 @@ function buy(pid){if(!ptoken){openAuth();return}
   /* The animation rides on the reward: the server resolved it for this crate,
      and the buyer never has the product it came from (#75). */
   if(r.j.reward&&r.j.reward.crate){document.getElementById('crateTitle').textContent=T('crate.opening');
+   /* Localised here, not only in fillAuthTexts: a visitor with a stored token
+      never opens the auth modal, and would meet an English crate. */
+   document.getElementById('crateOk').textContent=T('crate.ok');
    openCrate(r.j.reward,{prefix:T('crate.congrats')+': '})}
   else alert(T('crate.congrats')+': '+(r.j.reward?r.j.reward.name:''))})}
 function zoom(src){document.getElementById('lbImg').src=src;document.getElementById('lightbox').classList.remove('hidden')}

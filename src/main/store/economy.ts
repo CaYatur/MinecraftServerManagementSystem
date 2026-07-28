@@ -132,7 +132,13 @@ async function deliverQueued(serverId: string, mcName: string): Promise<void> {
 }
 
 function rollCrate(rewards: CrateReward[]): CrateReward {
-  const total = rewards.reduce((s, r) => s + Math.max(0, r.weight), 0) || 1
+  const total = rewards.reduce((s, r) => s + Math.max(0, r.weight), 0)
+  // An all-zero pool used to fall through the loop every time and land on the
+  // last reward - 10000 out of 10000 rolls - while `publicRewards` published it
+  // as an even split. Publishing odds the roll does not honour is worse than
+  // publishing none, so the degenerate case is now an even split for real. It
+  // is also what an operator who has not filled the weights in yet expects.
+  if (total <= 0) return rewards[Math.floor(Math.random() * rewards.length)]
   let roll = Math.random() * total
   for (const r of rewards) {
     roll -= Math.max(0, r.weight)

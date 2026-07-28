@@ -616,14 +616,13 @@ function loadEvents(){
     '<span>'+esc(evText(e))+'</span><span class="when">'+new Date(e.ts).toLocaleString()+'</span></div>'}).join('')})}
 
 /* ---- store ---- */
-var dstore={};
-function loadStore(){api('/api/servers/'+current.id+'/store').then(function(r){if(!r.ok)return;dstore=r.body||{};api('/api/servers/'+current.id+'/store/balance').then(function(b){var bal=b.ok?b.body:{balance:0,mcName:null};document.getElementById('dBal').textContent=(bal.mcName?bal.mcName+': ':'')+(bal.balance||0)+' '+(r.body.currency||'');renderProducts(r.body)})})}
+function loadStore(){api('/api/servers/'+current.id+'/store').then(function(r){if(!r.ok)return;api('/api/servers/'+current.id+'/store/balance').then(function(b){var bal=b.ok?b.body:{balance:0,mcName:null};document.getElementById('dBal').textContent=(bal.mcName?bal.mcName+': ':'')+(bal.balance||0)+' '+(r.body.currency||'');renderProducts(r.body)})})}
 function renderProducts(store){var el=document.getElementById('dProducts');if(!store.products.length){el.innerHTML='<div class="dim">No products yet.</div>';return}el.innerHTML=store.products.map(function(p){return '<div class="pcard">'+(p.icon?'<img src="'+escAttr(p.icon)+'"/>':'')+'<div class="pname">'+esc(p.name)+(p.type==='crate'?' 🎁':'')+'</div><div class="pdesc">'+esc(p.description||'')+'</div>'+
  /* A crate is the one product you cannot judge by its description, so its
     contents and odds go on the card itself (#79). */
  (p.type==='crate'?crateContentsHtml(p.rewards,5):'')+
  '<div class="row"><span class="price">'+p.price+' '+esc(store.currency)+'</span><div class="spacer"></div><button class="btn primary sm" onclick="buy(\\''+p.id+'\\')">Buy</button></div></div>'}).join('')}
-function buy(pid){api('/api/servers/'+current.id+'/store/buy',{method:'POST',body:JSON.stringify({productId:pid})}).then(function(r){if(!r.ok){alert(r.body.error==='insufficient'?'Not enough balance':r.body.error==='no-mc-linked'?'No Minecraft name linked to your account':('Error: '+r.body.error));return}loadStore();if(r.body.reward&&r.body.reward.crate){openCrate(r.body.reward)}else{alert('You received: '+(r.body.reward?r.body.reward.name:''))}})}
+function buy(pid){api('/api/servers/'+current.id+'/store/buy',{method:'POST',body:JSON.stringify({productId:pid})}).then(function(r){if(!r.ok){alert(r.body.error==='insufficient'?'Not enough balance':r.body.error==='no-mc-linked'?'No Minecraft name linked to your account':('Error: '+r.body.error));return}loadStore();if(r.body.reward&&r.body.reward.crate){openCrate(r.body.reward,{prefix:'🎉 '})}else{alert('You received: '+(r.body.reward?r.body.reward.name:''))}})}
 ${CRATE_JS}
 
 /* ---- store admin: configuration (store scope) ---- */
