@@ -129,6 +129,7 @@ import * as alertsMod from './core/alerts'
 import * as worldsMod from './core/worlds'
 import * as areasMod from '@shared/chunkAreas'
 import * as areasMod2 from './core/chunkAreas'
+import * as tilesMod from './core/worldTiles'
 import * as tex from '@shared/textures'
 import { MAP_CSS, MAP_HTML } from '@shared/mapUi'
 import * as pngMod from './core/png'
@@ -2238,6 +2239,64 @@ export async function runWorldsSmoke(): Promise<void> {
     rmSync(evilZip, { force: true })
     rmSync(emptyZip, { force: true })
     console.log('WORLDS-SMOKE: import refuses zip-slip and worldless archives, cleans up after itself')
+
+    // --- 12a. a region parse must not freeze the process (#151) -------------
+    {
+      // A real region file: 1024 slots, each a deflated NBT compound. The
+      // chunks carry no sections, so `tileFromChunk` yields nothing — but the
+      // expensive half, decompress plus NBT parse, runs exactly as it does on a
+      // real world, which is what the timing here is about.
+      const chunkNbt = nbt.writeUncompressed({
+        type: 'compound',
+        name: '',
+        value: {
+          DataVersion: { type: 'int', value: 3953 },
+          // Padding, so one chunk is a realistic size rather than 30 bytes.
+          Heightmaps: { type: 'longArray', value: Array.from({ length: 256 }, () => [0, 1]) }
+        }
+      } as never)
+      const body = deflateSync(chunkNbt)
+      const sectors = Math.ceil((body.length + 5) / 4096)
+      const slots = 1024
+      const region = Buffer.alloc(8192 + slots * sectors * 4096)
+      for (let i = 0; i < slots; i++) {
+        const sector = 2 + i * sectors
+        region[i * 4] = (sector >> 16) & 255
+        region[i * 4 + 1] = (sector >> 8) & 255
+        region[i * 4 + 2] = sector & 255
+        region[i * 4 + 3] = sectors
+        const off = sector * 4096
+        region.writeUInt32BE(body.length + 1, off)
+        region[off + 4] = 2 // zlib
+        body.copy(region, off + 5)
+      }
+      // The world folder the server actually points at. By this point the
+      // worlds tests have renamed and deleted several, so "world" is a guess —
+      // and a guess that misses makes this measure nothing at all.
+      const level =
+        /^level-name=(.+)$/m.exec(readFileSync(join(root, 'server.properties'), 'utf-8'))?.[1]?.trim() ||
+        'world'
+      const rdir = join(root, level, 'region')
+      mkdirSync(rdir, { recursive: true })
+      writeFileSync(join(rdir, 'r.0.0.mca'), region)
+      // The resolved-directory cache was filled before this file existed.
+      tilesMod._resetWorldTiles()
+
+      // The queue's path parses in slices. What matters is not that it is
+      // faster — it is the same work — but that no single uninterrupted block
+      // is long enough to be felt: this thread answers every IPC call, so a
+      // 180 ms block is 180 ms of frozen interface while the map loads.
+      tilesMod.clearTileCache(SID)
+      const t0 = Date.now()
+      await tilesMod.chunkTileSliced(SID, 'overworld', 0, 0)
+      const total = Date.now() - t0
+      const slice = tilesMod.lastParseSliceMs()
+      if (slice <= 0) return fail('the sliced parse never ran; the fixture was not read')
+      if (slice > 60) return fail('a parse slice blocked for ' + slice + ' ms; the interface will stutter')
+      console.log(
+        'WORLDS-SMOKE: region parsed in ' + total + ' ms, longest uninterrupted slice ' + slice + ' ms'
+      )
+    }
 
     // --- 12b. item textures from the client jar (#127) ----------------------
     {
