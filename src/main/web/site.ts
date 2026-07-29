@@ -325,9 +325,6 @@ export function publicSite(): PublicSite {
     mapHeads: s.map.enabled && s.map.heads,
     mapWorld: s.map.enabled && s.map.world,
     mapStructures: s.map.enabled && s.map.structures,
-    // A pinned map is worth showing with nobody online — that is the point of
-    // pinning it — so the nav link cannot be gated on there being players.
-    mapPinned: s.map.enabled && !!s.map.fixedDim,
     mapLoadAhead: s.map.enabled && s.map.loadAhead,
     // A profile needs a server to read a roster from. Without one the page
     // would render a name and a head and nothing else.

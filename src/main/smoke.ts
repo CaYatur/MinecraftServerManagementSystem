@@ -4976,6 +4976,17 @@ export async function runWebSmoke(): Promise<void> {
             return fail('a pinned feed offered a switcher: ' + JSON.stringify(feed.dimensions))
           }
 
+          // A custom world keeps its case: the name becomes a folder name, and
+          // lower-casing it finds `myworld/region` for a folder called
+          // `MyWorld` — which works on Windows and does not on Linux.
+          if (normalizeDimension('MyWorld') !== 'MyWorld') {
+            return fail('a custom world name was case-folded: ' + normalizeDimension('MyWorld'))
+          }
+          // ...while the three real dimensions still canonicalise.
+          if (normalizeDimension('THE_END') !== 'end') return fail('THE_END did not canonicalise')
+          if (normalizeDimension('minecraft:the_nether') !== 'nether') return fail('the nether id did not canonicalise')
+          if (normalizeDimension('') !== 'overworld') return fail('an empty dimension is not the overworld')
+
           // Unpinned, it follows the query again.
           siteMod.setSiteConfig({ map: { ...before, enabled: true, serverId: id, fixedDim: '' } })
           const pr3 = await sget('/api/public/map?dim=nether')
