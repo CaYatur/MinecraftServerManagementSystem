@@ -133,6 +133,7 @@ export const IPC = {
 
   bridgeStatus: 'bridge:status',
   bridgeInstall: 'bridge:install',
+  mapTiles: 'map:tiles',
 
   javaList: 'java:list',
   javaResolve: 'java:resolve',
@@ -334,6 +335,18 @@ export interface MsmsApi {
    * bridge" means, so a caller can never point the download somewhere else.
    */
   installBridge(id: string): Promise<BridgeInstallResult>
+
+  /**
+   * Rendered surface colours for the chunks a viewport covers (#119).
+   *
+   * The same queue and parse budget the web surfaces use, so the desktop map is
+   * the same map rather than a third one.
+   */
+  mapTiles(
+    id: string,
+    dim: string,
+    chunks: { cx: number; cz: number }[]
+  ): Promise<{ tiles: Record<string, { c: number[]; h: number[] }>; pending: number }>
 
   listJava(refresh?: boolean): Promise<JavaInstall[]>
   /** The Java that will actually launch, given a per-server override ('' = auto). */

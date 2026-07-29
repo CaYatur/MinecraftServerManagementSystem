@@ -302,6 +302,78 @@ export function peekChunkTile(
   return hit.tiles.get(chunkSlot(localChunk(chunkX), localChunk(chunkZ))) ?? null
 }
 
+/**
+ * Serve what is parsed, queue what is not.
+ *
+ * Lives here rather than in the web server so the desktop app and the two web
+ * surfaces share one queue and one parse budget — three callers each with their
+ * own would be three times the work and three different maps, which is the
+ * complaint this consolidates.
+ */
+const queue: { serverId: string; dim: string; cx: number; cz: number }[] = []
+let working = false
+
+export function requestTiles(
+  serverId: string,
+  dim: string,
+  want: { cx: number; cz: number }[]
+): { tiles: Record<string, { c: number[]; h: number[] }>; pending: number } {
+  const tiles: Record<string, { c: number[]; h: number[] }> = {}
+  const missing: { cx: number; cz: number }[] = []
+  for (const w of want) {
+    const t = peekChunkTile(serverId, dim, w.cx, w.cz)
+    if (t === undefined) missing.push(w)
+    else if (t) tiles[w.cx + ',' + w.cz] = { c: t.colour, h: t.height }
+  }
+  for (const m of missing) {
+    if (queue.length > 4096) break
+    if (!queue.some((q) => q.serverId === serverId && q.dim === dim && q.cx === m.cx && q.cz === m.cz)) {
+      queue.push({ serverId, dim, ...m })
+    }
+  }
+  if (missing.length && !working) void drain()
+  return { tiles, pending: missing.length }
+}
+
+async function drain(): Promise<void> {
+  working = true
+  try {
+    while (queue.length) {
+      // Yielding between chunks is not enough on its own: the first chunk of an
+      // unseen region parses the whole file. Wait for the parse budget.
+      if (!parseBudgetReady()) {
+        await new Promise((r) => setTimeout(r, 60))
+        continue
+      }
+      const job = queue.shift()
+      if (!job) break
+      try {
+        chunkTile(job.serverId, job.dim, job.cx, job.cz)
+      } catch {
+        /* one bad region must not stop the queue */
+      }
+      await new Promise((r) => setImmediate(r))
+    }
+  } finally {
+    working = false
+  }
+}
+
+/** `cx,cz;cx,cz…`, capped so one call cannot ask for a whole world. */
+export const MAX_TILES_PER_REQUEST = 64
+
+export function parseWantedTiles(raw: string | null | undefined): { cx: number; cz: number }[] {
+  const out: { cx: number; cz: number }[] = []
+  for (const pair of (raw ?? '').split(';')) {
+    const [a, b] = pair.split(',')
+    const cx = Number(a)
+    const cz = Number(b)
+    if (Number.isSafeInteger(cx) && Number.isSafeInteger(cz)) out.push({ cx, cz })
+    if (out.length >= MAX_TILES_PER_REQUEST) break
+  }
+  return out
+}
+
 /** One chunk's tile, parsing the region if needed. Never call from a request. */
 export function chunkTile(
   serverId: string,

@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Map as MapIcon, Flame } from 'lucide-react'
-import { heatmap, mapBounds } from '@shared/livemap'
-import type { LivePlayer } from '@shared/livemap'
+import { fitView, heatmap, mapBounds, panBy, screenToWorld, worldToScreen, zoomAt } from '@shared/livemap'
+import type { LivePlayer, MapView, Viewport } from '@shared/livemap'
+import { avatarUrl } from '@shared/profile'
 import type { BridgeStatus } from '@shared/bridgeRelease'
 import { BridgeNotice } from './BridgeNotice'
 
@@ -21,6 +22,59 @@ import { BridgeNotice } from './BridgeNotice'
  */
 
 const CELL_CHOICES = [16, 32, 64, 128]
+
+/**
+ * A chunk tile baked into a 16x16 offscreen canvas, shaded by the step to the
+ * column north of it. Baking once per chunk rather than per frame is the
+ * difference between a map that pans and one that stutters.
+ */
+function bakeTile(t: { c: number[]; h: number[] }): HTMLCanvasElement {
+  const cv = document.createElement('canvas')
+  cv.width = 16
+  cv.height = 16
+  const g = cv.getContext('2d') as CanvasRenderingContext2D
+  const img = g.createImageData(16, 16)
+  for (let i = 0; i < 256; i++) {
+    const c = t.c[i]
+    const o = i * 4
+    if (c < 0) {
+      img.data[o + 3] = 0
+      continue
+    }
+    const north = i >= 16 ? t.h[i - 16] : t.h[i]
+    const f = t.h[i] > north ? 1.12 : t.h[i] < north ? 0.86 : 1
+    img.data[o] = Math.max(0, Math.min(255, Math.round(((c >> 16) & 255) * f)))
+    img.data[o + 1] = Math.max(0, Math.min(255, Math.round(((c >> 8) & 255) * f)))
+    img.data[o + 2] = Math.max(0, Math.min(255, Math.round((c & 255) * f)))
+    img.data[o + 3] = 255
+  }
+  g.putImageData(img, 0, 0)
+  return cv
+}
+
+/**
+ * A player's head, cached. `false` means the fetch failed and the caller falls
+ * back to a dot — an avatar service is a third party and an offline LAN server
+ * is a normal place to run this.
+ */
+function headFor(
+  name: string,
+  cache: Map<string, HTMLImageElement | false>,
+  onLoad: () => void
+): HTMLImageElement | null {
+  const hit = cache.get(name)
+  if (hit !== undefined) return hit || null
+  const img = new Image()
+  img.crossOrigin = 'anonymous'
+  img.onload = () => {
+    cache.set(name, img)
+    onLoad()
+  }
+  img.onerror = () => cache.set(name, false)
+  img.src = avatarUrl(name, 32)
+  cache.set(name, false)
+  return null
+}
 
 export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
   const { t } = useTranslation()
@@ -88,6 +142,71 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
     if (!shown.length && dimensions.length && !dimensions.includes(dim)) setDim(dimensions[0])
   }, [chosen, dimensions, shown.length, dim])
 
+  // The view, from @shared/livemap — the same transform the web surfaces use,
+  // so panning and zooming behave identically in all three (#128).
+  const [view, setView] = useState<MapView | null>(null)
+  const [vp, setVp] = useState<Viewport>({ width: 640, height: 400 })
+  const [cursor, setCursor] = useState<{ x: number; z: number } | null>(null)
+  const fitFor = useRef<string>('')
+  const drag = useRef<{ x: number; y: number } | null>(null)
+
+  // Heads ON by default. They are what makes a map read as a map of PEOPLE
+  // rather than a scatter plot, and an operator should not have to find a
+  // toggle to get the obvious thing.
+  const [heads, setHeads] = useState(true)
+  const [world, setWorld] = useState(true)
+  const headCache = useRef(new Map<string, HTMLImageElement | false>())
+  const tiles = useRef(new Map<string, HTMLCanvasElement | null>())
+  const tilesPending = useRef(false)
+  const [tick2, setTick2] = useState(0)
+
+  const visibleChunks = useCallback((): { cx: number; cz: number }[] => {
+    if (!view) return []
+    const tl = screenToWorld({ x: 0, y: 0 }, view, vp)
+    const br = screenToWorld({ x: vp.width, y: vp.height }, view, vp)
+    const x0 = Math.floor(tl.x / 16)
+    const x1 = Math.floor(br.x / 16)
+    const z0 = Math.floor(tl.z / 16)
+    const z1 = Math.floor(br.z / 16)
+    if ((x1 - x0 + 1) * (z1 - z0 + 1) > 4096) return []
+    const out: { cx: number; cz: number }[] = []
+    for (let z = z0; z <= z1; z++) for (let x = x0; x <= x1; x++) out.push({ cx: x, cz: z })
+    return out
+  }, [view, vp])
+
+  // Ask for what is on screen and not yet held. The main process owns the queue
+  // and the parse budget, shared with the web surfaces.
+  useEffect(() => {
+    if (!world || !view || tilesPending.current) return
+    const want = visibleChunks()
+      .filter((c: { cx: number; cz: number }) => !tiles.current.has(c.cx + ',' + c.cz))
+      .slice(0, 64)
+    if (!want.length) return
+    tilesPending.current = true
+    window.msms
+      .mapTiles(serverId, dim, want)
+      .then((r) => {
+        tilesPending.current = false
+        for (const w of want) {
+          const k = w.cx + ',' + w.cz
+          const t = r.tiles[k]
+          if (t) tiles.current.set(k, bakeTile(t))
+          else if (!r.pending) tiles.current.set(k, null)
+        }
+        setTick2((n) => n + 1)
+      })
+      .catch(() => {
+        tilesPending.current = false
+      })
+  }, [world, view, vp, dim, serverId, visibleChunks, tick2])
+
+  // A different server or dimension is a different world; nothing carries over.
+  useEffect(() => {
+    tiles.current.clear()
+    setView(null)
+    fitFor.current = ''
+  }, [serverId, dim])
+
   useEffect(() => {
     const cv = canvasRef.current
     if (!cv) return
@@ -101,31 +220,60 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
       cv.width = w
       cv.height = h
     }
+    const size = { width: rect.width || w, height: rect.height || h }
+    if (size.width !== vp.width || size.height !== vp.height) setVp(size)
+    // Fitted once per dimension. After that the view is the operator's: a poll
+    // two seconds later must not yank it back to wherever the players are.
+    let v = view
+    if (!v || fitFor.current !== dim) {
+      v = fitView(bounds, size)
+      fitFor.current = dim
+      setView(v)
+    }
     const g = cv.getContext('2d')
     if (!g) return
     g.clearRect(0, 0, w, h)
 
-    const spanX = bounds.maxX - bounds.minX || 1
-    const spanZ = bounds.maxZ - bounds.minZ || 1
-    const px = (x: number): number => ((x - bounds.minX) / spanX) * w
-    const pz = (z: number): number => ((z - bounds.minZ) / spanZ) * h
+    const sx = w / size.width
+    const sy = h / size.height
+    const px = (x: number): number => worldToScreen({ x, z: 0 }, v as MapView, size).x * sx
+    const pz = (z: number): number => worldToScreen({ x: 0, z }, v as MapView, size).y * sy
 
+    // The world first; everything else sits on top of it.
+    if (world) {
+      g.imageSmoothingEnabled = false
+      for (const c of visibleChunks()) {
+        const t = tiles.current.get(c.cx + ',' + c.cz)
+        if (!t) continue
+        const p = worldToScreen({ x: c.cx * 16, z: c.cz * 16 }, v, size)
+        g.drawImage(t, p.x * sx, p.y * sy, 16 * v.scale * sx + 1, 16 * v.scale * sy + 1)
+      }
+      g.imageSmoothingEnabled = true
+    }
+
+    const tl = screenToWorld({ x: 0, y: 0 }, v, size)
+    const br = screenToWorld({ x: size.width, y: size.height }, v, size)
+    // A grid that adapts to the zoom: a fixed 64 is invisible zoomed out and a
+    // solid wall zoomed in.
+    let step = 64
+    while (step * v.scale < 48) step *= 4
+    while (step * v.scale > 220 && step > 1) step /= 4
     g.strokeStyle = 'rgba(255,255,255,.06)'
     g.lineWidth = dpr
-    for (let gx = Math.ceil(bounds.minX / 64) * 64; gx <= bounds.maxX; gx += 64) {
+    for (let gx = Math.ceil(tl.x / step) * step; gx <= br.x; gx += step) {
       g.beginPath()
       g.moveTo(px(gx), 0)
       g.lineTo(px(gx), h)
       g.stroke()
     }
-    for (let gz = Math.ceil(bounds.minZ / 64) * 64; gz <= bounds.maxZ; gz += 64) {
+    for (let gz = Math.ceil(tl.z / step) * step; gz <= br.z; gz += step) {
       g.beginPath()
       g.moveTo(0, pz(gz))
       g.lineTo(w, pz(gz))
       g.stroke()
     }
     // The origin, when it is in view — the one landmark every player shares.
-    if (bounds.minX <= 0 && bounds.maxX >= 0 && bounds.minZ <= 0 && bounds.maxZ >= 0) {
+    if (tl.x <= 0 && br.x >= 0 && tl.z <= 0 && br.z >= 0) {
       g.strokeStyle = 'rgba(220,39,39,.5)'
       g.beginPath()
       g.moveTo(px(0), 0)
@@ -139,8 +287,8 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
 
     if (showHeat && heat.length) {
       const max = heat[0].count || 1
-      const cw = (cell / spanX) * w
-      const ch = (cell / spanZ) * h
+      const cw = cell * v.scale * sx
+      const ch = cell * v.scale * sy
       for (const c of heat) {
         g.fillStyle = `rgba(220,39,39,${(0.12 + 0.55 * (c.count / max)).toFixed(3)})`
         g.fillRect(px(c.x), pz(c.z), Math.max(2 * dpr, cw), Math.max(2 * dpr, ch))
@@ -153,17 +301,31 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
     for (const p of shown) {
       const x = px(p.x)
       const y = pz(p.z)
-      g.beginPath()
-      g.arc(x, y, 4.5 * dpr, 0, Math.PI * 2)
-      g.fillStyle = '#4ade80'
-      g.fill()
-      g.lineWidth = 1.5 * dpr
-      g.strokeStyle = 'rgba(0,0,0,.55)'
-      g.stroke()
+      const head = heads ? headFor(p.name, headCache.current, () => setTick2((n) => n + 1)) : null
+      if (head) {
+        const hs = 18 * dpr
+        g.drawImage(head, x - hs / 2, y - hs / 2, hs, hs)
+        g.lineWidth = 1.5 * dpr
+        g.strokeStyle = 'rgba(0,0,0,.55)'
+        g.strokeRect(x - hs / 2, y - hs / 2, hs, hs)
+      } else {
+        g.beginPath()
+        g.arc(x, y, 4.5 * dpr, 0, Math.PI * 2)
+        g.fillStyle = '#4ade80'
+        g.fill()
+        g.lineWidth = 1.5 * dpr
+        g.strokeStyle = 'rgba(0,0,0,.55)'
+        g.stroke()
+      }
       g.fillStyle = 'rgba(255,255,255,.92)'
-      g.fillText(p.name, x, y - 7 * dpr)
+      g.fillText(p.name, x, y - (head ? 12 : 7) * dpr)
     }
-  }, [shown, bounds, heat, cell, showHeat])
+  }, [shown, bounds, heat, cell, showHeat, view, vp, dim, heads, world, tick2, visibleChunks])
+
+  const localPoint = (e: React.MouseEvent): { x: number; y: number } => {
+    const r = (e.target as HTMLCanvasElement).getBoundingClientRect()
+    return { x: e.clientX - r.left, y: e.clientY - r.top }
+  }
 
   return (
     <div>
@@ -209,6 +371,18 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
         >
           <Flame size={13} /> {t('map.heatmap')}
         </button>
+        {/* The same controls the web surfaces have. The desktop map used to be
+            a second implementation with a different set of them, which is why
+            the three never looked alike (#128). */}
+        <button className={`btn sm ${heads ? 'primary' : ''}`} onClick={() => setHeads((v) => !v)}>
+          {t('map.heads')}
+        </button>
+        <button className={`btn sm ${world ? 'primary' : ''}`} onClick={() => setWorld((v) => !v)}>
+          {t('map.world')}
+        </button>
+        <button className="btn sm" onClick={() => setView(null)}>
+          {t('map.resetView')}
+        </button>
       </div>
 
       <div
@@ -221,7 +395,50 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
           aspectRatio: '16 / 10'
         }}
       >
-        <canvas ref={canvasRef} style={{ width: '100%', height: '100%', display: 'block' }} />
+        <canvas
+          ref={canvasRef}
+          style={{ width: '100%', height: '100%', display: 'block', cursor: drag.current ? 'grabbing' : 'grab' }}
+          onMouseDown={(e) => {
+            drag.current = { x: e.clientX, y: e.clientY }
+            e.preventDefault()
+          }}
+          onMouseUp={() => (drag.current = null)}
+          onMouseLeave={() => {
+            drag.current = null
+            setCursor(null)
+          }}
+          onMouseMove={(e) => {
+            if (!view) return
+            if (drag.current) {
+              setView(panBy(view, e.clientX - drag.current.x, e.clientY - drag.current.y))
+              drag.current = { x: e.clientX, y: e.clientY }
+              return
+            }
+            setCursor(screenToWorld(localPoint(e), view, vp))
+          }}
+          onWheel={(e) => {
+            if (!view) return
+            setView(zoomAt(view, vp, localPoint(e), e.deltaY < 0 ? 1.15 : 1 / 1.15))
+          }}
+        />
+        {cursor && (
+          <div
+            style={{
+              position: 'absolute',
+              left: 10,
+              bottom: 10,
+              padding: '4px 9px',
+              borderRadius: 8,
+              fontSize: 12,
+              fontVariantNumeric: 'tabular-nums',
+              pointerEvents: 'none',
+              background: 'rgba(0,0,0,.55)',
+              color: '#fff'
+            }}
+          >
+            X {Math.round(cursor.x)}  Z {Math.round(cursor.z)}
+          </div>
+        )}
         {shown.length === 0 && (
           <div
             className="center-fill"

@@ -78,90 +78,10 @@ export function _resetRosterCache(): void {
   lastFlush.clear()
 }
 
-// ---- world tiles (#119) ----
-//
-// A request NEVER parses a region. It asks for the chunks a viewport covers and
-// gets back the ones already parsed; anything missing is queued and appears on a
-// later poll. Parsing a region is megabytes of NBT, and letting a caller trigger
-// it synchronously is the amplification closed in #107 with a far bigger
-// multiplier — one pan across an explored world would be hundreds of regions.
-const tileQueue: { serverId: string; dim: string; cx: number; cz: number }[] = []
-let tileWorking = false
-
-function queueTiles(serverId: string, dim: string, want: { cx: number; cz: number }[]): void {
-  for (const w of want) {
-    if (tileQueue.length > 4096) break
-    if (!tileQueue.some((q) => q.serverId === serverId && q.dim === dim && q.cx === w.cx && q.cz === w.cz)) {
-      tileQueue.push({ serverId, dim, ...w })
-    }
-  }
-  if (!tileWorking) void drainTiles()
-}
-
-async function drainTiles(): Promise<void> {
-  tileWorking = true
-  try {
-    while (tileQueue.length) {
-      // Yielding between chunks is not enough on its own: the first chunk of an
-      // unseen region parses the whole file in one go, so back-to-back regions
-      // would hold the main thread for seconds. Wait for the parse budget
-      // instead of spinning through the queue.
-      if (!worldTiles.parseBudgetReady()) {
-        await new Promise((r) => setTimeout(r, 60))
-        continue
-      }
-      const job = tileQueue.shift()
-      if (!job) break
-      try {
-        worldTiles.chunkTile(job.serverId, job.dim, job.cx, job.cz)
-      } catch {
-        /* one bad region must not stop the queue */
-      }
-      // ...and still yield between chunks, for the ones that hit a region the
-      // previous job already parsed.
-      await new Promise((r) => setImmediate(r))
-    }
-  } finally {
-    tileWorking = false
-  }
-}
-
-/**
- * Serve what is parsed, queue what is not.
- *
- * `pending` is how the client knows to ask again rather than concluding the
- * world is empty there.
- */
-function tilesFor(
-  serverId: string,
-  dim: string,
-  want: { cx: number; cz: number }[]
-): { tiles: Record<string, { c: number[]; h: number[] }>; pending: number } {
-  const tiles: Record<string, { c: number[]; h: number[] }> = {}
-  const missing: { cx: number; cz: number }[] = []
-  for (const w of want) {
-    const t = worldTiles.peekChunkTile(serverId, dim, w.cx, w.cz)
-    if (t === undefined) missing.push(w)
-    else if (t) tiles[w.cx + ',' + w.cz] = { c: t.colour, h: t.height }
-  }
-  if (missing.length) queueTiles(serverId, dim, missing)
-  return { tiles, pending: missing.length }
-}
-
-/** `cx,cz cx,cz …`, capped so one request cannot ask for a whole world. */
-const MAX_TILES_PER_REQUEST = 64
-
-function parseWanted(raw: string | null): { cx: number; cz: number }[] {
-  const out: { cx: number; cz: number }[] = []
-  for (const pair of (raw ?? '').split(';')) {
-    const [a, b] = pair.split(',')
-    const cx = Number(a)
-    const cz = Number(b)
-    if (Number.isSafeInteger(cx) && Number.isSafeInteger(cz)) out.push({ cx, cz })
-    if (out.length >= MAX_TILES_PER_REQUEST) break
-  }
-  return out
-}
+// World tiles (#119) live in `core/worldTiles`, queue and all, so the desktop
+// app and the two web surfaces share one parse budget rather than three.
+const tilesFor = worldTiles.requestTiles
+const parseWanted = worldTiles.parseWantedTiles
 
 // ---- asking the server to write the inventory down (#117) ----
 //

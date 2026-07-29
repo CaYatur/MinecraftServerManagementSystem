@@ -3932,6 +3932,16 @@ function runPageScript(html: string, seed: Record<string, unknown> = {}): PageRu
     clearTimeout: () => {},
     requestAnimationFrame: () => 0,
     cancelAnimationFrame: () => {},
+    // Pages load avatars and bake tiles with these. Present but inert: the
+    // assertions are about the wiring and the text, never the pixels.
+    Image: class {
+      crossOrigin = ''
+      onload: (() => void) | null = null
+      onerror: (() => void) | null = null
+      set src(_v: string) {
+        /* never resolves, so a head stays the dot — which is the fallback path */
+      }
+    },
     alert: (msg: string) => calls.push(['alert', msg]),
     confirm: () => true,
     encodeURIComponent,

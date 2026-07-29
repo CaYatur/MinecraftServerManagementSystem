@@ -124,6 +124,9 @@ export default {
     emptyDimension: 'Nobody is in this dimension right now.',
     needsBridge:
       'No live positions yet — this server has no MSMS-Bridge plugin. Positions arrive over the server console, so installing it opens no extra port.',
+    heads: 'Heads',
+    world: 'World',
+    resetView: 'Reset view',
     installBridge: 'Install MSMS-Bridge {{version}}',
     installing: 'Installing…',
     bridgeInstalled: 'Installed {{version}}. Restart the server to load it.',

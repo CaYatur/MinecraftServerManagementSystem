@@ -19,6 +19,7 @@ import * as players from '../core/players'
 import * as rcon from '../core/rcon'
 import * as mods from '../core/mods'
 import * as bridgeInstall from '../core/bridgeInstall'
+import * as worldTiles from '../core/worldTiles'
 import * as backups from '../core/backups'
 import * as worlds from '../core/worlds'
 import * as scheduler from '../core/scheduler'
@@ -300,6 +301,11 @@ export function registerIpc(): void {
   H(IPC.bridgeStatus, (_e, id: string) => bridgeInstall.bridgeStatus(id))
   H(IPC.bridgeInstall, (_e, id: string) =>
     bridgeInstall.installBridge(id, { by: 'desktop', source: 'panel' })
+  )
+  H(IPC.mapTiles, (_e, id: string, dim: string, chunks: { cx: number; cz: number }[]) =>
+    // Capped here too: the renderer is trusted, but a bug there should not be
+    // able to queue a whole world any more than a web caller can.
+    worldTiles.requestTiles(id, dim, (chunks ?? []).slice(0, worldTiles.MAX_TILES_PER_REQUEST))
   )
 
   // --- java installs ---
