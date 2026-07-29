@@ -4028,7 +4028,7 @@
         ],
         "parameters": [
           {
-            "name": "id",
+            "name": "keyId",
             "in": "query",
             "required": true,
             "description": "Key id.",
@@ -4066,7 +4066,7 @@
       "post": {
         "operationId": "postKeysRevoke",
         "summary": "Revoke a key, keeping the record.",
-        "description": "Owner **session** only — no API key can hold a role, so no key reaches this.\n\nBody fields:\n- `id` — Key id.",
+        "description": "Owner **session** only — no API key can hold a role, so no key reaches this.\n\nBody fields:\n- `keyId` — Key id.",
         "tags": [
           "keys"
         ],
@@ -4110,7 +4110,7 @@
       "post": {
         "operationId": "postKeysDisabled",
         "summary": "Switch a key off or back on. Unlike revoking, this is reversible.",
-        "description": "Owner **session** only — no API key can hold a role, so no key reaches this.\n\nBody fields:\n- `id` — Key id.\n- `disabled` — true to switch off, false to switch back on.\n\nA revoked key cannot be switched back on; that answer is 409.",
+        "description": "Owner **session** only — no API key can hold a role, so no key reaches this.\n\nBody fields:\n- `keyId` — Key id.\n- `disabled` — true to switch off, false to switch back on.\n\nA revoked key cannot be switched back on; that answer is 409.",
         "tags": [
           "keys"
         ],

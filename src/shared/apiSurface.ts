@@ -233,9 +233,13 @@ export const API_ROUTES: ApiRoute[] = [
   // ---- keys ----
   { method: 'GET', path: '/keys', gate: 'owner', group: 'keys', summary: 'Issued API keys. Secrets are never returned.' },
   { method: 'POST', path: '/keys', gate: 'owner', group: 'keys', summary: 'Issue a key. The secret is shown once and never again.', body: { label: 'What it is for.', scopes: 'Array of scopes.', servers: '`all` or an array of server ids.', expiresInDays: 'Optional lifetime.', canAudit: 'Whether it may read the audit log.' } },
-  { method: 'POST', path: '/keys/revoke', gate: 'owner', group: 'keys', summary: 'Revoke a key, keeping the record.', body: { id: 'Key id.' } },
-  { method: 'POST', path: '/keys/disabled', gate: 'owner', group: 'keys', summary: 'Switch a key off or back on. Unlike revoking, this is reversible.', body: { id: 'Key id.', disabled: 'true to switch off, false to switch back on.' }, notes: 'A revoked key cannot be switched back on; that answer is 409.' },
-  { method: 'DELETE', path: '/keys', gate: 'owner', group: 'keys', summary: 'Delete a key record outright.', params: [{ name: 'id', in: 'query', required: true, description: 'Key id.' }] },
+  // The field is `keyId`, not `id`, on all three. This document said `id` until
+  // #142, which is a worse failure than an undocumented route: revoke answered
+  // 404 and delete answered 200 having deleted nothing, both to a caller who had
+  // followed the instructions exactly.
+  { method: 'POST', path: '/keys/revoke', gate: 'owner', group: 'keys', summary: 'Revoke a key, keeping the record.', body: { keyId: 'Key id.' } },
+  { method: 'POST', path: '/keys/disabled', gate: 'owner', group: 'keys', summary: 'Switch a key off or back on. Unlike revoking, this is reversible.', body: { keyId: 'Key id.', disabled: 'true to switch off, false to switch back on.' }, notes: 'A revoked key cannot be switched back on; that answer is 409.' },
+  { method: 'DELETE', path: '/keys', gate: 'owner', group: 'keys', summary: 'Delete a key record outright.', params: [{ name: 'keyId', in: 'query', required: true, description: 'Key id.' }] },
 
   // ---- audit ----
   { method: 'GET', path: '/audit', gate: 'owner', group: 'audit', summary: 'The audit trail, newest first.', params: [{ name: 'from', in: 'query', description: 'Epoch ms.' }, { name: 'to', in: 'query', description: 'Epoch ms.' }, { name: 'actions', in: 'query', description: 'Comma-separated action names.' }, { name: 'actor', in: 'query', description: 'Substring match.' }, { name: 'serverId', in: 'query', description: 'Filter to one server.' }, { name: 'limit', in: 'query', description: 'Rows.' }], notes: 'Owner, or an account (or key) explicitly granted audit access.' },

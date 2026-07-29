@@ -6731,10 +6731,32 @@ export async function runWebSmoke(): Promise<void> {
           const probe = '/api/servers/' + id
           if ((await kget(probe, k2.secret)).status !== 200) return fail('a fresh key could not read')
 
+          // Drive the call from the route table rather than from what the
+          // handler happens to read. Those two disagreed until #142 — the doc
+          // said `id`, the server read `keyId` — and an integrator who followed
+          // the doc exactly got a 404 from revoke and a 200 from a delete that
+          // deleted nothing. A test that spells the field itself would have
+          // stayed green through all of it.
+          const doc = API_ROUTES.find((rt) => rt.path === '/keys/disabled' && rt.method === 'POST')
+          const idField = Object.keys(doc?.body ?? {}).find((f) => f !== 'disabled')
+          if (!idField) return fail('the disable route documents no key field')
+
+          // Owner session only. A key must never be able to switch keys off:
+          // that is the same escalation that keeps key minting off the API.
+          const byKey = await kpost('/api/keys/disabled', { [idField]: k2.key.id, disabled: true }, superKey.secret)
+          if (byKey.status !== 403) return fail('an API key could disable a key: ' + byKey.status)
+
+          const viaHttp = await post('/api/keys/disabled', { [idField]: k2.key.id, disabled: true }, ot)
+          if (viaHttp.status !== 200) {
+            return fail('owner disable over HTTP: ' + viaHttp.status + ' ' + (await viaHttp.text()))
+          }
+          if (!((await viaHttp.json()) as { disabled?: boolean }).disabled) {
+            return fail('the route did not report it off')
+          }
+
           // Disabling is checked by `isKeyUsable`, which is the single answer to
           // "may this key be used" — a switch honoured in some places and not
           // others is worse than no switch.
-          apikeys.setKeyDisabled(k2.key.id, true)
           const off = await kget(probe, k2.secret)
           if (off.status !== 401) return fail('a disabled key still worked: ' + off.status)
 
@@ -6744,7 +6766,8 @@ export async function runWebSmoke(): Promise<void> {
           apikeys.setKeyDisabled(k2.key.id, false)
           if ((await kget(probe, k2.secret)).status !== 200) return fail('a re-enabled key did not work')
 
-          // A revoked key cannot be quietly resurrected by the reversible one.
+          // A revoked key cannot be quietly resurrected by the reversible one —
+          // over HTTP too, where the answer is 409 rather than a thrown string.
           apikeys.revokeKey(k2.key.id)
           let threw = false
           try {
@@ -6753,6 +6776,8 @@ export async function runWebSmoke(): Promise<void> {
             threw = true
           }
           if (!threw) return fail('enabling resurrected a revoked key')
+          const undead = await post('/api/keys/disabled', { [idField]: k2.key.id, disabled: false }, ot)
+          if (undead.status !== 409) return fail('reviving a revoked key over HTTP: ' + undead.status)
           if ((await kget(probe, k2.secret)).status !== 401) return fail('a revoked key still worked')
           apikeys.deleteKey(k2.key.id)
 
