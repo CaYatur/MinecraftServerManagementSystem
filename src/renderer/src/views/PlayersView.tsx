@@ -20,13 +20,13 @@ import {
   Drumstick,
   Sparkles,
   Clock,
-  Map as MapIcon
-} from 'lucide-react'
+  Map as MapIcon, Download} from 'lucide-react'
 import { useStore } from '../store'
 import { PlayerAvatar } from '../components/PlayerAvatar'
 import { LiveMap } from '../components/LiveMap'
 import { ItemIcon } from '../components/ItemIcon'
 import type { PlayerInfo } from '@shared/types'
+import type { AssetStatus } from '@shared/textures'
 
 const GAMEMODES = ['survival', 'creative', 'adventure', 'spectator']
 const DIFFICULTIES = ['peaceful', 'easy', 'normal', 'hard']
@@ -97,6 +97,46 @@ export function PlayersView(): JSX.Element {
   useEffect(() => {
     void load()
   }, [load])
+
+  // ---- item textures from the client jar (#127) ----
+  const [textures, setTextures] = useState<Record<string, string>>({})
+  const [assets, setAssets] = useState<AssetStatus | null>(null)
+  const [fetching, setFetching] = useState(false)
+
+  useEffect(() => {
+    if (!mcVersion) return
+    window.msms.assetStatus(mcVersion).then(setAssets).catch(() => setAssets(null))
+  }, [mcVersion])
+
+  // One call for the whole inventory rather than one per slot, and only for the
+  // ids actually on screen.
+  useEffect(() => {
+    const ids = [
+      ...(selected?.inventory ?? []).map((i) => i.id),
+      ...(selected?.enderChest ?? []).map((i) => i.id)
+    ]
+    if (!mcVersion || !ids.length || !assets?.ready) {
+      setTextures({})
+      return
+    }
+    window.msms
+      .itemTextures(mcVersion, [...new Set(ids)])
+      .then(setTextures)
+      .catch(() => setTextures({}))
+  }, [mcVersion, selected, assets?.ready])
+
+  const downloadAssets = async (): Promise<void> => {
+    if (!mcVersion) return
+    setFetching(true)
+    try {
+      setAssets(await window.msms.ensureAssets(mcVersion))
+      toast('success', 'players.assetsReady')
+    } catch (e) {
+      toast('error', String(e))
+    } finally {
+      setFetching(false)
+    }
+  }
 
   useEffect(() => {
     if (!running) return
@@ -250,11 +290,24 @@ export function PlayersView(): JSX.Element {
               <Package size={13} style={{ verticalAlign: -2, marginRight: 6 }} />
               {t('players.inventory')}
             </div>
+            {/* The offer, where the missing pictures are. Measured on 1.21.4: a
+                27 MB jar from Mojang, of which 1683 textures and 0.4 MB are
+                kept — once per Minecraft version, shared by every server on it.
+                An explicit action rather than something that happens on open,
+                because 27 MB is not a thing to spend on somebody's behalf. */}
+            {mcVersion && !assets?.ready && (selected.inventory?.length ?? 0) > 0 && (
+              <div className="hint" style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+                <span style={{ flex: 1 }}>{t('players.assetsMissing', { version: assets?.version || mcVersion })}</span>
+                <button className="btn sm" disabled={fetching} onClick={() => void downloadAssets()}>
+                  <Download size={13} /> {fetching ? t('players.assetsFetching') : t('players.assetsGet')}
+                </button>
+              </div>
+            )}
             {selected.inventory && selected.inventory.length > 0 ? (
               <div className="inv-grid">
                 {selected.inventory.map((it, i) => (
                   <div className="inv-slot" key={i} title={`${it.id} ×${it.count}`}>
-                    <ItemIcon id={it.id} version={mcVersion} size={30} />
+                    <ItemIcon id={it.id} src={textures[it.id]} size={30} />
                     {it.count > 1 && <span className="inv-count">{it.count}</span>}
                   </div>
                 ))}
@@ -275,7 +328,7 @@ export function PlayersView(): JSX.Element {
                 <div className="inv-grid">
                   {selected.enderChest.map((it, i) => (
                     <div className="inv-slot" key={i} title={`${it.id} ×${it.count}`}>
-                      <ItemIcon id={it.id} version={mcVersion} size={30} />
+                      <ItemIcon id={it.id} src={textures[it.id]} size={30} />
                       {it.count > 1 && <span className="inv-count">{it.count}</span>}
                     </div>
                   ))}

@@ -44,6 +44,7 @@ import type { ModEntry, ModrinthDetail, ModrinthHit, ModUpdateReport } from './m
 import type { BridgeInstallResult, BridgeStatus } from './bridgeRelease'
 import type { StructureMark } from './regionFormat'
 import type { AreaInput, ChunkArea } from './chunkAreas'
+import type { AssetStatus } from './textures'
 import type {
   WebStatus,
   WebUserView,
@@ -138,6 +139,9 @@ export const IPC = {
   mapTiles: 'map:tiles',
   mapCacheClear: 'map:cache-clear',
   apiKeyDisabled: 'apikey:disabled',
+  assetsStatus: 'assets:status',
+  assetsEnsure: 'assets:ensure',
+  assetsTextures: 'assets:textures',
   areasList: 'areas:list',
   areasSave: 'areas:save',
   areasDelete: 'areas:delete',
@@ -362,6 +366,16 @@ export interface MsmsApi {
   }>
   /** Drop every cached region. Returns how many files went. */
   clearMapCache(): Promise<number>
+
+  /**
+   * Item textures from Mojang's client jar (#127), so an inventory draws with
+   * no third party in the middle and no internet at all.
+   */
+  assetStatus(mcVersion: string): Promise<AssetStatus>
+  /** Download and extract them. One jar per Minecraft version. */
+  ensureAssets(mcVersion: string): Promise<AssetStatus>
+  /** `id -> data:image/png;base64,...` for the ids that have a texture on disk. */
+  itemTextures(mcVersion: string, ids: string[]): Promise<Record<string, string>>
 
   /**
    * Named chunk areas (#144). The operator's own list — hidden areas included,

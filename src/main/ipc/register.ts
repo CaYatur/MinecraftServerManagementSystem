@@ -21,6 +21,7 @@ import * as mods from '../core/mods'
 import * as bridgeInstall from '../core/bridgeInstall'
 import * as worldTiles from '../core/worldTiles'
 import * as chunkAreas from '../core/chunkAreas'
+import * as clientAssets from '../core/clientAssets'
 import { areaChunkCount } from '@shared/chunkAreas'
 import { normalizeMapPage } from '@shared/mapPage'
 import type { AreaInput } from '@shared/chunkAreas'
@@ -491,6 +492,12 @@ export function registerIpc(): void {
     })
     return k
   })
+  // Item textures from the client jar (#127).
+  H(IPC.assetsStatus, (_e, v: string) => clientAssets.assetStatus(v))
+  H(IPC.assetsEnsure, (_e, v: string) => clientAssets.ensureClientAssets(v))
+  H(IPC.assetsTextures, (_e, v: string, ids: string[]) =>
+    clientAssets.itemTextures(v, Array.isArray(ids) ? ids : [])
+  )
   // Named chunk areas (#144). The rules and the store are shared with the HTTP
   // routes — this is the same call the panel makes, reached a different way.
   H(IPC.areasList, (_e, serverId: string) => chunkAreas.listAreas(serverId))
