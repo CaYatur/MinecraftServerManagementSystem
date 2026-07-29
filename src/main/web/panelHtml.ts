@@ -254,6 +254,21 @@ h2{margin:8px 0;font-weight:800;letter-spacing:-.4px}
     <div class="row"><button class="btn sm" onclick="showList()">← All servers</button><div class="spacer"></div><span id="dStatus" class="badge"></span></div>
     <h2 id="dName"></h2>
     <div id="dControls" class="row" style="margin-bottom:12px"></div>
+    <!-- Bridge notice (#118). ABOVE the tabs, not among the tab panels: the
+         panels are siblings, so a notice placed between them sits below the
+         console on one tab and at the top on every other — a banner that moves
+         depending on where you are is worse than one that is simply always in
+         the same place. -->
+    <div class="card hidden" id="brNotice" style="margin-bottom:12px">
+      <div class="row" style="align-items:center">
+        <div style="flex:1;min-width:220px">
+          <b id="brTitle"></b>
+          <div class="dim" id="brWhy" style="font-size:12px;margin-top:3px"></div>
+        </div>
+        <button class="btn sm primary" id="brBtn" onclick="brInstall()"></button>
+      </div>
+      <div class="dim" id="brMsg" style="font-size:12px;margin-top:8px"></div>
+    </div>
     <div class="tabs">
       <button class="tab on" id="tabConsole" onclick="showTab('console')">Console</button>
       <button class="tab" id="tabStats" onclick="showTab('stats')">Performance</button>
@@ -269,20 +284,6 @@ h2{margin:8px 0;font-weight:800;letter-spacing:-.4px}
         <input id="dCmd" placeholder="Command…" style="flex:1" onkeydown="if(event.key==='Enter')sendCmd()"/>
         <button class="btn primary" onclick="sendCmd()">Send</button>
       </div>
-    </div>
-    <!-- Bridge notice (#118). Outside the tab panels on purpose: it used to
-         live in the map's empty state, which renders only when there is nobody
-         to draw, so a busy server with no bridge showed nothing at all — and
-         only to an operator who opened that tab in the first place. -->
-    <div class="card hidden" id="brNotice" style="margin-bottom:10px">
-      <div class="row" style="align-items:center">
-        <div style="flex:1;min-width:220px">
-          <b id="brTitle"></b>
-          <div class="dim" id="brWhy" style="font-size:12px;margin-top:3px"></div>
-        </div>
-        <button class="btn sm primary" id="brBtn" onclick="brInstall()"></button>
-      </div>
-      <div class="dim" id="brMsg" style="font-size:12px;margin-top:8px"></div>
     </div>
     <div id="panelAlerts" class="hidden">
       <!-- Account claims waiting for a human (#105). Lives in the settings-gated
@@ -476,7 +477,12 @@ function showTab(tab){activeTab=tab;
    off for want of a 6 KB jar. */
 var BR=null,brBusy=false;
 function loadBridgeNotice(){
- BR=null;renderBridgeNotice();
+ BR=null;
+ /* The result of the LAST install, on the LAST server. Leaving it up while
+    another server's notice renders under it attributes one server's outcome to
+    another. */
+ var m=document.getElementById('brMsg');if(m)m.textContent='';
+ renderBridgeNotice();
  if(!current||current.scopes.indexOf('files')<0)return;
  mapGet('/api/servers/'+current.id+'/bridge').then(function(b){BR=b;renderBridgeNotice()})}
 function renderBridgeNotice(){
@@ -502,10 +508,12 @@ function brInstall(){
  mapPost('/api/servers/'+current.id+'/bridge/install').then(function(b){
   brBusy=false;
   /* "Installed" is not "working": Bukkit loads plugins at startup. */
-  document.getElementById('brMsg').textContent=(b&&b.ok)
+  var text=(b&&b.ok)
    ?('Installed '+(b.version||'')+'. Restart the server to load it.')
    :('Install failed: '+((b&&b.error)||'request failed'));
-  loadBridgeNotice()})}
+  /* loadBridgeNotice clears the message, so it has to be written after. */
+  loadBridgeNotice();
+  document.getElementById('brMsg').textContent=text})}
 
 /* ---- account claims waiting for a human (#105) ---- */
 function loadPlayerRequests(){

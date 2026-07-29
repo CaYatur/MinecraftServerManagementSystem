@@ -5839,6 +5839,15 @@ export async function runWebSmoke(): Promise<void> {
               return fail('the bridge notice showed for ' + JSON.stringify(dead))
             }
           }
+          // An install result belongs to the server it happened on. Opening
+          // another server must not leave the last one's outcome sitting under
+          // its notice.
+          panel.byId('brMsg').textContent = 'Installed 1.0.0. Restart the server to load it.'
+          pctx['loadBridgeNotice']()
+          if (panel.byId('brMsg').textContent !== '') {
+            return fail('a previous install message survived a server switch')
+          }
+
           pnl.BR = null
           pctx['renderBridgeNotice']()
         }
