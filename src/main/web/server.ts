@@ -621,12 +621,20 @@ async function handlePublic(
     // `path` here is already stripped of the query, so the dimension is read
     // from the raw url. A missing or unparseable one is the overworld.
     const q = new URL(req.url ?? '/', 'http://localhost').searchParams
-    const dim = normalizeDimension(q.get('dim') ?? 'overworld')
+    // A pinned world overrides what the visitor asks for and what the players
+    // are standing in: the point of pinning is that the site always shows the
+    // same place, with nobody online and whatever the query says (#137).
+    const dim = cfg.fixedDim
+      ? normalizeDimension(cfg.fixedDim)
+      : normalizeDimension(q.get('dim') ?? 'overworld')
     const players = redactPlayers(all.filter((p) => p.dim === dim), cfg)
     return sendJson(res, 200, {
       bridge: rt ? bridgeFresh(rt.bridge, now) : false,
       dimension: dim,
-      dimensions: [...new Set(all.map((p) => p.dim))].sort(),
+      // One entry when pinned, so the page has nothing to offer a switcher —
+      // a control that cannot change the answer is not a control.
+      dimensions: cfg.fixedDim ? [dim] : [...new Set(all.map((p) => p.dim))].sort(),
+      pinned: !!cfg.fixedDim,
       players,
       // Bounds from the ROUNDED positions. Deriving them from the exact ones
       // would publish a tighter box than the dots inside it, and the corner of

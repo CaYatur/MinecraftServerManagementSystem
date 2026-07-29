@@ -31,12 +31,17 @@ export interface LivePlayer {
  * vanilla ones are canonicalised.
  */
 export function normalizeDimension(dim: unknown): string {
-  const d = typeof dim === 'string' ? dim.trim().toLowerCase() : ''
+  const raw = typeof dim === 'string' ? dim.trim() : ''
+  const d = raw.toLowerCase()
   if (!d) return 'overworld'
   if (d === 'normal' || d === 'overworld' || d === 'minecraft:overworld') return 'overworld'
   if (d === 'nether' || d === 'the_nether' || d === 'minecraft:the_nether') return 'nether'
   if (d === 'the_end' || d === 'end' || d === 'minecraft:the_end') return 'end'
-  return d.replace(/^minecraft:/, '')
+  // A name that is not one of the three is a CUSTOM WORLD, and it becomes a
+  // folder name when its regions are read. Lower-casing it here found
+  // `myworld/region` for a folder called `MyWorld` — which happens to work on
+  // Windows and does not on Linux, where a server is at least as likely to run.
+  return raw.replace(/^minecraft:/i, '')
 }
 
 /**
@@ -253,6 +258,15 @@ export interface PublicMapConfig {
    */
   structures: boolean
   /**
+   * Always show this world, whoever is online (#137).
+   *
+   * Empty means the default: follow whichever dimension people are standing in,
+   * and show nothing when nobody is. Set, the site shows one place — which is
+   * what makes an empty server's map worth opening, and is why the visitor gets
+   * no dimension switcher with it.
+   */
+  fixedDim: string
+  /**
    * Read a ring of chunks around the viewport as well, so panning is already
    * drawn. Costs more parsing; changes nothing about the world.
    *
@@ -278,7 +292,8 @@ export const PUBLIC_MAP_DEFAULTS: PublicMapConfig = {
   // live map was the thing that made the feature look broken (#135).
   world: true,
   structures: false,
-  loadAhead: false
+  loadAhead: false,
+  fixedDim: ''
 }
 
 export const MAX_MAP_ROUND = 512

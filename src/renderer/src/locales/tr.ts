@@ -745,6 +745,10 @@ const tr: typeof en = {
     mapNames: 'İsimleri göster',
     mapHeads: 'Oyuncu kafalarını çiz',
     mapWorld: 'Araziyi göster',
+    mapFixed: 'Gösterilecek dünya',
+    mapFollowPlayers: 'Oyuncuları takip et',
+    mapFixedHint:
+      'Bir dünyayı sabitlemek, sessiz bir sunucuda haritayı açmaya değer kılar: kimse çevrimiçi değilken de çizilir ve ziyaretçiye boyut seçici gösterilmez, çünkü seçimi siz yaptınız.',
     mapStructures: 'Köyleri ve zindanları göster',
     mapLoadAhead: 'Görünümün ötesini önceden yükle',
     mapLoadHint:

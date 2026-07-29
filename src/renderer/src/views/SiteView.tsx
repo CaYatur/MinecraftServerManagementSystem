@@ -36,9 +36,27 @@ export function SiteView(): JSX.Element {
     setCfg(await window.msms.getSiteConfig())
     setWeb(await window.msms.getWebStatus())
   }
+  // Worlds that actually exist on the map server, so the pin is a choice from
+  // what is there rather than a name typed from memory.
+  const [mapWorlds, setMapWorlds] = useState<string[]>(['overworld', 'nether', 'end'])
+
   useEffect(() => {
     void refresh()
   }, [])
+
+  useEffect(() => {
+    const sid = cfg?.map.serverId
+    if (!sid) return
+    window.msms
+      .listWorlds(sid)
+      .then((ws) => {
+        // The three dimensions of the active world are always offered; a
+        // separate world folder is offered by its own name.
+        const extra = ws.map((w) => w.name).filter((n) => n && !['overworld', 'nether', 'end'].includes(n))
+        setMapWorlds(['overworld', 'nether', 'end', ...extra])
+      })
+      .catch(() => setMapWorlds(['overworld', 'nether', 'end']))
+  }, [cfg?.map.serverId])
 
   if (!cfg) return <div className="center-fill" />
 
@@ -218,6 +236,29 @@ export function SiteView(): JSX.Element {
               {t('site.mapLoadAhead')}
             </label>
           </div>
+          {/* Pinning is what makes an empty server's map worth opening: it
+              renders with nobody online, and the visitor gets no switcher
+              because the operator already chose (#137). */}
+          <div className="row wrap" style={{ gap: 12, alignItems: 'flex-end', marginTop: 12 }}>
+            <div style={{ minWidth: 220 }}>
+              <div className="dim" style={{ fontSize: 12 }}>
+                {t('site.mapFixed')}
+              </div>
+              <select
+                className="select"
+                value={cfg.map.fixedDim}
+                onChange={(e) => patchMap({ fixedDim: e.target.value })}
+              >
+                <option value="">{t('site.mapFollowPlayers')}</option>
+                {mapWorlds.map((w) => (
+                  <option key={w} value={w}>
+                    {w}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <p className="hint">{t('site.mapFixedHint')}</p>
           <p className="hint">{t('site.mapHint')}</p>
           <p className="hint">{t('site.mapLoadHint')}</p>
 
