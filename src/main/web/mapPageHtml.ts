@@ -52,6 +52,11 @@ ${MAP_CSS}
   padding:6px 10px;border-radius:10px;background:rgba(10,10,14,.72)}
 .mp-areatip{z-index:4}
 #mpCursor{z-index:3}
+/* The bar floats OVER the canvas on this page only, so the "nothing generated
+   here" note at top:10px was hidden underneath it. Measured rather than
+   guessed: the bar wraps, and at phone width it is one scrolling row, so any
+   fixed offset is wrong at some width. */
+.mp-ungen{top:calc(var(--mp-bar-h, 56px) + 20px)}
 .mp-title{font-weight:800;font-size:14px;margin-right:4px;white-space:nowrap}
 .hidden{display:none!important}
 .btn{padding:7px 11px;border-radius:9px;font-family:inherit;font-size:13px;cursor:pointer;
@@ -164,7 +169,14 @@ function boot(){
   if(hb)hb.style.display=CFG.names?'':'none';
   var cell=document.getElementById('mpCell');
   if(cell)cell.style.display='none';
+  syncBarHeight();
   mapStart()})}
+/* The bar's real height, republished whenever it can change. The note below it
+   reads this; a constant would be wrong the moment the bar wrapped. */
+function syncBarHeight(){
+ var bar=document.querySelector('.mp-bar');
+ if(bar)document.documentElement.style.setProperty('--mp-bar-h',bar.offsetHeight+'px')}
+window.addEventListener('resize',function(){syncBarHeight();mapDraw()});
 document.addEventListener('DOMContentLoaded',boot);
 if(document.readyState!=='loading')boot();
 </script>

@@ -262,10 +262,19 @@ body.classic .hero .desc{margin-left:0}
 body.classic .hero h1{letter-spacing:-1.2px}
 @media(max-width:820px){.stat{flex:1;min-width:130px}}
 @media(max-width:720px){.nav{height:auto;flex-wrap:wrap;padding:10px 0;gap:6px}
+  /* 22px of side padding on a 400px screen is a tenth of the width spent on
+     nothing. The 460px rule already did this and the sizes between it and 720
+     were left out, which is the width a phone in landscape actually reports. */
+  .wrap{padding:0 16px}
+  /* A heading and its note side by side have no room at this width: the note
+     wraps to two lines and squeezes the title into three. Stacked, both read. */
+  .section-head{flex-wrap:wrap;gap:4px}
+  .section-head h2{flex:1 1 100%}
+  .section-head .muted{flex:1 1 100%;font-size:12.5px}
   /* Brand and the account controls share the top row; the links get their own
      full-width, scrollable strip underneath. */
   .brand{margin-right:0;font-size:17px}
-  .navend{order:2}
+  .navend{order:2;margin-left:auto}
   .navlinks{order:3;width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;
     flex:0 0 100%;padding-bottom:2px;scrollbar-width:none}
   .navlinks::-webkit-scrollbar{display:none}

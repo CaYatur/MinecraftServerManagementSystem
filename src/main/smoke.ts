@@ -130,6 +130,7 @@ import * as worldsMod from './core/worlds'
 import * as areasMod from '@shared/chunkAreas'
 import * as areasMod2 from './core/chunkAreas'
 import * as tex from '@shared/textures'
+import { MAP_CSS, MAP_HTML } from '@shared/mapUi'
 import * as pngMod from './core/png'
 import { deflateSync } from 'node:zlib'
 import * as assetsMod from './core/clientAssets'
@@ -4455,7 +4456,7 @@ interface StubNode {
   querySelector(): StubNode
   querySelectorAll(): StubNode[]
   appendChild(): void
-  addEventListener(): void
+  addEventListener(type?: string): void
   focus(): void
   setSelectionRange(): void
   width: number
@@ -4469,6 +4470,8 @@ interface PageRun {
   ctx: Record<string, unknown>
   byId(id: string): StubNode
   calls: unknown[][]
+  /** Event types the page bound anywhere. */
+  bound: string[]
 }
 
 function runPageScript(html: string, seed: Record<string, unknown> = {}): PageRun {
@@ -4476,6 +4479,8 @@ function runPageScript(html: string, seed: Record<string, unknown> = {}): PageRu
   if (!m) throw new Error('page has no inline script')
 
   const nodes = new Map<string, StubNode>()
+  /** Every event type any element bound, so the test can ask what was wired. */
+  const bound: string[] = []
   const mkNode = (id: string): StubNode => {
     const cls = new Set<string>()
     const n: StubNode = {
@@ -4501,7 +4506,12 @@ function runPageScript(html: string, seed: Record<string, unknown> = {}): PageRu
       querySelector: () => mkNode(''),
       querySelectorAll: () => [],
       appendChild: () => {},
-      addEventListener: () => {},
+      // Recorded, not swallowed: which events the map binds is the whole
+      // question for touch support, and a stub that drops them silently would
+      // let a map with no touch handlers pass (#151).
+      addEventListener: (type: string) => {
+        bound.push(type)
+      },
       focus: () => {},
       setSelectionRange: () => {},
       // Enough of a canvas for the map to run its drawing pass. Nothing is
@@ -4653,7 +4663,7 @@ function runPageScript(html: string, seed: Record<string, unknown> = {}): PageRu
   // Throws on a syntax error, which is the first thing this is here to catch.
   runInNewContext(m[1], ctx, { filename: 'page.js' })
   Object.assign(ctx, seed) // seeds that the script's own `var` declarations reset
-  return { ctx, byId: (id) => document.getElementById(id), calls }
+  return { ctx, byId: (id) => document.getElementById(id), calls, bound }
 }
 
 export async function runWebSmoke(): Promise<void> {
@@ -7192,6 +7202,32 @@ export async function runWebSmoke(): Promise<void> {
           }
           if (pmap.MAP.view.scale !== 2) return fail('the page zoom did not change scale')
         }
+
+        // #151: the map has to be usable with a finger.
+        //
+        // It had mouse handlers only, so on a phone it could not be moved at
+        // all — panning, zooming and reading an area's note were all
+        // mouse-exclusive. Asserted on both pages, because the public site is
+        // where somebody is most likely to open it on a phone.
+        for (const [label, page] of [['panel', panel], ['site', site]] as const) {
+          for (const ev of ['touchstart', 'touchmove', 'touchend']) {
+            if (!page.bound.includes(ev)) {
+              return fail('the ' + label + ' map never binds ' + ev + '; it cannot be panned by touch')
+            }
+          }
+          // The wheel is still there — adding touch must not have cost the
+          // mouse its zoom.
+          if (!page.bound.includes('wheel')) return fail('the ' + label + ' map lost its wheel handler')
+        }
+        // CSS is half the fix: without touch-action:none the browser claims the
+        // gesture before any listener runs and preventDefault has nothing left
+        // to prevent. The same trap as the passive wheel listener in #135.
+        if (!MAP_CSS.includes('touch-action:none')) {
+          return fail('the map canvas does not set touch-action:none; touch handlers cannot win the gesture')
+        }
+        // A phone has no wheel, and that is what the hint was telling it.
+        if (!MAP_HTML.includes('pinch to zoom')) return fail('the map hint never mentions pinching')
+        if (!MAP_CSS.includes('pointer:coarse')) return fail('the hint does not adapt to a touch device')
 
         // #144: and its own copy of the chunk-area rules, for the same reason.
         // Which area owns a chunk has to read the same on all four surfaces, so

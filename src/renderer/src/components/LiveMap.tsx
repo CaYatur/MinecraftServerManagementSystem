@@ -235,6 +235,9 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
   // Drawing them is on; the editor is not. Two separate decisions.
   const [showAreaCard, setShowAreaCard] = useState(false)
   const [pinned, setPinned] = useState<ChunkArea | null>(null)
+  // Where to draw the tooltip, in CANVAS pixels. `cursor` is world coordinates
+  // and cannot place anything on screen.
+  const [tipAt, setTipAt] = useState<{ x: number; y: number } | null>(null)
   const [editing, setEditing] = useState<ChunkArea | 'new' | null>(null)
   // Chunks picked by clicking, while the picker is open. A mode rather than a
   // held modifier: this has to work on a trackpad and the same UI ships to a
@@ -594,6 +597,30 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
    */
   const viewRef = useRef<MapView | null>(null)
   viewRef.current = view
+  // Bound once, so the handlers read the current values through refs rather
+  // than closing over a render's copy.
+  const pickingRef = useRef(false)
+  pickingRef.current = picking
+  const areasOnRef = useRef(true)
+  areasOnRef.current = showAreas
+  const pickChunkRef = useRef<((cx: number, cz: number) => void) | null>(null)
+  const pickChunk = useCallback(
+    (cx: number, cz: number): void => {
+      setPicked((cur) => {
+        const has = cur.some((r) => cx >= r.x1 && cx <= r.x2 && cz >= r.z1 && cz <= r.z2)
+        // Splits the rectangle around the chunk rather than dropping it: rects
+        // are merged on the way in, so the one under the pointer usually covers
+        // dozens of others.
+        return has
+          ? subtractChunk(cur, cx, cz)
+          : normalizeRects([...cur, { x1: cx, z1: cz, x2: cx, z2: cz }])
+      })
+    },
+    []
+  )
+  pickChunkRef.current = pickChunk
+  const areaAtRef = useRef<(cx: number, cz: number) => ChunkArea | undefined>(() => undefined)
+  areaAtRef.current = (cx, cz) => areaAt(areas, cx, cz, dim)
   const vpRef = useRef(vp)
   vpRef.current = vp
   useEffect(() => {
@@ -609,7 +636,84 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
       )
     }
     cv.addEventListener('wheel', onWheel, { passive: false })
-    return () => cv.removeEventListener('wheel', onWheel)
+
+    // ---- touch ----
+    //
+    // Same reason these are bound by hand: React's touch listeners are passive
+    // too, so `preventDefault` in an `onTouchMove` prop does nothing and the
+    // page scrolls instead of the map panning. The CSS `touchAction: none` on
+    // the canvas is the other half — without it the browser claims the gesture
+    // before any listener runs.
+    //
+    // One finger pans; two pinch, which is the only zoom a touch screen has.
+    let pan: { x: number; y: number } | null = null
+    let pinch: number | null = null
+    const dist = (t: TouchList): number =>
+      Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY)
+    const mid = (t: TouchList): { x: number; y: number } => {
+      const r = cv.getBoundingClientRect()
+      return {
+        x: (t[0].clientX + t[1].clientX) / 2 - r.left,
+        y: (t[0].clientY + t[1].clientY) / 2 - r.top
+      }
+    }
+    const onStart = (e: TouchEvent): void => {
+      if (!viewRef.current) return
+      if (e.touches.length === 1) {
+        pan = { x: e.touches[0].clientX, y: e.touches[0].clientY }
+        pinch = null
+        downAt.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }
+      } else if (e.touches.length === 2) {
+        pan = null
+        pinch = dist(e.touches)
+      }
+      e.preventDefault()
+    }
+    const onMove = (e: TouchEvent): void => {
+      const v = viewRef.current
+      if (!v) return
+      if (e.touches.length === 1 && pan) {
+        setView(panBy(v, e.touches[0].clientX - pan.x, e.touches[0].clientY - pan.y))
+        pan = { x: e.touches[0].clientX, y: e.touches[0].clientY }
+      } else if (e.touches.length === 2 && pinch) {
+        const d = dist(e.touches)
+        if (pinch > 0) {
+          setView(zoomAt(v, vpRef.current, mid(e.touches), d / pinch))
+          pinch = d
+        }
+      }
+      e.preventDefault()
+    }
+    const onEnd = (e: TouchEvent): void => {
+      // A finger that lifted without travelling is a tap, and a tap is the only
+      // way to read an area's note on a phone — there is no hover.
+      const v = viewRef.current
+      const t = e.changedTouches[0]
+      const d0 = downAt.current
+      if (!e.touches.length && pan && v && t && d0 &&
+          Math.abs(t.clientX - d0.x) <= 6 && Math.abs(t.clientY - d0.y) <= 6) {
+        const r = cv.getBoundingClientRect()
+        const local = { x: t.clientX - r.left, y: t.clientY - r.top }
+        const w = screenToWorld(local, v, vpRef.current)
+        const c = chunkOf(w.x, w.z)
+        setTipAt(local)
+        if (pickingRef.current) pickChunkRef.current?.(c.cx, c.cz)
+        else if (areasOnRef.current) setPinned(areaAtRef.current(c.cx, c.cz) ?? null)
+      }
+      if (!e.touches.length) {
+        pan = null
+        pinch = null
+      }
+    }
+    cv.addEventListener('touchstart', onStart, { passive: false })
+    cv.addEventListener('touchmove', onMove, { passive: false })
+    cv.addEventListener('touchend', onEnd, { passive: false })
+    return () => {
+      cv.removeEventListener('wheel', onWheel)
+      cv.removeEventListener('touchstart', onStart)
+      cv.removeEventListener('touchmove', onMove)
+      cv.removeEventListener('touchend', onEnd)
+    }
   }, [])
 
   return (
@@ -904,7 +1008,9 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
           /* `grabbing` via :active in CSS, not from the drag ref — a ref does
              not re-render, so a style bound to it never changes. */
           className="mp-canvas"
-          style={{ width: '100%', height: '100%', display: 'block' }}
+          // Without this the browser takes a drag as a page scroll before the
+          // touch listeners run, and preventDefault has nothing left to stop.
+          style={{ width: '100%', height: '100%', display: 'block', touchAction: 'none' }}
           onMouseDown={(e) => {
             drag.current = { x: e.clientX, y: e.clientY }
             downAt.current = { x: e.clientX, y: e.clientY }
@@ -919,18 +1025,11 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
             if (d0 && (Math.abs(e.clientX - d0.x) > 4 || Math.abs(e.clientY - d0.y) > 4)) return
             const w = screenToWorld(localPoint(e), view, vp)
             const c = chunkOf(w.x, w.z)
+            setTipAt(localPoint(e))
             if (picking) {
               // Click a chunk to add it, click it again to take it back — the
               // only way to undo a misclick without starting the selection over.
-              const has = picked.some((r) => c.cx >= r.x1 && c.cx <= r.x2 && c.cz >= r.z1 && c.cz <= r.z2)
-              setPicked(
-                has
-                  ? // Splits the rectangle around the chunk rather than dropping
-                    // it: rects are merged on the way in, so the one under the
-                    // pointer usually covers dozens of others.
-                    subtractChunk(picked, c.cx, c.cz)
-                  : normalizeRects([...picked, { x1: c.cx, z1: c.cz, x2: c.cx, z2: c.cz }])
-              )
+              pickChunk(c.cx, c.cz)
               return
             }
             if (showAreas) setPinned(areaAt(areas, c.cx, c.cz, dim) ?? null)
@@ -938,6 +1037,7 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
           onMouseLeave={() => {
             drag.current = null
             setCursor(null)
+            setTipAt(null)
           }}
           onMouseMove={(e) => {
             if (!view) return
@@ -947,6 +1047,7 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
               return
             }
             setCursor(screenToWorld(localPoint(e), view, vp))
+            setTipAt(localPoint(e))
           }}
         />
         {cursor && (
@@ -984,10 +1085,22 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
             return (
               <div
                 style={{
-                  position: 'absolute', right: 10, bottom: 10, maxWidth: 250,
+                  position: 'absolute',
+                  // At the pointer rather than in a corner: a note pinned to the
+                  // bottom-right is nowhere near the area it describes, and on a
+                  // touch screen it sat under the thumb that opened it. Clamped,
+                  // because anchored near an edge it would hang off the side.
+                  ...(tipAt
+                    ? {
+                        left: Math.max(6, Math.min(tipAt.x + 14, vp.width - 256)),
+                        top: tipAt.y - 84 < 6 ? tipAt.y + 16 : tipAt.y - 84
+                      }
+                    : { right: 10, bottom: 10 }),
+                  maxWidth: 250,
                   padding: '8px 11px', borderRadius: 10, fontSize: 12.5, lineHeight: 1.4,
                   background: 'rgba(0,0,0,.78)', color: '#fff',
-                  border: '1px solid rgba(255,255,255,.16)'
+                  border: '1px solid rgba(255,255,255,.16)',
+                  pointerEvents: pinned ? 'auto' : 'none'
                 }}
               >
                 <b style={{ display: 'block', fontSize: 13, color: hover.colour }}>{hover.name}</b>
