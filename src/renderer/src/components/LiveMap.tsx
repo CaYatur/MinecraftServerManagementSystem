@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Map as MapIcon, Flame, Gauge } from 'lucide-react'
+import { Map as MapIcon, Flame, Gauge, Shapes, Plus, Trash2, Check, X } from 'lucide-react'
 import { useStore } from '../store'
 import { normalizeMapPerf } from '@shared/tileCache'
 import type { MapPerfConfig } from '@shared/tileCache'
@@ -9,6 +9,18 @@ import type { LivePlayer, MapView, Viewport } from '@shared/livemap'
 import { avatarUrl } from '@shared/profile'
 import type { StructureMark } from '@shared/regionFormat'
 import { iconFor, ICON_BOX } from '@shared/mapIcons'
+import {
+  areaAt,
+  areasFor,
+  chunkOf,
+  normalizeRects,
+  subtractChunk,
+  parseChunkInput,
+  checkArea,
+  areaChunkCount,
+  AREA_COLOURS
+} from '@shared/chunkAreas'
+import type { ChunkArea, ChunkRect } from '@shared/chunkAreas'
 import type { BridgeStatus } from '@shared/bridgeRelease'
 import { BridgeNotice } from './BridgeNotice'
 
@@ -193,6 +205,8 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
   const [cursor, setCursor] = useState<{ x: number; z: number } | null>(null)
   const fitFor = useRef<string>('')
   const drag = useRef<{ x: number; y: number } | null>(null)
+  // Where the button went down, so a click can be told from the end of a pan.
+  const downAt = useRef<{ x: number; y: number } | null>(null)
 
   // Heads ON by default. They are what makes a map read as a map of PEOPLE
   // rather than a scatter plot, and an operator should not have to find a
@@ -214,6 +228,30 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
     () => normalizeMapPerf(servers.find((s) => s.id === serverId)?.map),
     [servers, serverId]
   )
+  // Named chunk areas (#144). ON by default, unlike structures: an area is a
+  // label the operator wrote for people to read, so hiding it defeats the point.
+  const [areas, setAreas] = useState<ChunkArea[]>([])
+  const [showAreas, setShowAreas] = useState(true)
+  // Drawing them is on; the editor is not. Two separate decisions.
+  const [showAreaCard, setShowAreaCard] = useState(false)
+  const [pinned, setPinned] = useState<ChunkArea | null>(null)
+  const [editing, setEditing] = useState<ChunkArea | 'new' | null>(null)
+  // Chunks picked by clicking, while the picker is open. A mode rather than a
+  // held modifier: this has to work on a trackpad and the same UI ships to a
+  // phone-sized panel, where there is no shift key to hold.
+  const [picking, setPicking] = useState(false)
+  const [picked, setPicked] = useState<ChunkRect[]>([])
+
+  const reloadAreas = useCallback((): void => {
+    void window.msms.listChunkAreas(serverId).then(setAreas)
+  }, [serverId])
+  useEffect(() => {
+    reloadAreas()
+    setPinned(null)
+    setPicking(false)
+    setPicked([])
+  }, [reloadAreas])
+
   const [showPerf, setShowPerf] = useState(false)
   const [cleared, setCleared] = useState<number | null>(null)
   // Bumped by "Load this view" so one fetch happens even with loading-on-pan
@@ -420,6 +458,68 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
       }
     }
 
+    // Named chunk areas (#144). Unlike the two web pages, this can import the
+    // rules rather than reimplement them — `areaIndex` is hoisted out of the
+    // draw so the sort and the size measurement happen once, not per rectangle.
+    if (showAreas) {
+      g.textAlign = 'center'
+      g.textBaseline = 'middle'
+      for (const a of areasFor(areas, dim)) {
+        const n = parseInt(a.colour.slice(1), 16)
+        const rgb = `${(n >> 16) & 255},${(n >> 8) & 255},${n & 255}`
+        const lit = pinned?.id === a.id
+        let minX = Infinity
+        let minY = Infinity
+        let maxX = -Infinity
+        let maxY = -Infinity
+        for (const r of a.rects) {
+          const p0 = worldToScreen({ x: r.x1 * 16, z: r.z1 * 16 }, v, size)
+          const p1 = worldToScreen({ x: (r.x2 + 1) * 16, z: (r.z2 + 1) * 16 }, v, size)
+          const x = p0.x * sx
+          const y = p0.y * sy
+          const ww = (p1.x - p0.x) * sx
+          const hh = (p1.y - p0.y) * sy
+          g.fillStyle = `rgba(${rgb},${lit ? 0.42 : 0.24})`
+          g.fillRect(x, y, ww, hh)
+          g.strokeStyle = `rgba(${rgb},.95)`
+          g.lineWidth = (lit ? 2.5 : 1.5) * dpr
+          g.strokeRect(x, y, ww, hh)
+          minX = Math.min(minX, x)
+          minY = Math.min(minY, y)
+          maxX = Math.max(maxX, x + ww)
+          maxY = Math.max(maxY, y + hh)
+        }
+        // The name only where the shape can hold it: drawn at every zoom it
+        // turns a world view into a wall of overlapping text.
+        if (maxX - minX > 46 * dpr && maxY - minY > 16 * dpr) {
+          g.font = `600 ${11 * dpr}px Inter,system-ui,sans-serif`
+          g.lineWidth = 3 * dpr
+          g.strokeStyle = 'rgba(0,0,0,.65)'
+          g.strokeText(a.name, (minX + maxX) / 2, (minY + maxY) / 2)
+          g.fillStyle = 'rgba(255,255,255,.96)'
+          g.fillText(a.name, (minX + maxX) / 2, (minY + maxY) / 2)
+        }
+      }
+      g.textAlign = 'center'
+      g.textBaseline = 'bottom'
+    }
+
+    // The selection in progress, drawn in the app's accent so it cannot be
+    // mistaken for a saved area in one of the palette colours.
+    if (picking) {
+      for (const r of picked) {
+        const p0 = worldToScreen({ x: r.x1 * 16, z: r.z1 * 16 }, v, size)
+        const p1 = worldToScreen({ x: (r.x2 + 1) * 16, z: (r.z2 + 1) * 16 }, v, size)
+        g.fillStyle = 'rgba(255,255,255,.22)'
+        g.fillRect(p0.x * sx, p0.y * sy, (p1.x - p0.x) * sx, (p1.y - p0.y) * sy)
+        g.strokeStyle = 'rgba(255,255,255,.9)'
+        g.lineWidth = 1.5 * dpr
+        g.setLineDash([4 * dpr, 3 * dpr])
+        g.strokeRect(p0.x * sx, p0.y * sy, (p1.x - p0.x) * sx, (p1.y - p0.y) * sy)
+        g.setLineDash([])
+      }
+    }
+
     // After the grid and the heatmap, before the players.
     if (marks) {
       for (const c of drawableChunks()) {
@@ -477,7 +577,8 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
       g.fillStyle = 'rgba(255,255,255,.92)'
       g.fillText(p.name, x, y - (head ? 12 : 7) * dpr)
     }
-  }, [shown, bounds, heat, cell, showHeat, view, vp, dim, heads, world, marks, markKind, tick2, drawableChunks])
+  }, [shown, bounds, heat, cell, showHeat, view, vp, dim, heads, world, marks, markKind, tick2, drawableChunks,
+    areas, showAreas, pinned, picking, picked])
 
   const localPoint = (e: React.MouseEvent): { x: number; y: number } => {
     const r = (e.target as HTMLCanvasElement).getBoundingClientRect()
@@ -585,10 +686,126 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
         <button className="btn sm" onClick={() => setView(null)}>
           {t('map.resetView')}
         </button>
+        <button className={`btn sm ${showAreas ? 'primary' : ''}`} onClick={() => setShowAreas((v) => !v)}>
+          <Shapes size={13} /> {t('map.areas')}
+        </button>
+        <button
+          className={`btn sm ${showAreaCard ? 'primary' : ''}`}
+          onClick={() => {
+            const next = !showAreaCard
+            setShowAreaCard(next)
+            // Editing implies looking. Opening the editor over a map that is not
+            // drawing areas would be picking chunks against an invisible shape.
+            if (next) setShowAreas(true)
+            else {
+              setEditing(null)
+              setPicking(false)
+              setPicked([])
+            }
+          }}
+        >
+          {t('map.areaEdit')}
+        </button>
         <button className={`btn sm ${showPerf ? 'primary' : ''}`} onClick={() => setShowPerf((v) => !v)}>
           <Gauge size={13} /> {t('map.performance')}
         </button>
       </div>
+
+      {/* Open only when asked for: the map is for looking at, and a permanently
+          visible editing panel takes a third of it. Drawing areas and EDITING
+          them are two decisions — the web panel keeps them apart the same way. */}
+      {showAreaCard && (
+        <div className="card" style={{ padding: 12, display: 'grid', gap: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <b style={{ fontSize: 13 }}>{t('map.areas')}</b>
+            <span className="dim" style={{ fontSize: 12 }}>
+              {t('map.areasCount', { n: areasFor(areas, dim).length, dim })}
+            </span>
+            <div style={{ flex: 1 }} />
+            <button
+              className="btn sm"
+              onClick={() => {
+                setEditing('new')
+                setPicked([])
+                setPicking(true)
+              }}
+            >
+              <Plus size={13} /> {t('map.areaNew')}
+            </button>
+          </div>
+
+          {areasFor(areas, dim).length > 0 && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {areasFor(areas, dim).map((a) => (
+                <button
+                  key={a.id}
+                  className="btn sm"
+                  style={{ borderColor: a.colour, opacity: a.hidden ? 0.55 : 1 }}
+                  title={a.note || undefined}
+                  onClick={() => {
+                    setEditing(a)
+                    setPicked(a.rects)
+                    setPicking(false)
+                    // Jump to it. An area listed but off-screen is a name with
+                    // nowhere to look, and its chunks are the only clue where.
+                    if (view && a.rects.length) {
+                      const r = a.rects[0]
+                      setView({ cx: (r.x1 + r.x2 + 1) * 8, cz: (r.z1 + r.z2 + 1) * 8, scale: view.scale })
+                    }
+                  }}
+                >
+                  <span
+                    style={{
+                      width: 9, height: 9, borderRadius: 3, background: a.colour,
+                      display: 'inline-block', marginRight: 6
+                    }}
+                  />
+                  {a.name}
+                  {a.hidden ? ' ·' : ''}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {editing && (
+            <AreaEditor
+              key={editing === 'new' ? 'new' : editing.id}
+              area={editing === 'new' ? null : editing}
+              dim={dim}
+              picking={picking}
+              picked={picked}
+              onPickingChange={setPicking}
+              onPickedChange={setPicked}
+              onClose={() => {
+                setEditing(null)
+                setPicking(false)
+                setPicked([])
+              }}
+              onSave={async (input) => {
+                await window.msms.saveChunkArea(serverId, {
+                  ...input,
+                  ...(editing === 'new' ? {} : { areaId: editing.id })
+                })
+                reloadAreas()
+                setEditing(null)
+                setPicking(false)
+                setPicked([])
+              }}
+              onDelete={
+                editing === 'new'
+                  ? undefined
+                  : async () => {
+                      await window.msms.deleteChunkArea(serverId, editing.id)
+                      reloadAreas()
+                      setEditing(null)
+                      setPicking(false)
+                      setPicked([])
+                    }
+              }
+            />
+          )}
+        </div>
+      )}
 
       {/* Per-server, persisted, and applied without a restart — the map is where
           an operator meets the cost, so it is where the dials belong (#133). */}
@@ -690,9 +907,34 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
           style={{ width: '100%', height: '100%', display: 'block' }}
           onMouseDown={(e) => {
             drag.current = { x: e.clientX, y: e.clientY }
+            downAt.current = { x: e.clientX, y: e.clientY }
             e.preventDefault()
           }}
           onMouseUp={() => (drag.current = null)}
+          onClick={(e) => {
+            if (!view) return
+            // Distance, not a flag: every click carries a mousedown, and a pan
+            // that happens to end inside an area must not select or pin it.
+            const d0 = downAt.current
+            if (d0 && (Math.abs(e.clientX - d0.x) > 4 || Math.abs(e.clientY - d0.y) > 4)) return
+            const w = screenToWorld(localPoint(e), view, vp)
+            const c = chunkOf(w.x, w.z)
+            if (picking) {
+              // Click a chunk to add it, click it again to take it back — the
+              // only way to undo a misclick without starting the selection over.
+              const has = picked.some((r) => c.cx >= r.x1 && c.cx <= r.x2 && c.cz >= r.z1 && c.cz <= r.z2)
+              setPicked(
+                has
+                  ? // Splits the rectangle around the chunk rather than dropping
+                    // it: rects are merged on the way in, so the one under the
+                    // pointer usually covers dozens of others.
+                    subtractChunk(picked, c.cx, c.cz)
+                  : normalizeRects([...picked, { x1: c.cx, z1: c.cz, x2: c.cx, z2: c.cz }])
+              )
+              return
+            }
+            if (showAreas) setPinned(areaAt(areas, c.cx, c.cz, dim) ?? null)
+          }}
           onMouseLeave={() => {
             drag.current = null
             setCursor(null)
@@ -723,8 +965,41 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
             }}
           >
             X {Math.round(cursor.x)}  Z {Math.round(cursor.z)}
+            {picking && (
+              <>
+                {' · '}
+                {t('map.chunkAt', { cx: chunkOf(cursor.x, cursor.z).cx, cz: chunkOf(cursor.x, cursor.z).cz })}
+              </>
+            )}
           </div>
         )}
+        {/* Hovering names the area; clicking keeps the name up. Both, because a
+            tooltip that only follows the pointer cannot be read on a touchpad
+            while reaching for a button. */}
+        {showAreas &&
+          (() => {
+            const hover =
+              pinned ?? (cursor ? areaAt(areas, chunkOf(cursor.x, cursor.z).cx, chunkOf(cursor.x, cursor.z).cz, dim) : undefined)
+            if (!hover) return null
+            return (
+              <div
+                style={{
+                  position: 'absolute', right: 10, bottom: 10, maxWidth: 250,
+                  padding: '8px 11px', borderRadius: 10, fontSize: 12.5, lineHeight: 1.4,
+                  background: 'rgba(0,0,0,.78)', color: '#fff',
+                  border: '1px solid rgba(255,255,255,.16)'
+                }}
+              >
+                <b style={{ display: 'block', fontSize: 13, color: hover.colour }}>{hover.name}</b>
+                {hover.note && <div style={{ opacity: 0.85 }}>{hover.note}</div>}
+                {pinned && (
+                  <button className="btn sm" style={{ marginTop: 6 }} onClick={() => setPinned(null)}>
+                    <X size={11} /> {t('common.close')}
+                  </button>
+                )}
+              </div>
+            )
+          })()}
         {shown.length === 0 && (
           <div
             className="center-fill"
@@ -777,6 +1052,185 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
           ))}
         </div>
       )}
+    </div>
+  )
+}
+
+/**
+ * Create or edit one area.
+ *
+ * Two ways in, because they suit different jobs: clicking chunks on the map is
+ * how you draw the shape of a town you can see, and typing coordinates is how
+ * you enter the four hundred chunks somebody sent you in a message. They edit
+ * the same selection, so switching between them mid-edit loses nothing.
+ *
+ * Validation is `checkArea`, the same function the HTTP route calls. A form that
+ * decides for itself what is acceptable is a form that eventually disagrees with
+ * the server, and the operator is the one who finds out.
+ */
+function AreaEditor({
+  area,
+  dim,
+  picking,
+  picked,
+  onPickingChange,
+  onPickedChange,
+  onClose,
+  onSave,
+  onDelete
+}: {
+  area: ChunkArea | null
+  dim: string
+  picking: boolean
+  picked: ChunkRect[]
+  onPickingChange: (v: boolean) => void
+  onPickedChange: (r: ChunkRect[]) => void
+  onClose: () => void
+  onSave: (input: {
+    name: string
+    note: string
+    colour: string
+    dim: string
+    rects: ChunkRect[]
+    hidden: boolean
+  }) => Promise<void>
+  onDelete?: () => Promise<void>
+}): JSX.Element {
+  const { t } = useTranslation()
+  const [name, setName] = useState(area?.name ?? '')
+  const [note, setNote] = useState(area?.note ?? '')
+  const [colour, setColour] = useState(area?.colour ?? AREA_COLOURS[0])
+  const [hidden, setHidden] = useState(!!area?.hidden)
+  const [typed, setTyped] = useState('')
+  const [bad, setBad] = useState<string[]>([])
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  // The area belongs to the dimension being viewed. Editing one from a different
+  // dimension keeps its own, so opening the nether does not silently move a town.
+  const targetDim = area?.dim ?? dim
+  const check = checkArea({ name, note, colour, dim: targetDim, rects: picked, hidden })
+
+  const applyTyped = (): void => {
+    const parsed = parseChunkInput(typed)
+    setBad(parsed.bad)
+    // Added to the selection rather than replacing it: typing is often how you
+    // finish a shape you started by clicking.
+    onPickedChange(normalizeRects([...picked, ...parsed.rects]))
+    setTyped('')
+  }
+
+  return (
+    <div style={{ display: 'grid', gap: 8, borderTop: '1px solid var(--border)', paddingTop: 10 }}>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+        <input
+          className="input"
+          style={{ flex: '1 1 160px' }}
+          placeholder={t('map.areaName')}
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+        />
+        <div style={{ display: 'flex', gap: 4 }}>
+          {AREA_COLOURS.map((c) => (
+            <button
+              key={c}
+              title={c}
+              onClick={() => setColour(c)}
+              style={{
+                width: 22, height: 22, borderRadius: 6, background: c, cursor: 'pointer',
+                border: colour === c ? '2px solid #fff' : '1px solid rgba(0,0,0,.35)'
+              }}
+            />
+          ))}
+        </div>
+      </div>
+      <input
+        className="input"
+        placeholder={t('map.areaNote')}
+        value={note}
+        onChange={(e) => setNote(e.target.value)}
+      />
+
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+        <button
+          className={`btn sm ${picking ? 'primary' : ''}`}
+          onClick={() => onPickingChange(!picking)}
+        >
+          {picking ? t('map.areaPickingOn') : t('map.areaPick')}
+        </button>
+        <span className="dim" style={{ fontSize: 12 }}>
+          {t('map.areaChunks', { n: areaChunkCount({ rects: picked }), r: picked.length })}
+        </span>
+        {picked.length > 0 && (
+          <button className="btn sm" onClick={() => onPickedChange([])}>
+            {t('map.areaClear')}
+          </button>
+        )}
+        <div style={{ flex: 1 }} />
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
+          <input type="checkbox" checked={hidden} onChange={(e) => setHidden(e.target.checked)} />
+          {t('map.areaHidden')}
+        </label>
+      </div>
+
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <input
+          className="input"
+          style={{ flex: '1 1 220px', fontFamily: 'ui-monospace,monospace', fontSize: 12 }}
+          placeholder={t('map.areaTypePlaceholder')}
+          value={typed}
+          onChange={(e) => setTyped(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') applyTyped()
+          }}
+        />
+        <button className="btn sm" onClick={applyTyped} disabled={!typed.trim()}>
+          {t('map.areaTypeAdd')}
+        </button>
+      </div>
+      {bad.length > 0 && (
+        <p className="hint" style={{ margin: 0, color: 'var(--warn,#f0b429)' }}>
+          {t('map.areaBadLines', { lines: bad.join(', ') })}
+        </p>
+      )}
+      {/* The refusal the server would give, shown before the request rather than
+          after it — `checkArea` is the same function on both sides. */}
+      {!check.ok && (name || picked.length > 0) && (
+        <p className="hint" style={{ margin: 0 }}>{t('map.areaErr_' + check.error)}</p>
+      )}
+      {error && <p className="hint" style={{ margin: 0, color: 'var(--danger,#e5484d)' }}>{error}</p>}
+
+      <div style={{ display: 'flex', gap: 8 }}>
+        <button
+          className="btn sm primary"
+          disabled={!check.ok || busy}
+          onClick={() => {
+            setBusy(true)
+            setError('')
+            void onSave({ name, note, colour, dim: targetDim, rects: picked, hidden })
+              .catch((e: unknown) => setError(String(e)))
+              .finally(() => setBusy(false))
+          }}
+        >
+          <Check size={13} /> {area ? t('common.save') : t('map.areaCreate')}
+        </button>
+        <button className="btn sm" onClick={onClose}>
+          {t('common.cancel')}
+        </button>
+        <div style={{ flex: 1 }} />
+        {onDelete && (
+          <button
+            className="btn sm danger"
+            disabled={busy}
+            onClick={() => {
+              setBusy(true)
+              void onDelete().catch((e: unknown) => setError(String(e))).finally(() => setBusy(false))
+            }}
+          >
+            <Trash2 size={13} /> {t('common.delete')}
+          </button>
+        )}
+      </div>
     </div>
   )
 }

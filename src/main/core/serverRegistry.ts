@@ -6,6 +6,7 @@ import { resolveBaseDir, dataDir } from '../paths'
 import { detectServer } from './serverDetect'
 import * as metrics from './metrics'
 import * as events from './events'
+import * as chunkAreas from './chunkAreas'
 import { log } from '../logger'
 import { PROXY_TYPES } from '@shared/types'
 import type { ServerConfig, ServerType, JavaArgsConfig } from '@shared/types'
@@ -119,6 +120,10 @@ export function removeServer(id: string, deleteFiles: boolean): void {
   })
   metrics.dropServer(id)
   events.dropServer(id)
+  // Areas are keyed by server id and live in their own file, so nothing else
+  // removes them. A later server issued the same id would inherit somebody
+  // else's map annotations.
+  chunkAreas.forgetServerAreas(id)
   if (deleteFiles && target && existsSync(target.path)) {
     try {
       rmSync(target.path, { recursive: true, force: true })

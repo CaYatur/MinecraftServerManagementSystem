@@ -60,6 +60,17 @@ export const MAP_CSS = `
   border:1px solid var(--line,var(--border,rgba(255,255,255,.14)));background:var(--elev,rgba(255,255,255,.05))}
 .mp-chip:hover{border-color:var(--accent,#dc2727)}
 .mp-chip span{opacity:.6;font-weight:600;margin-left:5px}
+/* The area tooltip. Bottom-right, opposite the ungenerated note and clear of the
+   coordinate readout, so a claimed chunk at the edge of the world can still show
+   both. Clickable, because on a phone the pin is the only way to read it. */
+.mp-areatip{position:absolute;right:10px;bottom:10px;max-width:250px;padding:8px 11px;border-radius:10px;
+  font-size:12.5px;line-height:1.4;background:rgba(0,0,0,.78);color:#fff;
+  border:1px solid rgba(255,255,255,.16)}
+.mp-areatip.hidden{display:none}
+.mp-areatip b{display:block;font-size:13px;margin-bottom:2px}
+.mp-areatip div{opacity:.85}
+.mp-areatip .mp-x{margin-top:6px;padding:3px 8px;border-radius:7px;font-size:11px;cursor:pointer;
+  font-family:inherit;color:inherit;border:1px solid rgba(255,255,255,.2);background:transparent}
 `
 
 /**
@@ -87,6 +98,7 @@ export const MAP_HTML = `
     <button onclick="mapToggleWorld()" id="mpWorldBtn">World: on</button>
     <button onclick="mapLoadHere()" id="mpLoadBtn" class="hidden" title="Read the area now">Load this view</button>
     <button onclick="mapToggleMarks()" id="mpMarksBtn">Structures: off</button>
+    <button onclick="mapToggleAreas()" id="mpAreasBtn">Areas: on</button>
     <select id="mpMarkFilter" onchange="mapSetMarkFilter(this.value)" title="Which structures to show">
       <option value="">All structures</option>
       <option value="village">Villages</option>
@@ -102,6 +114,7 @@ export const MAP_HTML = `
     <div id="mpEmpty" class="mp-empty"></div>
     <div id="mpUngen" class="mp-ungen hidden"></div>
     <div id="mpCursor" class="mp-cursor"></div>
+    <div id="mpAreaTip" class="mp-areatip hidden"></div>
   </div>
   <div id="mpIconKey" class="mp-iconkey hidden"></div>
   <div class="mp-legend">
@@ -143,6 +156,10 @@ var MAP={data:null,heat:false,timer:null,dim:'overworld',bridge:null,busy:false,
  /* Structures off, and a per-kind filter. Read-ahead follows the host: the
     panel offers it as a control, the public map takes the operator's setting. */
  marksOn:false,markFilter:null,loadAhead:false,
+ /* Areas ON, unlike structures. A structure marker is information the operator
+    may not want published; an area is a label they wrote on purpose for people
+    to read, so hiding it by default would defeat the point of writing it. */
+ areasOn:true,
  /* Explicit rather than left undefined: the fetch guard reads it, and relying
     on undefined not being false for the default is a coincidence, not a
     decision. */
@@ -195,7 +212,10 @@ function mapToggleHeat(){MAP.heat=!MAP.heat;
  document.getElementById('mpHeatBtn').textContent='Heatmap: '+(MAP.heat?'on':'off');mapDraw()}
 function mapToggleHeads(){MAP.headsOn=!MAP.headsOn;
  document.getElementById('mpHeadsBtn').textContent='Heads: '+(MAP.headsOn?'on':'off');mapDraw()}
-function mapStart(){mapStop();mapRefresh();mapBridgeCheck();MAP.timer=setInterval(mapRefresh,2000)}
+/* Areas are fetched once on open and again when the dimension changes, not on
+   the 2s position poll: they change when an operator edits one, which is orders
+   of magnitude rarer than a player taking a step. */
+function mapStart(){mapStop();mapRefresh();mapBridgeCheck();mapFetchAreas();MAP.timer=setInterval(mapRefresh,2000)}
 function mapStop(){if(MAP.timer){clearInterval(MAP.timer);MAP.timer=null}}
 function mapRefresh(){
  var sel=document.getElementById('mpDim');
@@ -209,8 +229,13 @@ function mapRefresh(){
   /* Tiles are keyed by chunk alone, and the nether uses the same coordinates as
      the overworld — so switching dimension without dropping them draws one
      world's terrain under another world's players. */
-  if(MAP.dim!==d.dimension){MAP_TILES={};MAP_MARKS={}}
+  var dimChanged=MAP.dim!==d.dimension;
+  if(dimChanged){MAP_TILES={};MAP_MARKS={}}
   MAP.data=d;MAP.dim=d.dimension;
+  /* The public feed is asked for one dimension at a time, so a switch needs a
+     new request; a pinned area from the last world would otherwise stay drawn.
+     The pin goes too — it belongs to a place the viewer has left. */
+  if(dimChanged){MAP_AREA_PIN=null;mapAreaTip();mapFetchAreas()}
   /* The server's own budget, when the feed carries one. A public visitor has no
      control over it and should not be able to spend more than the operator
      allowed. */
@@ -271,15 +296,143 @@ function mapBindNav(){
   if(!MAP.view)return;
   var r=cv.getBoundingClientRect();
   var inside=e.clientX>=r.left&&e.clientX<=r.right&&e.clientY>=r.top&&e.clientY<=r.bottom;
-  MAP.cursor=inside?mapS2W(mapLocalPoint(e,cv)):null;mapCursorText()});
+  MAP.cursor=inside?mapS2W(mapLocalPoint(e,cv)):null;mapCursorText();mapAreaTip()});
+ /* A click, not a drag: a pan that happens to end inside an area must not pin
+    it. Distance rather than a flag, because a click always carries a mousedown
+    and the two are only told apart by how far the pointer moved. */
+ cv.addEventListener('mousedown',function(e){MAP._down={x:e.clientX,y:e.clientY}});
+ cv.addEventListener('click',function(e){
+  if(!MAP.view)return;
+  var d0=MAP._down;
+  if(d0&&(Math.abs(e.clientX-d0.x)>4||Math.abs(e.clientY-d0.y)>4))return;
+  var pt=mapS2W(mapLocalPoint(e,cv));
+  var c=mapChunkOf(pt.x,pt.z);
+  /* Picking, when the host has an editor open, takes the click: adding a chunk
+     and pinning the area under it at the same time would fight each other. */
+  if(typeof mapAreaPicking==='function'&&mapAreaPicking()){
+   if(typeof mapAreaPickChunk==='function')mapAreaPickChunk(c.cx,c.cz);
+   return}
+  if(!MAP.areasOn)return;
+  mapPinArea(mapAreaAt(MAP_AREAS,c.cx,c.cz,MAP.dim))});
  cv.addEventListener('wheel',function(e){
   if(!MAP.view)return;
   e.preventDefault();
   mapZoomAt(mapLocalPoint(e,cv),e.deltaY<0?1.15:1/1.15)},{passive:false});
- cv.addEventListener('mouseleave',function(){MAP.cursor=null;mapCursorText()})}
+ cv.addEventListener('mouseleave',function(){MAP.cursor=null;mapCursorText();mapAreaTip()})}
 function mapCursorText(){
  var el=document.getElementById('mpCursor');if(!el)return;
  el.textContent=MAP.cursor?('X '+Math.round(MAP.cursor.x)+'  Z '+Math.round(MAP.cursor.z)):''}
+/* ---- named chunk areas (#144) ----
+   The same rules as shared/chunkAreas.ts, which cannot be imported into a page
+   pasted together as a string — the convention this file already follows for the
+   navigation maths above. The smoke runs both over the same battery of chunks
+   and fails if they ever disagree, which is what keeps the copy honest. */
+var MAP_AREAS=[],MAP_AREA_PIN=null;
+/* Negative-safe: (-1/16|0) is 0, which puts the chunk west of spawn one chunk
+   east of it — and an area boundary at x=0 would be off by one the whole way
+   down the axis. */
+function mapChunkOf(x,z){return {cx:Math.floor(x/16),cz:Math.floor(z/16)}}
+function mapNormDim(d){
+ var raw=(typeof d==='string')?d.trim():'';var s=raw.toLowerCase();
+ if(!s)return 'overworld';
+ if(s==='normal'||s==='overworld'||s==='minecraft:overworld')return 'overworld';
+ if(s==='nether'||s==='the_nether'||s==='minecraft:the_nether')return 'nether';
+ if(s==='the_end'||s==='end'||s==='minecraft:the_end')return 'end';
+ /* A custom world keeps its case: the name becomes a folder name when regions
+    are read, and lower-casing finds myworld/ for a folder called MyWorld. */
+ return raw.replace(/^minecraft:/i,'')}
+function mapAreaSize(a){var n=0,rs=a.rects||[];
+ for(var i=0;i<rs.length;i++)n+=(rs[i].x2-rs[i].x1+1)*(rs[i].z2-rs[i].z1+1);
+ return n}
+function mapAreaHas(a,cx,cz){var rs=a.rects||[];
+ for(var i=0;i<rs.length;i++){var r=rs[i];
+  if(cx>=r.x1&&cx<=r.x2&&cz>=r.z1&&cz<=r.z2)return true}
+ return false}
+/* SMALLEST WINS, ties on the later edit then the id — the same total order as
+   areaAt(), so a chunk reads the same here as it does in the app. */
+function mapAreaAt(areas,cx,cz,dim){
+ var want=mapNormDim(dim),best=null,bestSize=Infinity;
+ for(var i=0;i<(areas||[]).length;i++){var a=areas[i];
+  if(mapNormDim(a.dim)!==want)continue;
+  if(!mapAreaHas(a,cx,cz))continue;
+  var size=mapAreaSize(a);
+  if(size<bestSize||(size===bestSize&&best&&(a.updatedAt>best.updatedAt||
+   (a.updatedAt===best.updatedAt&&a.id>best.id)))){best=a;bestSize=size}}
+ return best}
+function mapAreasUrl(){
+ var sid=mapAdminId();
+ return sid?('/api/servers/'+sid+'/areas'):'/api/public/map/areas?dim='+encodeURIComponent(MAP.dim)}
+function mapFetchAreas(){
+ mapGet(mapAreasUrl()).then(function(d){
+  MAP_AREAS=(d&&d.areas)||[];
+  /* Optional host hook, like mapServerId: the panel keeps an editable list
+     beside the map and has to redraw it when the areas change. The public site
+     defines nothing and gets nothing. */
+  if(typeof mapAreasChanged==='function')mapAreasChanged();
+  mapDraw()})}
+/* The selection in progress, when the host is offering one. Drawn in white
+   rather than a palette colour so it cannot be mistaken for a saved area. */
+function mapDrawPick(g,w,h,dpr){
+ if(typeof mapAreaPickRects!=='function')return;
+ var rs=mapAreaPickRects()||[];if(!rs.length)return;
+ var sx=w/MAP.vp.width,sy=h/MAP.vp.height;
+ for(var i=0;i<rs.length;i++){var r=rs[i];
+  var p0=mapW2S({x:r.x1*16,z:r.z1*16}),p1=mapW2S({x:(r.x2+1)*16,z:(r.z2+1)*16});
+  var x=p0.x*sx,y=p0.y*sy,ww=(p1.x-p0.x)*sx,hh=(p1.y-p0.y)*sy;
+  g.fillStyle='rgba(255,255,255,.22)';g.fillRect(x,y,ww,hh);
+  g.strokeStyle='rgba(255,255,255,.9)';g.lineWidth=1.5*dpr;
+  g.setLineDash([4*dpr,3*dpr]);g.strokeRect(x,y,ww,hh);g.setLineDash([])}}
+function mapDrawAreas(g,w,h,dpr){
+ if(!MAP.areasOn||!MAP.view)return;
+ var sx=w/MAP.vp.width,sy=h/MAP.vp.height;
+ var want=mapNormDim(MAP.dim);
+ g.textAlign='center';g.textBaseline='middle';
+ for(var i=0;i<MAP_AREAS.length;i++){var a=MAP_AREAS[i];
+  if(mapNormDim(a.dim)!==want)continue;
+  var col=/^#[0-9a-f]{6}$/i.test(a.colour||'')?a.colour:'#e5484d';
+  var n=parseInt(col.slice(1),16);
+  var rgb=((n>>16)&255)+','+((n>>8)&255)+','+(n&255);
+  var lit=(MAP_AREA_PIN&&MAP_AREA_PIN.id===a.id);
+  var minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
+  for(var j=0;j<(a.rects||[]).length;j++){var r=a.rects[j];
+   var p0=mapW2S({x:r.x1*16,z:r.z1*16}),p1=mapW2S({x:(r.x2+1)*16,z:(r.z2+1)*16});
+   var x=p0.x*sx,y=p0.y*sy,ww=(p1.x-p0.x)*sx,hh=(p1.y-p0.y)*sy;
+   g.fillStyle='rgba('+rgb+','+(lit?0.42:0.24)+')';
+   g.fillRect(x,y,ww,hh);
+   g.strokeStyle='rgba('+rgb+',0.95)';g.lineWidth=(lit?2.5:1.5)*dpr;
+   g.strokeRect(x,y,ww,hh);
+   if(x<minX)minX=x;if(y<minY)minY=y;
+   if(x+ww>maxX)maxX=x+ww;if(y+hh>maxY)maxY=y+hh}
+  if(!isFinite(minX))continue;
+  /* The label only when the shape is big enough to hold it. Drawn at any size it
+     turns a zoomed-out world into a wall of overlapping text. */
+  if(maxX-minX>46*dpr&&maxY-minY>16*dpr){
+   var cxp=(minX+maxX)/2,cyp=(minY+maxY)/2;
+   g.font='600 '+(11*dpr)+'px Inter,system-ui,sans-serif';
+   g.lineWidth=3*dpr;g.strokeStyle='rgba(0,0,0,.65)';
+   g.strokeText(a.name,cxp,cyp);
+   g.fillStyle='rgba(255,255,255,.96)';g.fillText(a.name,cxp,cyp)}}
+ g.textAlign='center';g.textBaseline='bottom'}
+/* Hover shows it, a click keeps it — a tooltip that vanishes when the pointer
+   moves cannot be read on a phone, where there is no hover at all. */
+function mapAreaTip(){
+ var el=document.getElementById('mpAreaTip');if(!el)return;
+ var a=MAP_AREA_PIN;
+ if(!a&&MAP.cursor&&MAP.areasOn){
+  var c=mapChunkOf(MAP.cursor.x,MAP.cursor.z);
+  a=mapAreaAt(MAP_AREAS,c.cx,c.cz,MAP.dim)}
+ if(!a){el.classList.add('hidden');el.innerHTML='';return}
+ var col=/^#[0-9a-f]{6}$/i.test(a.colour||'')?a.colour:'#e5484d';
+ el.classList.remove('hidden');
+ el.innerHTML='<b style="color:'+mapEsc(col)+'">'+mapEsc(a.name)+'</b>'+
+  (a.note?'<div>'+mapEsc(a.note)+'</div>':'')+
+  (MAP_AREA_PIN?'<button class="mp-x" onclick="mapPinArea(null)">close</button>':'')}
+function mapPinArea(a){MAP_AREA_PIN=a;mapAreaTip();mapDraw()}
+function mapToggleAreas(){MAP.areasOn=!MAP.areasOn;
+ var b=document.getElementById('mpAreasBtn');
+ if(b)b.textContent='Areas: '+(MAP.areasOn?'on':'off');
+ if(MAP.areasOn&&!MAP_AREAS.length)mapFetchAreas();
+ MAP_AREA_PIN=null;mapAreaTip();mapDraw()}
 /* Heads are drawn from an avatar service by uuid, and a fetch that fails must
    leave a dot rather than a hole. Cached per uuid so a 2s redraw does not
    re-request every avatar on the server. */
@@ -594,6 +747,10 @@ function mapDraw(){
   for(var i=0;i<d.heatmap.length;i++){var c=d.heatmap[i];
    g.fillStyle='rgba(220,39,39,'+(0.12+0.55*(c.count/max)).toFixed(3)+')';
    g.fillRect(px(c.x),pz(c.z),Math.max(2*dpr,cw),Math.max(2*dpr,ch))}}
+ /* Areas sit on the terrain and under everything that has to stay readable: a
+    translucent claim over a village icon is fine, over a player is not. */
+ mapDrawAreas(g,w,h,dpr);
+ mapDrawPick(g,w,h,dpr);
  /* After the grid and the heatmap, before the players: a marker under a grid
     line reads as a smudge, and a player must never be hidden behind one. */
  mapDrawMarks(g,w,h,dpr);

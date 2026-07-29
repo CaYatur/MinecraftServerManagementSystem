@@ -126,6 +126,8 @@ import * as metrics from './core/metrics'
 import * as eventsMod from './core/events'
 import * as alertsMod from './core/alerts'
 import * as worldsMod from './core/worlds'
+import * as areasMod from '@shared/chunkAreas'
+import * as areasMod2 from './core/chunkAreas'
 import {
   isValidMcName,
   isValidWorldName,
@@ -2228,6 +2230,193 @@ export async function runWorldsSmoke(): Promise<void> {
     rmSync(emptyZip, { force: true })
     console.log('WORLDS-SMOKE: import refuses zip-slip and worldless archives, cleans up after itself')
 
+    // --- 12. chunk areas: the rules four map surfaces have to share (#144) ---
+    {
+      const at = (rs: number[][]): { x1: number; z1: number; x2: number; z2: number }[] =>
+        rs.map((r) => ({ x1: r[0], z1: r[1], x2: r[2], z2: r[3] }))
+      const mk = (over: Partial<areasMod.ChunkArea>): areasMod.ChunkArea => ({
+        id: 'a',
+        name: 'A',
+        note: '',
+        colour: '#e5484d',
+        dim: 'overworld',
+        rects: [{ x1: 0, z1: 0, x2: 0, z2: 0 }],
+        createdAt: 1,
+        updatedAt: 1,
+        ...over
+      })
+
+      // Corners in any order. An operator dragging up-and-left produces x2 < x1,
+      // and a rect stored that way covers nothing at all.
+      const back = areasMod.normalizeRect({ x1: 5, z1: 9, x2: 1, z2: 2 })
+      if (!back || back.x1 !== 1 || back.x2 !== 5 || back.z1 !== 2 || back.z2 !== 9) {
+        return fail('a backwards rect was not straightened: ' + JSON.stringify(back))
+      }
+      if (areasMod.normalizeRect({ x1: 0, z1: 0, x2: NaN, z2: 0 })) return fail('NaN made a rect')
+      const huge = areasMod.normalizeRect({ x1: 0, z1: 0, x2: 9e9, z2: 0 })
+      if (!huge || huge.x2 !== areasMod.MAX_CHUNK) return fail('a rect escaped the world border')
+
+      // Merging must not change WHICH chunks are covered - only how they are
+      // written down. Four clicked chunks in a row are one rect; the union is
+      // identical either way, and that is the property worth testing.
+      const clicked = at([[0, 0, 0, 0], [1, 0, 1, 0], [2, 0, 2, 0], [3, 0, 3, 0]])
+      const merged = areasMod.normalizeRects(clicked)
+      if (merged.length !== 1) return fail('four chunks in a row did not merge: ' + JSON.stringify(merged))
+      for (let cx = -1; cx <= 4; cx++) {
+        const before = clicked.some((r) => areasMod.rectHas(r, cx, 0))
+        const after = merged.some((r) => areasMod.rectHas(r, cx, 0))
+        if (before !== after) return fail('merging changed coverage at chunk ' + cx)
+      }
+      // A rect inside another disappears into it; a duplicate collapses.
+      if (areasMod.normalizeRects(at([[0, 0, 9, 9], [2, 2, 3, 3]])).length !== 1) {
+        return fail('a contained rect survived')
+      }
+      if (areasMod.normalizeRects(at([[0, 0, 4, 4], [0, 0, 4, 4]])).length !== 1) {
+        return fail('a duplicate rect survived')
+      }
+      // Rects that merely touch at a corner are not neighbours.
+      if (areasMod.normalizeRects(at([[0, 0, 0, 0], [1, 1, 1, 1]])).length !== 2) {
+        return fail('two diagonal chunks were merged into one rect')
+      }
+
+      // Removing ONE chunk from a big selection. This is the case the first
+      // version got wrong and no test caught: a 20x20 region is a single rect,
+      // and expanding it to one rect per chunk to filter produced 400 — past
+      // the input ceiling, so 143 chunks vanished with no error at all. The
+      // fix splits the rectangle around the chunk instead, so the size of the
+      // selection cannot matter.
+      {
+        const big = areasMod.normalizeRects(at([[0, 0, 19, 19]]))
+        if (big.length !== 1 || areasMod.areaChunkCount({ rects: big }) !== 400) {
+          return fail('a 20x20 selection is not one 400-chunk rect')
+        }
+        const cut = areasMod.subtractChunk(big, 10, 10)
+        if (areasMod.areaChunkCount({ rects: cut }) !== 399) {
+          return fail('removing one chunk from 400 left ' + areasMod.areaChunkCount({ rects: cut }))
+        }
+        if (areasMod.areaHas({ rects: cut }, 10, 10)) return fail('the removed chunk is still covered')
+        // Every other chunk survives, and none is covered twice — a split that
+        // overlaps would make the area larger than the shape it draws.
+        for (let x = 0; x <= 19; x++) {
+          for (let z = 0; z <= 19; z++) {
+            const hits = cut.filter((r) => areasMod.rectHas(r, x, z)).length
+            const want = x === 10 && z === 10 ? 0 : 1
+            if (hits !== want) return fail('chunk ' + x + ',' + z + ' is covered ' + hits + ' times')
+          }
+        }
+        // Removing a corner, an edge and the last chunk of all.
+        if (areasMod.areaChunkCount({ rects: areasMod.subtractChunk(big, 0, 0) }) !== 399) {
+          return fail('removing the corner went wrong')
+        }
+        if (areasMod.areaChunkCount({ rects: areasMod.subtractChunk(big, 19, 5) }) !== 399) {
+          return fail('removing an edge chunk went wrong')
+        }
+        const one = areasMod.normalizeRects(at([[7, 7, 7, 7]]))
+        if (areasMod.subtractChunk(one, 7, 7).length !== 0) return fail('removing the only chunk left something')
+        // A chunk that was never in the selection changes nothing.
+        if (areasMod.areaChunkCount({ rects: areasMod.subtractChunk(big, 99, 99) }) !== 400) {
+          return fail('removing an unselected chunk changed the selection')
+        }
+      }
+
+      // Too many pieces is REFUSED, not trimmed. `normalizeRects` used to slice
+      // its input, so an API caller who sent a hundred scattered chunks got a
+      // 200 and lost most of them — with nothing to say which.
+      {
+        const scattered = at(
+          Array.from({ length: areasMod.MAX_RECTS_PER_AREA + 20 }, (_, i) => [i * 2, 0, i * 2, 0])
+        )
+        const c = areasMod.checkArea({ name: 'swiss cheese', rects: scattered })
+        if (c.ok) return fail('a shape with too many pieces was accepted')
+        if (c.error !== 'too-many-rects') return fail('wrong reason: ' + c.error)
+        const flood = at(Array.from({ length: areasMod.MAX_INPUT_RECTS + 1 }, (_, i) => [i * 2, 0, i * 2, 0]))
+        const c2 = areasMod.checkArea({ name: 'flood', rects: flood })
+        if (c2.ok || c2.error !== 'too-many-rects') return fail('a flood of rects was not refused: ' + JSON.stringify(c2))
+        // ...and a shape that merges down to few enough pieces is still fine,
+        // however many rectangles it arrived as.
+        const contiguous = at(Array.from({ length: 300 }, (_, i) => [i, 0, i, 0]))
+        const c3 = areasMod.checkArea({ name: 'a long road', rects: contiguous })
+        if (!c3.ok) return fail('300 chunks in a row were refused: ' + c3.error)
+        if (c3.value.rects.length !== 1) return fail('300 chunks in a row did not merge to one rect')
+      }
+
+      // Dimension scoping. Without it, an area drawn in the overworld paints the
+      // same rectangle over the nether, where it means nothing.
+      const over = mk({ id: 'o', rects: at([[0, 0, 9, 9]]) })
+      const nether = mk({ id: 'n', dim: 'nether', rects: at([[0, 0, 9, 9]]) })
+      if (areasMod.areaAt([over, nether], 5, 5, 'overworld')?.id !== 'o') return fail('overworld lookup')
+      if (areasMod.areaAt([over, nether], 5, 5, 'nether')?.id !== 'n') return fail('nether lookup')
+      if (areasMod.areaAt([over], 5, 5, 'nether')) return fail('an overworld area answered in the nether')
+      // `the_nether` and `minecraft:the_nether` are the same place.
+      if (areasMod.areaAt([nether], 5, 5, 'minecraft:the_nether')?.id !== 'n') return fail('dimension aliasing')
+
+      // Smallest wins, so the specific label beats the containing one.
+      const town = mk({ id: 'town', rects: at([[0, 0, 99, 99]]) })
+      const plot = mk({ id: 'plot', rects: at([[4, 4, 5, 5]]) })
+      if (areasMod.areaAt([town, plot], 5, 5, 'overworld')?.id !== 'plot') return fail('the big area won')
+      if (areasMod.areaAt([plot, town], 5, 5, 'overworld')?.id !== 'plot') return fail('order changed the answer')
+      if (areasMod.areaAt([town, plot], 50, 50, 'overworld')?.id !== 'town') return fail('outside the plot')
+      // Same size: the later edit wins, and the answer is stable either way round.
+      const older = mk({ id: 'x', rects: at([[0, 0, 1, 1]]), updatedAt: 10 })
+      const newer = mk({ id: 'y', rects: at([[0, 0, 1, 1]]), updatedAt: 20 })
+      if (areasMod.areaAt([older, newer], 0, 0, 'overworld')?.id !== 'y') return fail('tie-break')
+      if (areasMod.areaAt([newer, older], 0, 0, 'overworld')?.id !== 'y') return fail('tie-break is order-dependent')
+      // The indexed form is what renderers use; it must agree with the one-off.
+      const idx = areasMod.areaIndex([town, plot], 'overworld')
+      if (areasMod.areaAtIndexed(idx, 5, 5)?.id !== 'plot') return fail('the indexed lookup disagrees')
+
+      // What a visitor may read. A field added to `ChunkArea` and forgotten here
+      // is how private data reaches a public page, so this asserts the shape
+      // exactly rather than spot-checking it.
+      const secret = mk({ id: 's', name: 'staff', hidden: true })
+      const shown = mk({ id: 'p', name: 'spawn', note: 'bu alan sahibi: CaYatur' })
+      const pub = areasMod.publicChunkAreas([secret, shown])
+      if (pub.length !== 1 || pub[0].id !== 'p') return fail('a hidden area was published')
+      if (pub[0].note !== 'bu alan sahibi: CaYatur') return fail('the note did not survive')
+      const keys = Object.keys(pub[0]).sort().join(',')
+      if (keys !== 'colour,dim,id,name,note,rects') return fail('public area shape drifted: ' + keys)
+
+      // Typed coordinates, the half that exists because clicking 400 chunks is
+      // not a plan. One bad line must not throw away the good ones.
+      const typed = areasMod.parseChunkInput('10,20\n30 40 - 32 42\nnonsense\n-5,-5')
+      if (typed.bad.length !== 1) return fail('bad lines: ' + JSON.stringify(typed.bad))
+      if (!typed.rects.some((r) => areasMod.rectHas(r, 31, 41))) return fail('the ranged line was lost')
+      if (!typed.rects.some((r) => areasMod.rectHas(r, -5, -5))) return fail('negative chunks were lost')
+      if (typed.rects.some((r) => areasMod.rectHas(r, 11, 20))) return fail('a single chunk grew')
+
+      // Validation, which the API leans on: every refusal names its reason.
+      const bad: [string, areasMod.AreaInput][] = [
+        ['name-required', { name: '  ', rects: at([[0, 0, 0, 0]]) }],
+        ['no-chunks', { name: 'x', rects: [] }],
+        ['name-too-long', { name: 'n'.repeat(areasMod.MAX_NAME + 1), rects: at([[0, 0, 0, 0]]) }],
+        ['note-too-long', { name: 'x', note: 'n'.repeat(areasMod.MAX_NOTE + 1), rects: at([[0, 0, 0, 0]]) }],
+        ['too-many-chunks', { name: 'x', rects: at([[0, 0, 4000, 4000]]) }]
+      ]
+      for (const [why, input] of bad) {
+        const c = areasMod.checkArea(input)
+        if (c.ok || c.error !== why) return fail('expected ' + why + ', got ' + JSON.stringify(c))
+      }
+      const good = areasMod.checkArea({
+        name: '  test alanı  ',
+        note: 'bu alan sahibi: CaYatur',
+        colour: '#ABC',
+        dim: 'THE_NETHER',
+        rects: at([[3, 3, 3, 3], [4, 3, 4, 3]])
+      })
+      if (!good.ok) return fail('a good area was refused: ' + good.error)
+      if (good.value.name !== 'test alanı') return fail('the name was not trimmed')
+      if (good.value.colour !== '#aabbcc') return fail('short hex was not expanded: ' + good.value.colour)
+      if (good.value.dim !== 'nether') return fail('the dimension was not normalised: ' + good.value.dim)
+      if (good.value.rects.length !== 1) return fail('adjacent chunks were not merged on save')
+      if (areasMod.normalizeColour('rgb(1,2,3)') !== areasMod.AREA_COLOURS[0]) return fail('a junk colour got through')
+
+      // Negative block coordinates are the classic off-by-one: `-1/16|0` is 0,
+      // which puts the chunk west of spawn one chunk east of it.
+      if (areasMod.chunkOf(-1, -1).cx !== -1) return fail('chunkOf rounds negatives towards zero')
+      if (areasMod.chunkOf(16, 31).cx !== 1 || areasMod.chunkOf(16, 31).cz !== 1) return fail('chunkOf')
+      console.log('WORLDS-SMOKE: chunk areas OK (merge keeps coverage, smallest wins, hidden stays hidden)')
+    }
+
     cleanup()
     console.log('WORLDS-SMOKE: PASS')
     app.exit(0)
@@ -4047,6 +4236,13 @@ function runPageScript(html: string, seed: Record<string, unknown> = {}): PageRu
         fill: () => {},
         fillRect: () => {},
         fillText: () => {},
+        // Areas draw outlines and a dashed selection (#144). A stub that is
+        // missing a method the page calls fails the whole run with a TypeError,
+        // which reads like a bug in the page rather than a gap in the stub.
+        strokeRect: () => {},
+        strokeText: () => {},
+        setLineDash: () => {},
+        drawImage: () => {},
         set font(_v: string) {},
         set fillStyle(_v: string) {},
         set strokeStyle(_v: string) {},
@@ -4997,6 +5193,99 @@ export async function runWebSmoke(): Promise<void> {
         } finally {
           siteMod.setSiteConfig({ map: before })
         }
+      }
+
+      // ---- named chunk areas over HTTP (#144) ----
+      {
+        const areasUrl = '/api/servers/' + id + '/areas'
+        const before = siteMod.getSiteConfig().map
+        areasMod2._reset()
+        try {
+          if ((await get(areasUrl)).status !== 401) return fail('the area list answered without a token')
+          if ((await post(areasUrl, { name: 'x', rects: [{ x1: 0, z1: 0, x2: 0, z2: 0 }] }, ft)).status !== 403) {
+            return fail('a session without `settings` could write an area')
+          }
+
+          // Two adjacent chunks go in; one rectangle comes back. The tidy-up is
+          // in the shared layer and this proves the route actually runs it,
+          // rather than storing whatever the caller sent.
+          let r2 = await post(
+            areasUrl,
+            {
+              name: 'test alanı',
+              note: 'bu alan sahibi: CaYatur',
+              colour: '#46a758',
+              dim: 'overworld',
+              rects: [{ x1: 10, z1: 10, x2: 10, z2: 10 }, { x1: 11, z1: 10, x2: 11, z2: 10 }]
+            },
+            ot
+          )
+          if (r2.status !== 200) return fail('creating an area: ' + r2.status + ' ' + (await r2.text()))
+          const made = (await r2.json()) as { id: string; rects: unknown[]; name: string }
+          if (made.rects.length !== 1) return fail('the route stored an untidied selection')
+          if (made.name !== 'test alanı') return fail('the name did not survive the round trip')
+
+          // Editing keeps the id — a UI that renders by id would otherwise see
+          // every edit as a delete and an insert.
+          r2 = await post(areasUrl, { areaId: made.id, name: 'renamed', dim: 'overworld', rects: [{ x1: 10, z1: 10, x2: 10, z2: 10 }], hidden: true }, ot)
+          if (r2.status !== 200) return fail('editing an area: ' + r2.status)
+          const edited = (await r2.json()) as { id: string; hidden?: boolean; name: string }
+          if (edited.id !== made.id) return fail('an edit changed the id')
+          if (!edited.hidden) return fail('the area did not hide')
+
+          // ...and unhiding has to work. `checkArea` only sets `hidden` when it
+          // is true, so a naive spread would leave a hidden area hidden forever.
+          r2 = await post(areasUrl, { areaId: made.id, name: 'renamed', dim: 'overworld', rects: [{ x1: 10, z1: 10, x2: 10, z2: 10 }], hidden: false }, ot)
+          if ((await r2.json() as { hidden?: boolean }).hidden) return fail('an area could not be unhidden')
+
+          // Every refusal names itself, because an API caller has nothing else
+          // to go on.
+          r2 = await post(areasUrl, { name: '', rects: [{ x1: 0, z1: 0, x2: 0, z2: 0 }] }, ot)
+          if (r2.status !== 400 || (await r2.json() as { error: string }).error !== 'name-required') {
+            return fail('a nameless area was not refused by name')
+          }
+          r2 = await post(areasUrl, { name: 'huge', rects: [{ x1: 0, z1: 0, x2: 4000, z2: 4000 }] }, ot)
+          if ((await r2.json() as { error: string }).error !== 'too-many-chunks') return fail('an enormous area got through')
+          r2 = await post(areasUrl, { areaId: 'nope', name: 'x', rects: [{ x1: 0, z1: 0, x2: 0, z2: 0 }] }, ot)
+          if (r2.status !== 404) return fail('editing a missing area: ' + r2.status)
+
+          // The public feed. A hidden area must not appear, and neither must the
+          // timestamps — this is the check that a field added to `ChunkArea`
+          // later does not quietly reach a stranger.
+          const hidden = await post(areasUrl, { name: 'staff only', dim: 'overworld', hidden: true, rects: [{ x1: 50, z1: 50, x2: 51, z2: 51 }] }, ot)
+          if (hidden.status !== 200) return fail('creating a hidden area: ' + hidden.status)
+          siteMod.setSiteConfig({ map: { ...before, enabled: true, serverId: id, fixedDim: '' } })
+          const pr = await sget('/api/public/map/areas?dim=overworld')
+          if (pr.status !== 200) return fail('the public area feed: ' + pr.status)
+          const pub = (await pr.json()) as { areas: Record<string, unknown>[] }
+          if (pub.areas.length !== 1) return fail('the public feed carried ' + pub.areas.length + ' areas, expected 1')
+          if (pub.areas[0].name === 'staff only') return fail('a hidden area reached the public site')
+          const shape = Object.keys(pub.areas[0]).sort().join(',')
+          if (shape !== 'colour,dim,id,name,note,rects') return fail('the public area shape drifted: ' + shape)
+
+          // A dimension the areas are not in returns none of them, rather than
+          // painting overworld rectangles over the nether.
+          const nether = (await (await sget('/api/public/map/areas?dim=nether')).json()) as { areas: unknown[] }
+          if (nether.areas.length !== 0) return fail('overworld areas appeared in the nether')
+
+          // With the map unpublished there is no such resource at all — 404, not
+          // an empty list, for the same reason `/api/public/map` answers 404.
+          siteMod.setSiteConfig({ map: { ...before, enabled: false } })
+          if ((await sget('/api/public/map/areas')).status !== 404) return fail('areas leaked with the map off')
+
+          const del2 = await del(areasUrl + '?areaId=' + made.id, ot)
+          if (del2.status !== 200) return fail('deleting an area: ' + del2.status)
+          if ((await del(areasUrl + '?areaId=' + made.id, ot)).status !== 404) return fail('a second delete was not a 404')
+          const left = (await (await get(areasUrl, ot)).json()) as { areas: { id: string; name: string }[] }
+          if (!Array.isArray(left.areas)) return fail('the area list lost its shape')
+          if (left.areas.some((a) => a.id === made.id)) return fail('a deleted area came back')
+          // The operator's own list keeps the hidden one the public feed dropped.
+          if (!left.areas.some((a) => a.name === 'staff only')) return fail('the hidden area vanished for the operator too')
+        } finally {
+          siteMod.setSiteConfig({ map: before })
+          areasMod2._reset()
+        }
+        console.log('WEB-SMOKE: chunk areas over HTTP OK (gated, tidied, hidden ones stay off the public feed)')
       }
 
       console.log('WEB-SMOKE: profile visibility OK (' + checked + ' checks, omitted not hidden, per-field toggles)')
@@ -6443,6 +6732,132 @@ export async function runWebSmoke(): Promise<void> {
             return fail('the page zoom moved the point under the cursor')
           }
           if (pmap.MAP.view.scale !== 2) return fail('the page zoom did not change scale')
+        }
+
+        // #144: and its own copy of the chunk-area rules, for the same reason.
+        // Which area owns a chunk has to read the same on all four surfaces, so
+        // the page's answer is compared to `areaAt`'s over a battery that
+        // includes every case the rule is made of — nesting, ties, dimensions,
+        // and the negative coordinates that `|0` gets wrong.
+        {
+          const pctx = panel.ctx as Record<string, (...a: unknown[]) => unknown>
+          const mk = (o: Partial<areasMod.ChunkArea>): areasMod.ChunkArea => ({
+            id: 'a', name: 'A', note: '', colour: '#e5484d', dim: 'overworld',
+            rects: [{ x1: 0, z1: 0, x2: 0, z2: 0 }], createdAt: 1, updatedAt: 1, ...o
+          })
+          const battery: areasMod.ChunkArea[] = [
+            mk({ id: 'town', rects: [{ x1: -20, z1: -20, x2: 20, z2: 20 }] }),
+            // Three deep, so "smallest wins" is tested against a chain rather
+            // than a single pair — a rule that picks the smaller of two can
+            // still pick the wrong one of three.
+            mk({ id: 'district', rects: [{ x1: -10, z1: -10, x2: 0, z2: 0 }] }),
+            mk({ id: 'plot', rects: [{ x1: -5, z1: -5, x2: -1, z2: -1 }] }),
+            mk({ id: 'tieA', rects: [{ x1: 38, z1: 38, x2: 41, z2: 41 }], updatedAt: 5 }),
+            mk({ id: 'tieB', rects: [{ x1: 38, z1: 38, x2: 41, z2: 41 }], updatedAt: 9 }),
+            mk({ id: 'hell', dim: 'the_nether', rects: [{ x1: -20, z1: -20, x2: 20, z2: 20 }] }),
+            mk({ id: 'custom', dim: 'MyWorld', rects: [{ x1: 0, z1: 0, x2: 4, z2: 4 }] })
+          ]
+          // EVERY chunk in the range, not a sampled stride. A stride of 3 and 7
+          // stepped straight over the 3x3 plot and the 2x2 tie pair, so the
+          // battery compared only the cases where nothing overlaps — it stayed
+          // green with the page's smallest-wins rule deleted outright.
+          let compared = 0
+          let overlaps = 0
+          for (const dim of ['overworld', 'nether', 'minecraft:the_nether', 'MyWorld', 'end']) {
+            for (let cx = -25; cx <= 45; cx++) {
+              for (let cz = -25; cz <= 45; cz++) {
+                const mine = areasMod.areaAt(battery, cx, cz, dim)
+                const theirs = pctx['mapAreaAt'](battery, cx, cz, dim) as areasMod.ChunkArea | null
+                if ((mine?.id ?? null) !== (theirs?.id ?? null)) {
+                  return fail(
+                    'the page disagrees about ' + cx + ',' + cz + ' in ' + dim +
+                    ': app says ' + (mine?.id ?? 'none') + ', page says ' + (theirs?.id ?? 'none')
+                  )
+                }
+                compared++
+                // Count the chunks where the rule actually has to choose. A
+                // battery that never lands on a contested chunk proves nothing,
+                // and that is exactly how the first version of this passed.
+                if (battery.filter((a) => areasMod.areaAt([a], cx, cz, dim)).length > 1) overlaps++
+              }
+            }
+          }
+          // The chunk each block belongs to, which is where `|0` bites: -1/16|0
+          // is 0, so a boundary at x=0 would be off by one all the way down.
+          for (const b of [-1, -16, -17, 0, 15, 16, 31, -1000]) {
+            const mine = areasMod.chunkOf(b, b)
+            const theirs = pctx['mapChunkOf'](b, b) as { cx: number; cz: number }
+            if (mine.cx !== theirs.cx || mine.cz !== theirs.cz) {
+              return fail('the page puts block ' + b + ' in chunk ' + theirs.cx + ', not ' + mine.cx)
+            }
+          }
+          // The dimension normaliser they both depend on, including the custom
+          // world whose case must survive because it becomes a folder name.
+          for (const d of ['', 'normal', 'THE_END', 'minecraft:the_nether', 'MyWorld', 'nether']) {
+            if (normalizeDimension(d) !== pctx['mapNormDim'](d)) {
+              return fail('the page normalises ' + JSON.stringify(d) + ' differently')
+            }
+          }
+          if (compared < 5000) return fail('the area cross-check barely ran: ' + compared)
+          if (overlaps < 20) return fail('the battery never hit a contested chunk: ' + overlaps)
+
+          // The panel's chunk picker. Clicking builds a selection, clicking the
+          // same chunk again takes it back, and the result is tidied the way the
+          // server will tidy it — so the count the operator reads is the count
+          // that gets stored.
+          const pnl = panel.ctx as { AREA_PICK: areasMod.ChunkRect[]; AREA_PICKING: boolean }
+          pnl.AREA_PICK = []
+          pnl.AREA_PICKING = true
+          for (let cx = 0; cx < 4; cx++) pctx['areaPickChunk'](cx, 0)
+          if (pnl.AREA_PICK.length !== 1) {
+            return fail('the picker did not merge a row: ' + JSON.stringify(pnl.AREA_PICK))
+          }
+          if (areasMod.areaChunkCount({ rects: pnl.AREA_PICK }) !== 4) return fail('the picker lost a chunk')
+          // Taking one out of the MIDDLE is the case that matters: the rect it
+          // sits in covers three others, and dropping the rect drops them too.
+          // The panel splits the rectangle, the same as the app does.
+          pctx['areaPickChunk'](1, 0)
+          if (areasMod.areaChunkCount({ rects: pnl.AREA_PICK }) !== 3) {
+            return fail('removing one chunk took ' + (4 - areasMod.areaChunkCount({ rects: pnl.AREA_PICK })) + ' with it')
+          }
+          for (const c of [0, 2, 3]) {
+            if (!pnl.AREA_PICK.some((r) => areasMod.rectHas(r, c, 0))) return fail('chunk ' + c + ' was lost')
+          }
+          if (pnl.AREA_PICK.some((r) => areasMod.rectHas(r, 1, 0))) return fail('the removed chunk came back')
+          // The panel tidies with its own copy of the merge, so it has to agree
+          // with the shared one — otherwise the operator counts one thing and
+          // the server stores another.
+          const theirsTidy = pctx['areaTidy']([
+            { x1: 0, z1: 0, x2: 0, z2: 0 }, { x1: 1, z1: 0, x2: 1, z2: 0 },
+            { x1: 5, z1: 5, x2: 9, z2: 9 }, { x1: 6, z1: 6, x2: 7, z2: 7 }
+          ]) as areasMod.ChunkRect[]
+          const mineTidy = areasMod.normalizeRects([
+            { x1: 0, z1: 0, x2: 0, z2: 0 }, { x1: 1, z1: 0, x2: 1, z2: 0 },
+            { x1: 5, z1: 5, x2: 9, z2: 9 }, { x1: 6, z1: 6, x2: 7, z2: 7 }
+          ])
+          // By value, not by JSON: the two build their objects with the fields
+          // in different orders, which `JSON.stringify` reports as a difference
+          // and no consumer of these rects can even observe.
+          const canon = (rs: areasMod.ChunkRect[]): string =>
+            rs.map((r) => [r.x1, r.z1, r.x2, r.z2].join(',')).join(' ')
+          if (canon(theirsTidy) !== canon(mineTidy)) {
+            return fail('the panel tidies differently: ' + canon(theirsTidy) + ' vs ' + canon(mineTidy))
+          }
+          // And the panel must survive the big-selection case too — its own
+          // removal is a second implementation, so it gets the same test.
+          pnl.AREA_PICK = [{ x1: 0, z1: 0, x2: 19, z2: 19 }]
+          pctx['areaPickChunk'](10, 10)
+          if (areasMod.areaChunkCount({ rects: pnl.AREA_PICK }) !== 399) {
+            return fail(
+              'the panel lost chunks removing one from 400: ' +
+              areasMod.areaChunkCount({ rects: pnl.AREA_PICK })
+            )
+          }
+          if (canon(pnl.AREA_PICK) !== canon(areasMod.subtractChunk([{ x1: 0, z1: 0, x2: 19, z2: 19 }], 10, 10))) {
+            return fail('the panel splits a rectangle differently from the app')
+          }
+          pnl.AREA_PICKING = false
+          pnl.AREA_PICK = []
         }
 
         // #104: the same empty state on the PUBLIC page must not talk about

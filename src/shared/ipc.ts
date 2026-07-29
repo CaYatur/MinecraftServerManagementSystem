@@ -43,6 +43,7 @@ import type { McVersion, BuildInfo, CreateServerOptions, CreateProgress } from '
 import type { ModEntry, ModrinthDetail, ModrinthHit, ModUpdateReport } from './mods'
 import type { BridgeInstallResult, BridgeStatus } from './bridgeRelease'
 import type { StructureMark } from './regionFormat'
+import type { AreaInput, ChunkArea } from './chunkAreas'
 import type {
   WebStatus,
   WebUserView,
@@ -137,6 +138,9 @@ export const IPC = {
   mapTiles: 'map:tiles',
   mapCacheClear: 'map:cache-clear',
   apiKeyDisabled: 'apikey:disabled',
+  areasList: 'areas:list',
+  areasSave: 'areas:save',
+  areasDelete: 'areas:delete',
 
   javaList: 'java:list',
   javaResolve: 'java:resolve',
@@ -358,6 +362,15 @@ export interface MsmsApi {
   }>
   /** Drop every cached region. Returns how many files went. */
   clearMapCache(): Promise<number>
+
+  /**
+   * Named chunk areas (#144). The operator's own list — hidden areas included,
+   * which is the difference between this and what the public site is served.
+   */
+  listChunkAreas(serverId: string): Promise<ChunkArea[]>
+  /** Create when `areaId` is absent, replace that area when it is present. */
+  saveChunkArea(serverId: string, input: AreaInput & { areaId?: string }): Promise<ChunkArea>
+  deleteChunkArea(serverId: string, areaId: string): Promise<void>
 
   /** Switch a key off, reversibly. Revoke is the permanent one. */
   setApiKeyDisabled(id: string, disabled: boolean): Promise<ApiKeyView>

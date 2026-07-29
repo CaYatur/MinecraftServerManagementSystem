@@ -83,6 +83,9 @@ const api: MsmsApi = {
   mapTiles: (id, dim, chunks, marks) => ipcRenderer.invoke(IPC.mapTiles, id, dim, chunks, marks),
   clearMapCache: () => ipcRenderer.invoke(IPC.mapCacheClear),
   setApiKeyDisabled: (id, disabled) => ipcRenderer.invoke(IPC.apiKeyDisabled, id, disabled),
+  listChunkAreas: (serverId) => ipcRenderer.invoke(IPC.areasList, serverId),
+  saveChunkArea: (serverId, input) => ipcRenderer.invoke(IPC.areasSave, serverId, input),
+  deleteChunkArea: (serverId, areaId) => ipcRenderer.invoke(IPC.areasDelete, serverId, areaId),
 
   listJava: (refresh) => ipcRenderer.invoke(IPC.javaList, refresh),
   resolveJava: (override) => ipcRenderer.invoke(IPC.javaResolve, override),
