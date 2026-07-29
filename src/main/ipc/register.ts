@@ -447,6 +447,19 @@ export function registerIpc(): void {
   )
   H(IPC.webUserDelete, (_e, id: string) => auth.deleteUser(id))
   H(IPC.webUserPerms, (_e, id: string, perms: Record<string, Scope[]>) => auth.setUserPerms(id, perms))
+  // Assigning named roles, which the panel has always offered and which has
+  // never reached the main process — same omission as the rbac channels.
+  H(IPC.webUserRoles, (_e, id: string, roleMap: Record<string, string[]>) => {
+    const username = auth.setUserRoles(id, roleMap)
+    audit.record({
+      source: 'panel',
+      action: 'user.roles',
+      actor: 'operator',
+      target: username,
+      detail: Object.keys(roleMap ?? {}).length + ' servers'
+    })
+    return username
+  })
   H(IPC.webUserAudit, (_e, id: string, canAudit: boolean) => {
     // Granting/revoking sight of the personal-data audit log is itself audited.
     const username = auth.setUserAudit(id, !!canAudit)
@@ -460,6 +473,25 @@ export function registerIpc(): void {
   })
   H(IPC.webUserPassword, (_e, id: string, password: string) => auth.setUserPassword(id, password))
   H(IPC.webUserMc, (_e, id: string, mcName: string) => auth.setUserMc(id, mcName))
+
+  // --- named roles (#28) ---
+  //
+  // Declared in `ipc.ts`, exposed in the preload, called by the panel — and
+  // never registered here, so every one of them answered "No handler
+  // registered for 'rbac:list-roles'" from the day they were written. It went
+  // unnoticed because the view loaded them inside a chain that swallowed the
+  // rejection, which is also why the API keys after them never appeared (#153).
+  H(IPC.rbacList, () => roles.listRoles())
+  H(IPC.rbacUpsert, (_e, role: Partial<RoleDef> & { id?: string }) => {
+    const r = roles.upsertRole(role)
+    audit.record({ source: 'panel', action: 'role.upsert', actor: 'operator', target: r.name })
+    return r
+  })
+  H(IPC.rbacDelete, (_e, roleId: string) => {
+    const gone = roles.listRoles().find((r) => r.id === roleId)
+    roles.deleteRole(roleId)
+    audit.record({ source: 'panel', action: 'role.delete', actor: 'operator', target: gone?.name ?? roleId })
+  })
 
   // --- API keys (#48). Desktop is the owner console, so no scope gate here;
   // the HTTP surface has its own owner check. Issue/revoke are audited on both

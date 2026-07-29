@@ -2241,6 +2241,50 @@ export async function runWorldsSmoke(): Promise<void> {
     rmSync(emptyZip, { force: true })
     console.log('WORLDS-SMOKE: import refuses zip-slip and worldless archives, cleans up after itself')
 
+    // --- 11z. every IPC channel the preload exposes must have a handler -----
+    //
+    // `rbac:list-roles`, `rbac:upsert-role` and `rbac:delete-role` were
+    // declared in ipc.ts, exposed by the preload and called by the panel — and
+    // never registered. Every one answered "No handler registered for
+    // 'rbac:list-roles'" from the day they were written, and nothing noticed
+    // because the caller swallowed the rejection (#153).
+    //
+    // Read out of the SOURCE rather than from ipcMain, because the smoke
+    // registers handlers itself and asking the live process would only prove
+    // that this run wired them up.
+    {
+      const ipcSrc = readFileSync(join(process.cwd(), 'src', 'shared', 'ipc.ts'), 'utf-8')
+      const regSrc = readFileSync(join(process.cwd(), 'src', 'main', 'ipc', 'register.ts'), 'utf-8')
+      const preSrc = readFileSync(join(process.cwd(), 'src', 'preload', 'index.ts'), 'utf-8')
+
+      // `name: 'channel:string',` inside the channel table.
+      const declared = [...ipcSrc.matchAll(/^\s{2}(\w+):\s*'([a-z0-9:-]+)',?$/gim)].map((m) => m[1])
+      if (declared.length < 40) return fail('only found ' + declared.length + ' IPC channels; the scan is wrong')
+
+      // COMMENTS STRIPPED FIRST. Without this the check is vacuous: commenting
+      // a handler out leaves `IPC.rbacList` sitting in the comment, the scan
+      // finds it, and the test stays green over a channel that answers "no
+      // handler registered". Proved by doing exactly that.
+      const code = regSrc
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/^\s*\/\/.*$/gm, '')
+
+      const missing: string[] = []
+      for (const key of declared) {
+        // Only channels the renderer can actually reach are worth this: a
+        // channel declared and used nowhere is dead code, not a broken call.
+        if (!preSrc.includes('IPC.' + key)) continue
+        // The registration itself, not a mention of the name — and tolerant of
+        // the multi-line form several handlers use, where the channel sits on
+        // its own line under the call.
+        if (!new RegExp('H\\(\\s*IPC\\.' + key + '\\b').test(code)) missing.push(key)
+      }
+      if (missing.length) {
+        return fail('the preload calls ' + missing.join(', ') + ' and nothing registers a handler')
+      }
+      console.log('SMOKE: every IPC channel the preload exposes has a handler')
+    }
+
     // --- 12a. a region parse must not freeze the process (#151) -------------
     {
       // A real region file: 1024 slots, each a deflated NBT compound. The

@@ -1,9 +1,10 @@
-import { app, BrowserWindow, shell, Menu, session } from 'electron'
+import { app, BrowserWindow, shell, Menu, session, dialog } from 'electron'
 import { join } from 'node:path'
 import { existsSync } from 'node:fs'
 import { loadConfig, getConfig } from './config'
 import { registerIpc } from './ipc/register'
 import { processManager } from './core/processManager'
+import { listServers } from './core/serverRegistry'
 import { initScheduler, stopAllJobs } from './core/scheduler'
 import { initWebServer, stopWebServer } from './web/server'
 import { initEconomy } from './store/economy'
@@ -40,6 +41,89 @@ let mainWindow: BrowserWindow | null = null
 let splash: BrowserWindow | null = null
 let splashShownAt = 0
 let cleanupDone = false
+
+
+/**
+ * Refuse to close while a server is running, and say why.
+ *
+ * Quitting used to stop every server with `immediate: true` — no countdown, no
+ * warning, no chance to say no. From the operator's side that is the app
+ * closing and their players being dropped without a word; from a player's side
+ * it is the server vanishing mid-sentence.
+ *
+ * So: ask first, and then stop properly. `immediate` is gone — the configured
+ * countdown runs, which broadcasts to players and gives the world time to save.
+ * A server that will not go down in time is killed rather than left orphaned,
+ * because the alternative is a Java process holding the world files after MSMS
+ * has exited.
+ */
+let quitConfirmed = false
+
+function runningServerNames(): string[] {
+  return listServers()
+    .filter((s) => processManager.isRunning(s.id))
+    .map((s) => s.name)
+}
+
+async function confirmQuit(parent?: BrowserWindow): Promise<boolean> {
+  if (quitConfirmed) return true
+  const names = runningServerNames()
+  if (!names.length) return true
+  const tr = getConfig().language === 'tr'
+  const list = names.join(', ')
+  const opts = {
+    type: 'warning' as const,
+    buttons: tr ? ['Sunucuları durdur ve kapat', 'Vazgeç'] : ['Stop servers and quit', 'Cancel'],
+    defaultId: 1,
+    cancelId: 1,
+    title: tr ? 'Sunucu hâlâ çalışıyor' : 'A server is still running',
+    message: tr
+      ? names.length === 1
+        ? `"${list}" hâlâ çalışıyor.`
+        : `${names.length} sunucu hâlâ çalışıyor: ${list}`
+      : names.length === 1
+        ? `"${list}" is still running.`
+        : `${names.length} servers are still running: ${list}`,
+    detail: tr
+      ? 'Kapatmadan önce durdurulacaklar. Oyunculara geri sayım duyurulur ve dünya kaydedilir; bu birkaç saniye sürebilir.'
+      : 'They will be stopped before MSMS exits. Players get the countdown and the world is saved, which can take a few seconds.'
+  }
+  const r = parent
+    ? await dialog.showMessageBox(parent, opts)
+    : await dialog.showMessageBox(opts)
+  if (r.response !== 0) return false
+  quitConfirmed = true
+  return true
+}
+
+/** Stop everything the way an operator would, then give up on stragglers. */
+async function shutdownServers(): Promise<void> {
+  const running = listServers().filter((s) => processManager.isRunning(s.id))
+  if (!running.length) return
+  log.info(`Shutting down — stopping ${running.length} running server(s) with the usual countdown…`)
+  await Promise.all(
+    running.map(async (s) => {
+      try {
+        // A ceiling, so one wedged server cannot keep the app alive forever.
+        // Whatever is still up after it is killed rather than orphaned.
+        await Promise.race([
+          processManager.stop(s.id),
+          new Promise((r) => setTimeout(r, 45_000))
+        ])
+      } catch (e) {
+        log.warn(`Stopping ${s.name} failed:`, e)
+      }
+      if (processManager.isRunning(s.id)) {
+        log.warn(`${s.name} did not stop in time; killing it`)
+        try {
+          await processManager.kill(s.id)
+        } catch {
+          /* nothing left to try */
+        }
+      }
+    })
+  )
+}
 
 function createSplash(): void {
   splash = new BrowserWindow({
@@ -102,6 +186,18 @@ function createWindow(): void {
   } else {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
   }
+
+  mainWindow.on('close', (e) => {
+    // Asked HERE as well as on before-quit: closing the window is the usual way
+    // out, and a dialog that appears after the window has already gone reads as
+    // the app having crashed and then argued about it.
+    if (quitConfirmed || cleanupDone) return
+    if (!runningServerNames().length) return
+    e.preventDefault()
+    void confirmQuit(mainWindow ?? undefined).then((ok) => {
+      if (ok) mainWindow?.close()
+    })
+  })
 
   mainWindow.on('closed', () => {
     mainWindow = null
@@ -306,11 +402,12 @@ if (!gotLock) {
   app.on('before-quit', async (e) => {
     if (cleanupDone) return
     e.preventDefault()
-    log.info('Shutting down — stopping running servers…')
+    // Every other way out — the menu, a signal, the taskbar — lands here.
+    if (!(await confirmQuit(mainWindow ?? undefined))) return
     try {
       stopAllJobs()
       stopWebServer()
-      await processManager.stopAll()
+      await shutdownServers()
       flushMetrics()
     } catch (err) {
       log.error('Error during shutdown:', err)

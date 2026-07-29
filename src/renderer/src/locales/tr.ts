@@ -980,6 +980,8 @@ const tr: typeof en = {
     keyNoServers: 'sunucu yok',
     noKeys: 'Henüz API anahtarı yok.',
     noServers: 'Henüz sunucu yok.',
+    apiDocs: 'Rota referansı',
+    apiRepo: 'Dokümantasyon ve kaynak',
     apiOrigins: "API'yi çağırabilecek tarayıcı kaynakları",
     apiOriginsHint:
       'Her satıra bir kaynak, örn. https://panel.ornek.com. Boş bırakmak, hiçbir tarayıcı sayfasının API\'yi başka bir siteden çağıramayacağı anlamına gelir — böyle bir şey geliştirmiyorsan doğru ayar budur. Joker karakter yoktur.',

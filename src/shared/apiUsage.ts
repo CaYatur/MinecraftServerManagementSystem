@@ -107,8 +107,12 @@ export function usageSamples(opts: {
   ]
 }
 
+/** Where the written documentation lives, for the "learn more" link. */
+export const DOCS_URL = 'https://github.com/CaYatur/MinecraftServerManagementSystem#-web-panel'
+export const REPO_URL = 'https://github.com/CaYatur/MinecraftServerManagementSystem'
+
 /**
- * The three sentences an operator needs before any of the above makes sense.
+ * The four sentences an operator needs before any of the above makes sense.
  *
  * A plain value, unlike `usageSamples` — it reaches the pages as JSON, so it may
  * refer to the shared constants directly.
@@ -116,5 +120,6 @@ export function usageSamples(opts: {
 export const USAGE_NOTES = [
   'Send the key in the ' + API_KEY_HEADER + ' header. It is never accepted in a query string, where it would end up in server logs and browser history.',
   'A key carries scopes, never a role: 401 means the key is wrong, disabled or expired; 403 means it is a good key without the scope that route needs.',
-  'The full route list, with the scope each one requires, is at ' + API_PREFIX + '/docs.'
+  'The full route list, with the scope each one requires, is at ' + API_PREFIX + '/docs — served by this install, so it always matches the version you are running.',
+  'Machine-readable: ' + API_PREFIX + '/openapi.json. Written documentation and the source: ' + REPO_URL + '.'
 ]

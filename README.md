@@ -46,7 +46,7 @@ A Turkish project summary is available near the end of this README: [Türkçe Ö
 
 ## 📌 Project Status
 
-**Current package version:** `0.2.0`
+**Current package version:** `0.2.3`
 
 MSMS is under active development, and the whole of it now runs: the desktop
 manager, the **admin web panel**, the **public website with its store and
@@ -622,7 +622,10 @@ per-server permissions.
   JavaScript and Python samples built against your own install's address. A key
   can be **disabled** — reversibly, unlike revoking — or deleted from the list.
 - **A documented REST surface** at `/api/v1`, with an OpenAPI document and a
-  human-readable reference the app serves itself.
+  human-readable reference **the app serves itself**, so it always matches the
+  version you are running rather than whatever the docs said last release. Both
+  the desktop app and the panel link to it from the key list, next to the code
+  samples.
 - **Audit log** of every action, with the actor, the source and the IP.
 
 ### Secure defaults
@@ -640,6 +643,15 @@ directly to the public Internet. For remote administration, put it behind a
 reverse proxy that terminates TLS, or reach it over a VPN.
 
 Treat panel tokens and API keys as secrets.
+
+---
+
+### Closing MSMS with a server running
+
+It refuses, and says which servers are up. Confirm and it stops them the way you
+would — the configured countdown is broadcast to players, the world is saved,
+and anything still up after 45 seconds is killed rather than left orphaned
+holding the world files.
 
 ---
 
@@ -690,7 +702,9 @@ a firewall rule rather than with trust.
   note; hovering or clicking it shows them. Created by selecting chunks on the
   map, by typing coordinates, or over the API.
 - **The same map engine** as the panel and the website, so all four surfaces
-  draw the same world.
+  draw the same world — and **your website's colours**, so it looks like part of
+  the same server rather than a different product.
+- **Touch:** one finger pans, two pinch, and a tap opens an area's note.
 
 Terrain is read from the server's own region files. MSMS never *generates*
 world — a map that could grow a world by being panned would be a map that can
@@ -751,6 +765,9 @@ fill a disk.
 | Fullscreen map page (own listener) | ✅ |
 | Named chunk areas | ✅ |
 | Item icons + block colours from the client jar | ✅ |
+| Named roles, assigned per server | ✅ |
+| Touch / mobile map (pan, pinch, tap) | ✅ |
+| Guarded shutdown while a server runs | ✅ |
 | MSMS Bridge plugin | ✅ builds, lightly field-tested |
 | Full visual website/CMS builder | 🗺️ Planned / evolving |
 
@@ -1490,6 +1507,9 @@ No.
 - Kendi portunda **tam ekran harita sayfası**
 - **Adlandırılmış chunk alanları** — renk, ad ve not; arayüzden veya API ile
 - Item görselleri ve harita renkleri **Mojang'ın kendi client jar'ından**
+- Sunucu başlıkken kapatmaya karşı **koruma** — onaylarsan geri sayımla düzgün durdurur
+- Haritada **dokunmatik** — tek parmak kaydırma, iki parmak yakınlaştırma
+- Sunucu bazlı **adlandırılmış roller**
 
 ### Taşınabilir çalışma mantığı
 

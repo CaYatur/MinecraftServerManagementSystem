@@ -4,7 +4,7 @@ import { CRATE_CSS, CRATE_JS, CRATE_MODAL_HTML } from '@shared/crateUi'
 import { STORE_CSS, STORE_JS, STORE_MODAL_HTML, CRATE_ICON_SVG } from '@shared/storeUi'
 import { avatarUrl } from '@shared/profile'
 import { iconSvg, STRUCTURE_ICONS } from '@shared/mapIcons'
-import { usageSamples, API_KEY_HEADER, USAGE_NOTES } from '@shared/apiUsage'
+import { usageSamples, API_KEY_HEADER, USAGE_NOTES, REPO_URL } from '@shared/apiUsage'
 import { API_PREFIX } from '@shared/apiSurface'
 import { MAP_CSS, MAP_HTML, MAP_JS } from '@shared/mapUi'
 import { AREA_COLOURS } from '@shared/chunkAreas'
@@ -1103,6 +1103,7 @@ var avatarUrl=${avatarUrl.toString()};
 var API_PREFIX=${JSON.stringify(API_PREFIX)};
 var API_KEY_HEADER=${JSON.stringify(API_KEY_HEADER)};
 var API_USAGE_NOTES=${JSON.stringify(USAGE_NOTES)};
+var API_REPO_URL=${JSON.stringify(REPO_URL)};
 var apiUsageSamples=${usageSamples.toString()};
 var STRUCTURE_ICONS=${JSON.stringify(STRUCTURE_ICONS)};
 var MAP_ICONS=STRUCTURE_ICONS;
@@ -1389,7 +1390,13 @@ function showKeyUsage(id){
   API_USAGE_NOTES.map(function(n){return esc(n)}).join('<br/>')+'</div>'+
   s.map(function(x){return '<div style="margin-top:8px"><b style="font-size:12px">'+esc(x.lang)+'</b>'+
    '<pre style="white-space:pre-wrap;word-break:break-word;font-size:11.5px;background:var(--elev);'+
-   'padding:9px;border-radius:8px;margin:4px 0 0">'+esc(x.code)+'</pre></div>'}).join('')}
+   'padding:9px;border-radius:8px;margin:4px 0 0">'+esc(x.code)+'</pre></div>'}).join('')+
+  /* Where to go next: the reference this install serves itself, so it always
+     matches the running version, and the repository for the written docs. */
+  '<div class="row" style="gap:8px;margin-top:10px">'+
+   '<a class="btn sm" target="_blank" rel="noopener" href="'+API_PREFIX+'/docs">Route reference</a>'+
+   '<a class="btn sm" target="_blank" rel="noopener" href="'+mapEsc(API_REPO_URL)+'">Documentation &amp; source</a>'+
+  '</div>'}
 function createKey(){var label=document.getElementById('kLabel').value.trim();if(!label){alert('Give the key a label.');return}
  var scopes=KEY_SCOPES.filter(function(s){return kScopeSel[s]});
  var all=document.getElementById('kAll').checked;
