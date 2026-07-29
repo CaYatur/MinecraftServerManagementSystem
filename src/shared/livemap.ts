@@ -274,7 +274,9 @@ export const PUBLIC_MAP_DEFAULTS: PublicMapConfig = {
   round: 64,
   heads: false,
   names: true,
-  world: false,
+  // The terrain is the map. Publishing a grid with dots on it and calling it a
+  // live map was the thing that made the feature look broken (#135).
+  world: true,
   structures: false,
   loadAhead: false
 }

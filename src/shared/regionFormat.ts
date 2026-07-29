@@ -380,6 +380,31 @@ export interface StructureMark {
   z: number
 }
 
+/**
+ * Where to start looking down, per dimension.
+ *
+ * The nether has a bedrock roof at y=127. A plain top-down scan finds it in
+ * every column and renders the whole dimension as one flat grey slab, which is
+ * why it looked broken rather than empty.
+ *
+ * Every map renderer solves this the same way: start below the roof, walk down
+ * to the first air, and only then take the first solid block under it — the
+ * floor a player is actually standing on rather than the ceiling above them.
+ *
+ * The end and custom worlds have no roof, so they scan from the top like the
+ * overworld.
+ */
+export interface ScanRule {
+  /** Highest block to consider. `null` means start at the top of the world. */
+  ceiling: number | null
+  /** Skip solid blocks until an air gap has been seen. */
+  underRoof: boolean
+}
+
+export function scanRuleFor(dim: string): ScanRule {
+  return dim === 'nether' ? { ceiling: 126, underRoof: true } : { ceiling: null, underRoof: false }
+}
+
 export function shade(colour: Rgb, dh: number): Rgb {
   const f = dh > 0 ? 1.12 : dh < 0 ? 0.86 : 1
   const clamp = (v: number): number => Math.max(0, Math.min(255, Math.round(v * f)))

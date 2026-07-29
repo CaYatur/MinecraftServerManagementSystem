@@ -41,6 +41,7 @@ import {
   parseLocationTable,
   regionOf,
   unpackIndices,
+  scanRuleFor,
   seeThrough,
   structureKind,
   CHUNK_AXIS,
@@ -85,6 +86,7 @@ function perfFor(serverId: string): MapPerfConfig {
 
 export function _resetWorldTiles(): void {
   regions.clear()
+  resolvedDirs.clear()
 }
 
 // ---- the on-disk cache (#133) ----
@@ -220,16 +222,69 @@ function levelName(id: string): string {
   return map['level-name'] || 'world'
 }
 
-function dimensionFolder(dim: string): string {
-  if (dim === 'nether') return join('DIM-1', 'region')
-  if (dim === 'end') return join('DIM1', 'region')
-  return 'region'
+/**
+ * Where a dimension's region files live — and there is no single answer.
+ *
+ * Vanilla keeps them under one world folder: `world/DIM-1/region`. Bukkit and
+ * everything descended from it (Paper, Purpur, Spigot) split them into sibling
+ * folders instead: `world_nether/DIM-1/region`, `world_the_end/DIM1/region`.
+ * MSMS only ever built the vanilla path, so on a Paper server — the type this
+ * app is most used with — the nether and the end resolved to a folder that does
+ * not exist and every tile lookup missed. Neither has ever rendered.
+ *
+ * Anything else is a custom world (Multiverse and friends), which is its own
+ * top-level folder with a plain `region` inside it.
+ *
+ * Ordered candidates rather than a guess, because the layout is a property of
+ * the server software and MSMS manages several kinds at once.
+ */
+function regionDirCandidates(serverId: string, dim: string): string[] {
+  const s = getServer(serverId)
+  if (!s) return []
+  const level = levelName(serverId)
+  if (dim === 'overworld') return [join(s.path, level, 'region')]
+  if (dim === 'nether') {
+    return [join(s.path, level + '_nether', 'DIM-1', 'region'), join(s.path, level, 'DIM-1', 'region')]
+  }
+  if (dim === 'end') {
+    return [join(s.path, level + '_the_end', 'DIM1', 'region'), join(s.path, level, 'DIM1', 'region')]
+  }
+  // A custom world. The name is not trusted — it arrives from a bridge message
+  // and is about to become a path segment.
+  const safe = dim.replace(/[^A-Za-z0-9_.-]/g, '')
+  if (!safe || safe === '.' || safe === '..') return []
+  return [join(s.path, safe, 'region'), join(s.path, safe, 'DIM-1', 'region'), join(s.path, safe, 'DIM1', 'region')]
+}
+
+/**
+ * Which candidate directory this server actually uses, remembered.
+ *
+ * Resolving means an `existsSync` per candidate, and `peekChunkTile` runs once
+ * per requested chunk — 64 a request, three candidates each. The layout is a
+ * property of the server software and does not change while it runs.
+ */
+const resolvedDirs = new Map<string, string>()
+
+function regionDirFor(serverId: string, dim: string): string | null {
+  const key = serverId + '|' + dim
+  const hit = resolvedDirs.get(key)
+  if (hit) return hit
+  const dirs = regionDirCandidates(serverId, dim)
+  for (const d of dirs) {
+    if (existsSync(d)) {
+      resolvedDirs.set(key, d)
+      return d
+    }
+  }
+  // Nothing on disk yet. Answer with the first candidate rather than null, so a
+  // caller reports a definite miss instead of "unknown" — "unknown" is what
+  // makes a chunk get requested forever.
+  return dirs[0] ?? null
 }
 
 function regionPath(serverId: string, dim: string, rx: number, rz: number): string | null {
-  const s = getServer(serverId)
-  if (!s) return null
-  return join(s.path, levelName(serverId), dimensionFolder(dim), `r.${rx}.${rz}.mca`)
+  const dir = regionDirFor(serverId, dim)
+  return dir ? join(dir, `r.${rx}.${rz}.mca`) : null
 }
 
 /** Longs out of prismarine-nbt, which gives signed 64-bit values as [hi, lo]. */
@@ -278,7 +333,7 @@ function listOf(v: any): any[] {
  * but air the whole way — under an unlit sky, or a chunk that is only partly
  * generated — is left transparent rather than drawn as the void.
  */
-export function tileFromChunk(chunk: any): ChunkTile | null {
+export function tileFromChunk(chunk: any, dim = 'overworld'): ChunkTile | null {
   const v = tag(chunk)
   if (!v) return null
   const dataVersion = tag(v.DataVersion)
@@ -296,8 +351,23 @@ export function tileFromChunk(chunk: any): ChunkTile | null {
   const height = new Array<number>(CHUNK_AXIS * CHUNK_AXIS).fill(0)
   let remaining = colour.length
 
+  // The nether has a bedrock roof: a top-down scan finds it in every column and
+  // paints the whole dimension one flat grey. `sawAir` per column is how a map
+  // gets under it — solid blocks are skipped until an air gap has been seen.
+  const rule = scanRuleFor(dim)
+  const sawAir = rule.underRoof ? new Array<boolean>(colour.length).fill(false) : null
+  // A column that is solid from the ceiling all the way down — a netherrack
+  // pillar joining floor to roof — never shows an air gap, so the under-roof
+  // rule would skip every block in it and leave a hole. The highest solid block
+  // seen while skipping is kept as the answer for exactly that case.
+  const fallbackColour = sawAir ? new Array<number>(colour.length).fill(-1) : null
+  const fallbackHeight = sawAir ? new Array<number>(colour.length).fill(0) : null
+
   for (const { s, y: sectionY } of withY) {
     if (remaining === 0) break
+    // Above the ceiling there is nothing worth looking at, and on the nether
+    // that is most of the sections.
+    if (rule.ceiling !== null && sectionY * CHUNK_AXIS > rule.ceiling) continue
     const states = tag(s.block_states) ?? tag(s.BlockStates)
     // A list, so unwrapped twice. See `listOf`.
     const paletteRaw = listOf(states?.palette).length ? listOf(states?.palette) : listOf(s.Palette)
@@ -320,17 +390,44 @@ export function tileFromChunk(chunk: any): ChunkTile | null {
         for (let x = 0; x < CHUNK_AXIS; x++) {
           const col = x + z * CHUNK_AXIS
           if (colour[col] >= 0) continue
+          const worldY = sectionY * CHUNK_AXIS + y
+          if (rule.ceiling !== null && worldY > rule.ceiling) continue
           const name = names[indices[y * 256 + z * CHUNK_AXIS + x]] ?? ''
           const short = name.replace(/^minecraft:/, '')
           // Air, and the plants a map looks through — see `seeThrough`. Without
           // it the surface is whatever is standing ON the ground rather than
           // the ground, which is how a bamboo jungle rendered as a maroon smear.
-          if (!short || INVISIBLE.has(short) || seeThrough(short)) continue
+          const invisible = !short || INVISIBLE.has(short) || seeThrough(short)
+          if (sawAir) {
+            // Under a roof: remember the gap, and skip everything solid until
+            // one has been seen. Without this the first hit is the roof itself.
+            if (invisible) sawAir[col] = true
+            if (!sawAir[col]) {
+              if (!invisible && fallbackColour && fallbackColour[col] < 0) {
+                const fc = blockColour(short)
+                fallbackColour[col] = (fc.r << 16) | (fc.g << 8) | fc.b
+                if (fallbackHeight) fallbackHeight[col] = worldY
+              }
+              continue
+            }
+          }
+          if (invisible) continue
           const c = blockColour(short)
           colour[col] = (c.r << 16) | (c.g << 8) | c.b
-          height[col] = sectionY * CHUNK_AXIS + y
+          height[col] = worldY
           remaining--
         }
+      }
+    }
+  }
+  // Columns the under-roof rule skipped entirely fall back to the highest solid
+  // block, so a floor-to-ceiling pillar is drawn rather than punched out.
+  if (fallbackColour && fallbackHeight) {
+    for (let i = 0; i < colour.length; i++) {
+      if (colour[i] < 0 && fallbackColour[i] >= 0) {
+        colour[i] = fallbackColour[i]
+        height[i] = fallbackHeight[i]
+        remaining--
       }
     }
   }
@@ -408,7 +505,12 @@ export function parseBudgetReady(serverId?: string, now = Date.now()): boolean {
  * Synchronous and slow by design — the callers are expected to keep this off
  * any request path, and to respect `parseBudgetReady`.
  */
-function loadRegion(serverId: string, path: string, perf: MapPerfConfig): RegionEntry | null {
+function loadRegion(
+  serverId: string,
+  path: string,
+  dim: string,
+  perf: MapPerfConfig
+): RegionEntry | null {
   if (!existsSync(path)) return null
   let mtimeMs = 0
   try {
@@ -454,7 +556,7 @@ function loadRegion(serverId: string, path: string, perf: MapPerfConfig): Region
     const raw = decompress(file.subarray(loc.offset + 5, end), kind)
     if (!raw) continue
     try {
-      tiles.set(slot, tileFromChunk(nbt.parseUncompressed(raw)))
+      tiles.set(slot, tileFromChunk(nbt.parseUncompressed(raw), dim))
     } catch {
       /* one unreadable chunk must not lose the region */
     }
@@ -601,7 +703,7 @@ export function chunkTile(
 ): ChunkTile | null {
   const path = regionPath(serverId, dim, regionOf(chunkX), regionOf(chunkZ))
   if (!path) return null
-  const region = loadRegion(serverId, path, perfFor(serverId))
+  const region = loadRegion(serverId, path, dim, perfFor(serverId))
   if (!region) return null
   return region.tiles.get(chunkSlot(localChunk(chunkX), localChunk(chunkZ))) ?? null
 }
