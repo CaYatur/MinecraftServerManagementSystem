@@ -159,9 +159,16 @@ public final class MsmsBridge extends JavaPlugin implements Listener {
     /**
      * One message per line. A newline inside the payload would split the
      * message, so every string is escaped and nothing is pretty-printed.
+     *
+     * Through the plugin logger rather than System.out. The transport is still
+     * the server console — that is the whole design, and it is why no extra
+     * port is opened — but Paper nags about System.out.print and it is right to:
+     * a plugin writing to the raw stream bypasses the log file, the timestamps
+     * and every appender an operator has configured. The manager finds the line
+     * by its marker, which survives the logger's own prefix untouched.
      */
     private void emit(String json) {
-        System.out.println(MARKER + " " + json);
+        getLogger().info(MARKER + " " + json);
     }
 
 }
