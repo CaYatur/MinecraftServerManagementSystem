@@ -886,6 +886,8 @@ export default {
     enable: 'Enable web panel',
     port: 'Panel port',
     panelSection: 'Admin panel',
+    mapPortClash: 'That port is already used by another listener — pick a different one.',
+    mapNeedsServer: 'Choose a server; the map page will not start without one.',
     mapSection: 'Map page',
     mapEnable: 'Enable the map page',
     mapPort: 'Map port',

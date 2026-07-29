@@ -81,13 +81,24 @@ ${MAP_CSS}
     <input id="gateInput" type="password" placeholder="Passphrase" autocomplete="current-password"/>
     <button class="btn primary" onclick="gateSubmit()">Open the map</button>
   </div>
+  <!-- This page signs players in itself. It cannot borrow the public site's
+       session: that token lives in localStorage, which is per ORIGIN, and a
+       different port is a different origin. -->
+  <div id="gatePlayer" class="hidden">
+    <div><input id="gateName" placeholder="Minecraft name" autocomplete="username"/></div>
+    <div style="margin-top:6px"><input id="gatePw" type="password" placeholder="Password" autocomplete="current-password"/></div>
+    <div style="margin-top:8px"><button class="btn primary" onclick="gateLogin()">Sign in</button></div>
+  </div>
 </div>
 ${MAP_HTML.replace(
   '<div class="mp-bar">',
   '<div class="mp-bar"><span class="mp-title" id="mpTitle"></span>'
 )}
 <script>
-var CFG=${JSON.stringify(pub)};
+/* Less-than is escaped, not merely quoted. JSON.stringify escapes quotes and
+   leaves it alone, so an operator whose page title contained a closing script
+   tag would end this block and the rest of the page would be markup. */
+var CFG=${JSON.stringify(pub).replace(/</g, '\\u003c')};
 /* The host contract MAP_JS asks for. Three of the five differ from the panel's
    only in the URL; the other two are the reason the contract exists at all —
    this page wraps responses differently from either of the others. */
@@ -113,7 +124,17 @@ MAP.areasOn=CFG.areas;MAP.heat=false;
 function gateShow(mode,msg){
  document.getElementById('gate').classList.remove('hidden');
  document.getElementById('gateMsg').textContent=msg;
- document.getElementById('gatePass').classList.toggle('hidden',mode!=='password')}
+ document.getElementById('gatePass').classList.toggle('hidden',mode!=='password');
+ document.getElementById('gatePlayer').classList.toggle('hidden',mode!=='players')}
+function gateLogin(){
+ fetch('/api/map/login',{method:'POST',credentials:'same-origin',
+  headers:{'Content-Type':'application/json'},
+  body:JSON.stringify({mcName:document.getElementById('gateName').value.trim(),
+   password:document.getElementById('gatePw').value})})
+  .then(function(r){return r.ok?r.json():null}).then(function(d){
+   if(d&&d.ok){document.getElementById('gate').classList.add('hidden');boot();return}
+   document.getElementById('gateMsg').textContent='That name and password did not match.'})
+  .catch(function(){document.getElementById('gateMsg').textContent='Could not reach the server.'})}
 function gateSubmit(){
  var v=document.getElementById('gateInput').value;
  fetch('/api/map/open',{method:'POST',credentials:'same-origin',

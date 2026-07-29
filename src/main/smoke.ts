@@ -5377,6 +5377,60 @@ export async function runWebSmoke(): Promise<void> {
             return fail('an old cookie survived a passphrase change')
           }
 
+          // ---- players ----
+          //
+          // The mode that had no test at all, and did not work. It reached for
+          // the public site's session, which lives in `localStorage` — per
+          // ORIGIN, and a different port IS a different origin, so this page
+          // could never read it. `players` was a door that never opened, and
+          // only a test that actually signs somebody in says so.
+          setMap({ access: 'players' })
+          await sleep(250)
+          const shutP = (await (await mget('/api/map/state')).json()) as { allowed: boolean; access: string }
+          if (shutP.allowed) return fail('a players-only map let an anonymous visitor in')
+          if (shutP.access !== 'players') return fail('the gate named the wrong door: ' + shutP.access)
+          if ((await mget('/api/map')).status !== 403) return fail('a players-only feed answered anonymously')
+          // A player the public site already knows. `registerPlayer` is what the
+          // site's own sign-up calls, so this is the same account either would.
+          const mcName = 'MapViewer'
+          webPlayerAuth._testCreateAccount(mcName, 'mappass1')
+          if ((await mpost('/api/map/login', { mcName, password: 'wrong' })).status !== 401) {
+            return fail('a wrong password opened the map')
+          }
+          const signedIn = await mpost('/api/map/login', { mcName, password: 'mappass1' })
+          if (signedIn.status !== 200) return fail('a real player could not sign in: ' + signedIn.status + ' ' + (await signedIn.text()))
+          const pc = String(signedIn.headers.get('set-cookie') ?? '')
+          if (!pc.includes('HttpOnly')) return fail('the player cookie is readable from script')
+          const ptok = /msms_map_player=([^;]+)/.exec(pc)?.[1] ?? ''
+          if (!ptok) return fail('signing in set no cookie')
+          if ((await mget('/api/map', 'msms_map_player=' + ptok)).status !== 200) {
+            return fail('a signed-in player still could not read the map')
+          }
+          // The site's own storage key is NOT what this page reads — asserting
+          // the negative, because reading it is the bug that was here.
+          if ((await mget('/api/map', 'msms_ptoken=' + decodeURIComponent(ptok))).status === 200) {
+            return fail('the map accepted the public site cookie name')
+          }
+          // The passphrase route does not exist in this mode, and vice versa:
+          // an unused door left open is a door.
+          if ((await mpost('/api/map/open', { pass: 'anything' })).status !== 404) {
+            return fail('the passphrase route answered in players mode')
+          }
+          setMap({ access: 'password' }, 'x')
+          await sleep(250)
+          if ((await mpost('/api/map/login', { mcName, password: 'mappass1' })).status !== 404) {
+            return fail('the player login answered in password mode')
+          }
+
+          // A page title is operator text and lands inside a <script> block.
+          // `JSON.stringify` escapes quotes and leaves `<` alone, so a closing
+          // script tag in it would end the block and the rest is markup.
+          setMap({ access: 'open', title: 'evil</script><img src=x>' })
+          await sleep(250)
+          const nasty = await (await mget('/')).text()
+          if (nasty.includes('</script><img')) return fail('a page title broke out of the script block')
+          if (!nasty.includes('u003c/script')) return fail('the title was not escaped the way it must be')
+
           // ---- what the operator switched off is not served ----
           setMap({ access: 'open', world: false, areas: false, players: false })
           await sleep(250)

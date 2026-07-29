@@ -2480,8 +2480,20 @@ function mapViewer(req: IncomingMessage, cfg: MapPageConfig): MapPageViewer {
   }
 }
 
+/**
+ * The map page signs players in ITSELF, and holds the session in a cookie.
+ *
+ * It cannot borrow the public site's. That token lives in `localStorage` under
+ * `msms_ptoken`, and localStorage is per ORIGIN — a different port is a
+ * different origin, so the map page on 8724 cannot read what the site on 8723
+ * wrote, whatever the two agree to call it. Reaching for the site's token was
+ * the first version of this and it made `players` a door that never opened.
+ *
+ * A cookie instead, set by this listener on its own origin. Cookies are not
+ * isolated by port, which is a weakness elsewhere and the mechanism here.
+ */
 function mapPlayerCookie(req: IncomingMessage): string {
-  const m = /(?:^|;\s*)msms_player=([^;]+)/.exec(String(req.headers.cookie ?? ''))
+  const m = /(?:^|;\s*)msms_map_player=([^;]+)/.exec(String(req.headers.cookie ?? ''))
   return m ? decodeURIComponent(m[1]) : ''
 }
 
@@ -2533,6 +2545,28 @@ async function handleMapPage(req: IncomingMessage, res: ServerResponse): Promise
       `msms_map=${mapPassToken(stored)}; Path=/; Max-Age=2592000; HttpOnly; SameSite=Lax`
     )
     return sendJson(res, 200, { ok: true })
+  }
+
+  if (path === '/api/map/login' && method === 'POST') {
+    if (cfg.access !== 'players') return sendJson(res, 404, { error: 'not-found' })
+    const b = (await readBody(req).catch(() => ({}))) as { mcName?: string; password?: string }
+    const r = playerAuth.login((b.mcName ?? '').trim(), b.password ?? '')
+    audit.record({
+      source: 'public',
+      action: 'mappage.login',
+      actor: (b.mcName ?? '').trim() || 'unknown',
+      ok: r.ok,
+      ip: req.socket.remoteAddress ?? 'unknown',
+      serverId: cfg.serverId
+    })
+    if (!r.ok) return sendJson(res, 401, { error: 'invalid-credentials' })
+    res.setHeader(
+      'Set-Cookie',
+      // Session-length, unlike the passphrase cookie: this one stands for a
+      // person, and a person's session should not outlive their browser.
+      `msms_map_player=${encodeURIComponent(r.token)}; Path=/; HttpOnly; SameSite=Lax`
+    )
+    return sendJson(res, 200, { ok: true, mcName: r.mcName })
   }
 
   // Everything below is data. One gate, checked here, for all of it.

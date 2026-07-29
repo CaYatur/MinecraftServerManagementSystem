@@ -405,6 +405,14 @@ export function WebPanelView(): JSX.Element {
                 />
               </div>
             </div>
+            {/* Otherwise the listener fails with EADDRINUSE in the log and the
+                card just says "stopped" with no reason on screen. */}
+            {(mapPage.port === port || mapPage.port === sitePort) && (
+              <p className="hint" style={{ color: 'var(--warning)' }}>⚠ {t('web.mapPortClash')}</p>
+            )}
+            {mapPage.enabled && !mapPage.serverId && (
+              <p className="hint">{t('web.mapNeedsServer')}</p>
+            )}
             {status?.map.running && (
               <div className="row wrap" style={{ gap: 6 }}>
                 {status.map.urls.map((u) => (

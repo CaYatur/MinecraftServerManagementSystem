@@ -890,6 +890,8 @@ const tr: typeof en = {
     enable: 'Web panelini etkinleştir',
     port: 'Panel portu',
     panelSection: 'Yönetici paneli',
+    mapPortClash: 'Bu port başka bir dinleyici tarafından kullanılıyor — farklı bir port seçin.',
+    mapNeedsServer: 'Bir sunucu seçin; harita sayfası sunucusuz başlamaz.',
     mapSection: 'Harita sayfası',
     mapEnable: 'Harita sayfasını etkinleştir',
     mapPort: 'Harita portu',
