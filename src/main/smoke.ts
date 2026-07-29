@@ -102,6 +102,7 @@ import { STRUCTURE_KINDS } from '@shared/regionFormat'
 import {
   bitsPerIndex,
   blockColour,
+  setTextureColours,
   localChunk,
   packingFor,
   parseLocationTable,
@@ -129,6 +130,8 @@ import * as worldsMod from './core/worlds'
 import * as areasMod from '@shared/chunkAreas'
 import * as areasMod2 from './core/chunkAreas'
 import * as tex from '@shared/textures'
+import * as pngMod from './core/png'
+import { deflateSync } from 'node:zlib'
 import * as assetsMod from './core/clientAssets'
 import {
   isValidMcName,
@@ -325,6 +328,16 @@ function wsTestConnect(
   })
 }
 
+/** Shared by the hand-built zip and the hand-built png fixtures. */
+function crc32(buf: Buffer): number {
+  let c = ~0
+  for (let i = 0; i < buf.length; i++) {
+    c ^= buf[i]
+    for (let k = 0; k < 8; k++) c = (c >>> 1) ^ (0xedb88320 & -(c & 1))
+  }
+  return ~c >>> 0
+}
+
 /**
  * Build a zip by hand so a malicious entry name survives - adm-zip strips
  * `../` on addFile, so its own API cannot produce the archive a zip-slip guard
@@ -332,14 +345,6 @@ function wsTestConnect(
  * needs.
  */
 function craftZip(entries: Array<{ name: string; data: Buffer }>): Buffer {
-  const crc32 = (buf: Buffer): number => {
-    let c = ~0
-    for (let i = 0; i < buf.length; i++) {
-      c ^= buf[i]
-      for (let k = 0; k < 8; k++) c = (c >>> 1) ^ (0xedb88320 & -(c & 1))
-    }
-    return ~c >>> 0
-  }
   const u16 = (n: number): Buffer => {
     const b = Buffer.alloc(2)
     b.writeUInt16LE(n >>> 0)
@@ -2321,7 +2326,192 @@ export async function runWorldsSmoke(): Promise<void> {
           rmSync(adir, { recursive: true, force: true })
         }
       }
-      console.log('WORLDS-SMOKE: client-jar textures OK (candidates, extractor filter, safe ids, local lookup)')
+      // ---- the PNG reader behind averaged block colours ----
+      //
+      // Fixtures built here rather than committed, so what each one contains is
+      // stated in the test instead of being a blob nobody can read.
+      {
+        const mkPng = (w: number, h: number, px: (x: number, y: number) => number[]): Buffer => {
+          const raw = Buffer.alloc((w * 4 + 1) * h)
+          for (let y = 0; y < h; y++) {
+            raw[y * (w * 4 + 1)] = 0 // filter: none
+            for (let x = 0; x < w; x++) {
+              const p = px(x, y)
+              const o = y * (w * 4 + 1) + 1 + x * 4
+              raw[o] = p[0]
+              raw[o + 1] = p[1]
+              raw[o + 2] = p[2]
+              raw[o + 3] = p[3]
+            }
+          }
+          const chunk = (type: string, body: Buffer): Buffer => {
+            const len = Buffer.alloc(4)
+            len.writeUInt32BE(body.length)
+            const td = Buffer.concat([Buffer.from(type, 'ascii'), body])
+            const crc = Buffer.alloc(4)
+            crc.writeUInt32BE(crc32(td) >>> 0)
+            return Buffer.concat([len, td, crc])
+          }
+          const ihdr = Buffer.alloc(13)
+          ihdr.writeUInt32BE(w, 0)
+          ihdr.writeUInt32BE(h, 4)
+          ihdr[8] = 8 // bit depth
+          ihdr[9] = 6 // RGBA
+          return Buffer.concat([
+            Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+            chunk('IHDR', ihdr),
+            chunk('IDAT', deflateSync(raw)),
+            chunk('IEND', Buffer.alloc(0))
+          ])
+        }
+
+        // A flat colour averages to itself. If this is wrong, everything is.
+        const flat = pngMod.decodePng(mkPng(4, 4, () => [10, 200, 30, 255]))
+        if (!flat) return fail('a plain RGBA png did not decode')
+        if (flat.width !== 4 || flat.height !== 4) return fail('the png dimensions are wrong')
+        if (pngMod.averageColour(flat) !== 0x0ac81e) {
+          return fail('a flat colour did not average to itself: ' + pngMod.averageColour(flat)?.toString(16))
+        }
+
+        // Half red, half blue, averaged. Proves rows are read independently —
+        // an unfilter bug would smear one row into the next.
+        const split = pngMod.decodePng(mkPng(2, 2, (_x, y) => (y === 0 ? [255, 0, 0, 255] : [0, 0, 255, 255])))
+        const avg = split ? pngMod.averageColour(split) : null
+        if (avg === null) return fail('a two-colour png did not average')
+        if (((avg >> 16) & 255) !== 128 || (avg & 255) !== 128) {
+          return fail('the halves did not average evenly: ' + avg.toString(16))
+        }
+
+        // TRANSPARENCY IS SKIPPED, not averaged as black. Half of a sapling or a
+        // ladder is empty space, and counting it drags every cut-out texture
+        // towards a dark smudge — which on a map reads as a shadow that is not
+        // there.
+        const cutout = pngMod.decodePng(
+          mkPng(4, 4, (x) => (x < 2 ? [0, 255, 0, 255] : [0, 0, 0, 0]))
+        )
+        if (!cutout) return fail('a cut-out png did not decode')
+        if (pngMod.averageColour(cutout) !== 0x00ff00) {
+          return fail('transparent pixels were averaged in: ' + pngMod.averageColour(cutout)?.toString(16))
+        }
+        // Entirely transparent: null, so the caller keeps the table's colour
+        // rather than painting the block black.
+        const empty = pngMod.decodePng(mkPng(2, 2, () => [0, 0, 0, 0]))
+        if (!empty) return fail('an empty png did not decode')
+        if (pngMod.averageColour(empty) !== null) return fail('an invisible texture produced a colour')
+
+        // Anything it does not understand is a null, never a guess. A wrong
+        // colour looks like a rendering bug; a null falls back to the table.
+        for (const [what, bytes] of [
+          ['not a png', Buffer.from('hello world')],
+          ['truncated', mkPng(2, 2, () => [1, 2, 3, 255]).subarray(0, 20)],
+          ['empty', Buffer.alloc(0)]
+        ] as const) {
+          if (pngMod.decodePng(bytes)) return fail('the decoder accepted ' + what)
+        }
+
+        // A 4-BIT PALETTE image, which is what most of Minecraft actually is.
+        // Measured on 1.21.4: 626 of 1039 block textures are depth 4 and 35 are
+        // depth 2 — the first version of the decoder handled only depth 8 and
+        // silently skipped two thirds of them, which no test noticed because
+        // every fixture it had was written at depth 8.
+        {
+          const chunk = (type: string, body: Buffer): Buffer => {
+            const len = Buffer.alloc(4)
+            len.writeUInt32BE(body.length)
+            const td = Buffer.concat([Buffer.from(type, 'ascii'), body])
+            const crc = Buffer.alloc(4)
+            crc.writeUInt32BE(crc32(td))
+            return Buffer.concat([len, td, crc])
+          }
+          const ihdr = Buffer.alloc(13)
+          ihdr.writeUInt32BE(4, 0)
+          ihdr.writeUInt32BE(2, 4)
+          ihdr[8] = 4 // bit depth
+          ihdr[9] = 3 // palette
+          // Two entries: index 0 red, index 1 blue.
+          const plte = Buffer.from([255, 0, 0, 0, 0, 255])
+          // 4 pixels per row at 4 bits = 2 bytes, plus the filter byte.
+          // Row 0: 0,0,1,1  Row 1: 1,1,0,0
+          const raw = Buffer.from([0, 0x00, 0x11, 0, 0x11, 0x00])
+          const p4 = Buffer.concat([
+            Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+            chunk('IHDR', ihdr),
+            chunk('PLTE', plte),
+            chunk('IDAT', deflateSync(raw)),
+            chunk('IEND', Buffer.alloc(0))
+          ])
+          const bm4 = pngMod.decodePng(p4)
+          if (!bm4) return fail('a 4-bit palette png did not decode')
+          if (bm4.width !== 4 || bm4.height !== 2) return fail('4-bit dimensions wrong')
+          // Top-left is index 0 (red), top-right index 1 (blue). Getting the
+          // nibble order backwards would swap them and still "decode".
+          if (bm4.data[0] !== 255 || bm4.data[2] !== 0) return fail('the first 4-bit pixel is not red')
+          const last = (3 + 0 * 4) * 4
+          if (bm4.data[last] !== 0 || bm4.data[last + 2] !== 255) return fail('the fourth 4-bit pixel is not blue')
+          // Half red, half blue over the whole image.
+          const a4 = pngMod.averageColour(bm4)
+          if (a4 === null || ((a4 >> 16) & 255) !== 128 || (a4 & 255) !== 128) {
+            return fail('the 4-bit average is wrong: ' + a4?.toString(16))
+          }
+        }
+
+        // An ANIMATED texture is a vertical strip of frames in one file. Water
+        // is 16x512 — thirty-two frames — and averaging the strip averages every
+        // frame at once.
+        {
+          const strip = mkPng(2, 8, (_x, y) => (y < 2 ? [255, 0, 0, 255] : [0, 0, 255, 255]))
+          const bm = pngMod.decodePng(strip)
+          if (!bm) return fail('an animated strip did not decode')
+          const whole = pngMod.averageColour(bm)
+          const frame = pngMod.averageColour(pngMod.firstFrame(bm))
+          if (frame !== 0xff0000) return fail('the first frame is not the first frame: ' + frame?.toString(16))
+          if (whole === frame) return fail('firstFrame changed nothing on a strip')
+          // A square texture is its own first frame, untouched.
+          const sq = pngMod.decodePng(mkPng(4, 4, () => [1, 2, 3, 255]))
+          if (!sq || pngMod.firstFrame(sq).height !== 4) return fail('firstFrame cropped a square texture')
+          // ...and the header alone is enough to spot one, without decoding.
+          const sz = pngMod.pngSize(strip)
+          if (!sz || sz.width !== 2 || sz.height !== 8) return fail('pngSize is wrong')
+          if (pngMod.pngSize(Buffer.from('not a png at all, really')) !== null) {
+            return fail('pngSize accepted something that is not a png')
+          }
+        }
+
+        // BIOME-TINTED textures are grey in the file and green on screen: the
+        // game multiplies them by a colour it picks at render time. Measured on
+        // 1.21.4, grass_block_top averages #939393 and oak_leaves #909090 —
+        // overriding the table's green with that would be strictly worse than
+        // not overriding at all.
+        for (const tinted of ['grass_block_top', 'oak_leaves', 'water_still', 'birch_leaves', 'vine', 'melon_stem']) {
+          if (!tex.isTintedTexture(tinted)) return fail(tinted + ' is not treated as tinted')
+        }
+        for (const plain of ['stone', 'sand', 'gold_block', 'oak_planks', 'obsidian', 'netherrack']) {
+          if (tex.isTintedTexture(plain)) return fail(plain + ' was wrongly treated as tinted')
+        }
+
+        // A map is looked at from ABOVE, so a block whose faces differ should
+        // read as its top: a log's top is its rings, not its bark.
+        setTextureColours({ oak_log: { r: 9, g: 9, b: 9 }, oak_log_top: { r: 1, g: 2, b: 3 } })
+        const log = blockColour('oak_log')
+        if (log.r !== 1 || log.g !== 2 || log.b !== 3) return fail('the side face won over the top')
+        setTextureColours({ oak_log: { r: 9, g: 9, b: 9 } })
+        if (blockColour('oak_log').r !== 9) return fail('a block with only one face lost its colour')
+        setTextureColours({})
+
+        // ...and the override only wins where it has an answer. This is the
+        // safety property: the map that worked before must still work.
+        const before = blockColour('stone')
+        setTextureColours({ stone: { r: 1, g: 2, b: 3 } })
+        const after = blockColour('stone')
+        if (after.r !== 1 || after.g !== 2 || after.b !== 3) return fail('the texture colour did not win')
+        if (blockColour('grass_block').r === 1) return fail('an unrelated block took the override')
+        setTextureColours({})
+        const restored = blockColour('stone')
+        if (restored.r !== before.r || restored.g !== before.g || restored.b !== before.b) {
+          return fail('clearing the override did not restore the table')
+        }
+      }
+      console.log('WORLDS-SMOKE: client-jar textures OK (candidates, extractor filter, safe ids, png average, table fallback)')
     }
 
     // --- 12. chunk areas: the rules four map surfaces have to share (#144) ---

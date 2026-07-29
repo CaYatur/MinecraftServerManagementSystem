@@ -292,8 +292,35 @@ const COLOURS: Record<string, Rgb> = {
 /** Water reads as water on a map, so the renderer needs to know which is which. */
 export const WATERY = new Set(['water', 'bubble_column'])
 
+/**
+ * Colours averaged from the real block textures, when they have been extracted
+ * (#127).
+ *
+ * An override rather than a replacement, and installed rather than imported: the
+ * table below covers about forty blocks and guesses the rest from suffixes,
+ * which is wrong for the hundreds it does not name and for every modded block.
+ * Averaging the actual texture is simply better data for the same question.
+ *
+ * Empty until an operator downloads the client jar, and one bad decode costs one
+ * block its entry rather than the map its colours — which is why this is a map
+ * consulted first and not a new code path.
+ */
+let textureColours: Record<string, Rgb> = {}
+
+export function setTextureColours(map: Record<string, Rgb>): void {
+  textureColours = map || {}
+}
+
+export function textureColourCount(): number {
+  return Object.keys(textureColours).length
+}
+
 export function blockColour(rawName: string): Rgb {
   const name = String(rawName || '').replace(/^minecraft:/, '')
+  // The TOP face first: this is a map looked at from above, and a block whose
+  // sides and top differ (grass, a log, a furnace) should read as its top.
+  const real = textureColours[name + '_top'] ?? textureColours[name]
+  if (real) return real
   const hit = COLOURS[name]
   if (hit) return hit
   // Families, so a wood or a wool variant is close to right without 400 entries.

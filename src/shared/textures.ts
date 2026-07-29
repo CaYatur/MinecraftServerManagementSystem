@@ -80,6 +80,42 @@ export function textureCandidates(id: string): string[] {
 }
 
 /**
+ * Textures Minecraft TINTS by biome, whose raw pixels are grey.
+ *
+ * `grass_block_top` averages to #939393 — the texture is greyscale and the game
+ * multiplies it by a biome colour at render time. Overriding the map's green
+ * with that grey would be strictly worse than the hand-written table, which is
+ * why these keep the table's answer instead.
+ *
+ * Matched by suffix as well as by name, because there are forty leaf and vine
+ * variants and listing them all would be a list that goes stale every release.
+ */
+const TINTED_EXACT = new Set([
+  'grass_block_top',
+  'grass_block_side_overlay',
+  'short_grass',
+  'tall_grass_top',
+  'tall_grass_bottom',
+  'fern',
+  'large_fern_top',
+  'large_fern_bottom',
+  'vine',
+  'lily_pad',
+  'sugar_cane',
+  'water_still',
+  'water_flow',
+  'water_overlay',
+  'attached_melon_stem',
+  'attached_pumpkin_stem'
+])
+
+export function isTintedTexture(name: string): boolean {
+  const n = String(name || '').toLowerCase()
+  if (TINTED_EXACT.has(n)) return true
+  return n.endsWith('_leaves') || n.endsWith('_stem') || n.startsWith('redstone_dust')
+}
+
+/**
  * Is this a texture the extractor should keep?
  *
  * The client jar holds thousands of files; only two folders are ever looked up,

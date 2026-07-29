@@ -11,6 +11,7 @@ import { initMetrics, flushAll as flushMetrics } from './core/metrics'
 import { initEvents } from './core/events'
 import { initAudit } from './core/audit'
 import { initAlerts } from './core/alerts'
+import { initBlockColours } from './core/clientAssets'
 import { resolveBaseDir } from './paths'
 import { log } from './logger'
 import {
@@ -274,6 +275,9 @@ if (!gotLock) {
     initAudit()
     initScheduler()
     initAlerts()
+    // Averaged block colours, if any version's textures are on disk (#127).
+    // Before the web server, because the public map draws from the same table.
+    initBlockColours()
     initWebServer()
     createWindow()
 
