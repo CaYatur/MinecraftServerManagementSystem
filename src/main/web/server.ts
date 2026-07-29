@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from 'node:http'
-import { createHash } from 'node:crypto'
+import { createHash, timingSafeEqual, randomBytes } from 'node:crypto'
 import { networkInterfaces } from 'node:os'
 import { createReadStream, existsSync } from 'node:fs'
 import { join, extname, resolve, sep } from 'node:path'
@@ -23,6 +23,9 @@ import * as chunkAreas from '../core/chunkAreas'
 import { areaChunkCount } from '@shared/chunkAreas'
 import type { AreaInput } from '@shared/chunkAreas'
 import { normalizeMapPerf } from '@shared/tileCache'
+import { normalizeMapPage, mapPageAllows } from '@shared/mapPage'
+import type { MapPageConfig, MapPageViewer } from '@shared/mapPage'
+import { getMapPageHtml } from './mapPageHtml'
 import { listJavaInstalls } from '../core/javaScan'
 import { installJava } from '../core/javaProvision'
 import {
@@ -38,7 +41,7 @@ import {
 } from '@shared/ops'
 import type { PlayerInfo } from '@shared/types'
 import { bridgeFresh, bridgePlayers } from '@shared/bridge'
-import { heatmap, livePlayers, mapBounds, normalizeDimension, redactPlayers } from '@shared/livemap'
+import { heatmap, livePlayers, mapBounds, normalizeDimension, redactPlayers, PUBLIC_MAP_DEFAULTS } from '@shared/livemap'
 import { redactProfile } from '@shared/profile'
 import type { ProfileViewer } from '@shared/profile'
 import {
@@ -202,6 +205,7 @@ import type { Scope, WebStatus, WebConfig } from '@shared/web'
 
 let server: Server | null = null
 let siteServer: Server | null = null
+let mapServer: Server | null = null
 
 // ---- helpers ----
 function sendJson(res: ServerResponse, code: number, body: unknown): void {
@@ -2426,6 +2430,165 @@ export function lanUrls(port: number): string[] {
   return urls
 }
 
+// ---- the map page (#146) ----
+//
+// Its own listener, so an operator can hand out the map without handing out the
+// shop or the panel — a firewall rule rather than trust. Its own handler for the
+// same reason the public site has one: the answer to "may this caller see this"
+// is different here, and a shared handler with a mode flag is how a surface ends
+// up returning another surface's payload.
+
+function mapPageCfg(): MapPageConfig {
+  return normalizeMapPage(getConfig().web?.mapPage)
+}
+
+/**
+ * An install-specific salt for the map cookie, generated once and kept in
+ * memory.
+ *
+ * In memory rather than on disk deliberately: restarting MSMS invalidates every
+ * map cookie, which is a cheap way for an operator to shut a leaked link without
+ * having to change the passphrase and tell everybody the new one. It never
+ * protects anything at rest — the passphrase itself is stored in the clear
+ * beside it, because a shared doorcode is something an operator has to be able
+ * to read back.
+ */
+let mapSalt = ''
+function mapPageSalt(): string {
+  if (!mapSalt) mapSalt = randomBytes(16).toString('hex')
+  return mapSalt
+}
+
+/**
+ * The passphrase cookie. A hash of the passphrase and the install's own secret,
+ * so the cookie cannot be recomputed from the passphrase alone by somebody who
+ * guessed it elsewhere, and every install's cookies are worthless on any other.
+ */
+function mapPassToken(pass: string): string {
+  return createHash('sha256').update(mapPageSalt()).update('.').update(pass).digest('hex').slice(0, 32)
+}
+
+function mapViewer(req: IncomingMessage, cfg: MapPageConfig): MapPageViewer {
+  const cookies = String(req.headers.cookie ?? '')
+  const m = /(?:^|;\s*)msms_map=([a-f0-9]{32})/.exec(cookies)
+  const stored = getConfig().web?.mapPagePass ?? ''
+  return {
+    // Compared against the token for the CURRENT passphrase, so changing it
+    // logs everybody out — which is the only thing changing it is for.
+    passed: !!m && !!stored && m[1] === mapPassToken(stored),
+    player: !!playerAuth.resolvePlayerSession(bearer(req) || mapPlayerCookie(req))
+  }
+}
+
+function mapPlayerCookie(req: IncomingMessage): string {
+  const m = /(?:^|;\s*)msms_player=([^;]+)/.exec(String(req.headers.cookie ?? ''))
+  return m ? decodeURIComponent(m[1]) : ''
+}
+
+async function handleMapPage(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const url = new URL(req.url ?? '/', 'http://localhost')
+  const path = url.pathname.replace(/\/+$/, '') || '/'
+  const method = req.method ?? 'GET'
+  const cfg = mapPageCfg()
+  const viewer = mapViewer(req, cfg)
+  const ok = mapPageAllows(cfg, viewer)
+
+  if (path === '/' && method === 'GET') {
+    // The shell is served whatever the gate says — it IS the gate. The feeds
+    // below are what actually refuse, so a visitor sees a door rather than a
+    // blank page, and no map data rides along with it.
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+    res.end(getMapPageHtml(cfg))
+    return
+  }
+  if (path === '/api/map/state' && method === 'GET') {
+    if (!cfg.enabled || !cfg.serverId) return sendJson(res, 404, { error: 'not-found' })
+    // The access MODE is told to a visitor who is refused, because they need to
+    // know which door they are standing at. Nothing else about the config is.
+    return sendJson(res, 200, { allowed: ok, access: cfg.access })
+  }
+  if (path === '/api/map/open' && method === 'POST') {
+    if (cfg.access !== 'password') return sendJson(res, 404, { error: 'not-found' })
+    const b = (await readBody(req).catch(() => ({}))) as { pass?: string }
+    const stored = getConfig().web?.mapPagePass ?? ''
+    const given = String(b.pass ?? '')
+    // Timing-safe, and only after both are known to be the same length —
+    // `timingSafeEqual` throws on a mismatch, which is itself a length oracle.
+    const a = Buffer.from(mapPassToken(given))
+    const c = Buffer.from(mapPassToken(stored))
+    const good = !!stored && a.length === c.length && timingSafeEqual(a, c)
+    audit.record({
+      source: 'public',
+      action: 'mappage.open',
+      actor: 'visitor',
+      ok: good,
+      ip: req.socket.remoteAddress ?? 'unknown',
+      serverId: cfg.serverId
+    })
+    if (!good) return sendJson(res, 401, { error: 'bad-passphrase' })
+    res.setHeader(
+      'Set-Cookie',
+      // HttpOnly: the page never reads this, only sends it. SameSite=Lax so a
+      // link from elsewhere still opens the map, which is the whole use.
+      `msms_map=${mapPassToken(stored)}; Path=/; Max-Age=2592000; HttpOnly; SameSite=Lax`
+    )
+    return sendJson(res, 200, { ok: true })
+  }
+
+  // Everything below is data. One gate, checked here, for all of it.
+  if (!ok) return sendJson(res, 403, { error: 'forbidden' })
+
+  if (path === '/api/map' && method === 'GET') {
+    const rt = processManager.getRuntime(cfg.serverId)
+    const now = Date.now()
+    // `players: false` means positions are not published at all — not that they
+    // are hidden in the client, which is the same payload with a flag on it.
+    const all = cfg.players && rt ? livePlayers(bridgePlayers(rt.bridge, now)) : []
+    const dim = cfg.fixedDim || normalizeDimension(url.searchParams.get('dim') ?? 'overworld')
+    const shown = redactPlayers(all.filter((p) => p.dim === dim), {
+      ...PUBLIC_MAP_DEFAULTS,
+      serverId: cfg.serverId,
+      round: cfg.round,
+      names: cfg.names,
+      heads: cfg.heads && cfg.names
+    })
+    const cell = Math.min(512, Math.max(1, Number(url.searchParams.get('cell')) || 16))
+    return sendJson(res, 200, {
+      bridge: rt ? bridgeFresh(rt.bridge, now) : false,
+      dimension: dim,
+      dimensions: cfg.fixedDim ? [dim] : [...new Set(all.map((p) => p.dim))].sort(),
+      pinned: !!cfg.fixedDim,
+      players: shown,
+      // From the ROUNDED positions: bounds derived from the exact ones publish a
+      // tighter box than the dots inside it, and its corner is somebody's real
+      // coordinate to within a pixel.
+      bounds: mapBounds(shown.map((p) => ({ ...p, name: p.name ?? '', y: 0 }))),
+      round: cfg.round,
+      heads: cfg.heads && cfg.names,
+      ...(cfg.heatmap ? { heatmap: heatmap(shown, cell), cell } : {}),
+      loadOnPan: normalizeMapPerf(getServer(cfg.serverId)?.map).loadOnPan,
+      at: now
+    })
+  }
+  if (path === '/api/map/tiles' && method === 'GET') {
+    if (!cfg.world) return sendJson(res, 404, { error: 'not-found' })
+    const dim = cfg.fixedDim || normalizeDimension(url.searchParams.get('dim') ?? 'overworld')
+    // Structures only when the operator published them, whatever the caller
+    // asks for: where every dungeon is turns a map into a treasure map.
+    return sendJson(
+      res,
+      200,
+      tilesFor(cfg.serverId, dim, parseWanted(url.searchParams.get('c')), { marks: cfg.structures })
+    )
+  }
+  if (path === '/api/map/areas' && method === 'GET') {
+    if (!cfg.areas) return sendJson(res, 200, { areas: [] })
+    const dim = cfg.fixedDim || normalizeDimension(url.searchParams.get('dim') ?? 'overworld')
+    return sendJson(res, 200, { dimension: dim, areas: chunkAreas.listPublicAreas(cfg.serverId, dim) })
+  }
+  return sendJson(res, 404, { error: 'not-found' })
+}
+
 function webCfg(): Required<WebConfig> {
   const c = getConfig().web
   return {
@@ -2434,6 +2597,8 @@ function webCfg(): Required<WebConfig> {
     bindLan: c?.bindLan ?? false,
     siteEnabled: c?.siteEnabled ?? false,
     sitePort: c?.sitePort ?? 8723,
+    mapPage: normalizeMapPage(c?.mapPage),
+    mapPagePass: c?.mapPagePass ?? '',
     apiOrigins: Array.isArray(c?.apiOrigins) ? c.apiOrigins : []
   }
 }
@@ -2469,6 +2634,10 @@ export function startWebServer(): WebStatus {
     if (server) attachWs(server, () => webCfg().apiOrigins ?? [])
   }
   if (cfg.siteEnabled) siteServer = listen(handleSite, cfg.sitePort, host, 'Website')
+  const mp = mapPageCfg()
+  // Not started without a server chosen: a listener that answers 404 to
+  // everything is a port open for nothing.
+  if (mp.enabled && mp.serverId) mapServer = listen(handleMapPage, mp.port, host, 'Map page')
   return getWebStatus()
 }
 
@@ -2485,6 +2654,10 @@ export function stopWebServer(): void {
     siteServer.close()
     siteServer = null
   }
+  if (mapServer) {
+    mapServer.close()
+    mapServer = null
+  }
 }
 
 function urlsFor(port: number, bindLan: boolean): string[] {
@@ -2495,6 +2668,7 @@ function urlsFor(port: number, bindLan: boolean): string[] {
 
 export function getWebStatus(): WebStatus {
   const cfg = webCfg()
+  const mp = mapPageCfg()
   return {
     bindLan: cfg.bindLan,
     apiOrigins: cfg.apiOrigins,
@@ -2509,7 +2683,14 @@ export function getWebStatus(): WebStatus {
       running: !!siteServer && siteServer.listening,
       port: cfg.sitePort,
       urls: urlsFor(cfg.sitePort, cfg.bindLan)
-    }
+    },
+    map: {
+      enabled: mp.enabled,
+      running: !!mapServer && mapServer.listening,
+      port: mp.port,
+      urls: urlsFor(mp.port, cfg.bindLan)
+    },
+    mapPage: mp
   }
 }
 
@@ -2519,5 +2700,5 @@ export function initWebServer(): void {
   playerAuth.initPlayerAuth()
   site.initSite()
   const cfg = webCfg()
-  if (cfg.enabled || cfg.siteEnabled) startWebServer()
+  if (cfg.enabled || cfg.siteEnabled || mapPageCfg().enabled) startWebServer()
 }

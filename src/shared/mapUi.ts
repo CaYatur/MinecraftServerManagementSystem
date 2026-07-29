@@ -360,6 +360,10 @@ function mapAreaAt(areas,cx,cz,dim){
    (a.updatedAt===best.updatedAt&&a.id>best.id)))){best=a;bestSize=size}}
  return best}
 function mapAreasUrl(){
+ /* A host may answer for itself. The map page (#146) is served from its own
+    listener and has neither an admin id nor the public site's routes, so
+    guessing from mapAdminId() would send it to a 404 on both branches. */
+ if(typeof mapAreasUrlFor==='function')return mapAreasUrlFor(MAP.dim);
  var sid=mapAdminId();
  return sid?('/api/servers/'+sid+'/areas'):'/api/public/map/areas?dim='+encodeURIComponent(MAP.dim)}
 function mapFetchAreas(){

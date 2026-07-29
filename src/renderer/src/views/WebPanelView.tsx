@@ -20,6 +20,8 @@ import { useStore } from '../store'
 import { SCOPES } from '@shared/web'
 import { effectiveScopes } from '@shared/rbac'
 import { isKeyUsable } from '@shared/apikeys'
+import { MAP_PAGE_DEFAULTS } from '@shared/mapPage'
+import type { MapPageConfig, MapPageAccess } from '@shared/mapPage'
 import { usageSamples, USAGE_NOTES } from '@shared/apiUsage'
 import type { RoleDef } from '@shared/rbac'
 import type { ApiKeyView, KeyServers } from '@shared/apikeys'
@@ -37,6 +39,14 @@ export function WebPanelView(): JSX.Element {
   const [bindLan, setBindLan] = useState(false)
   const [siteEnabled, setSiteEnabled] = useState(false)
   const [sitePort, setSitePort] = useState(8723)
+  // The map page (#146). Held as the whole config rather than a field each: it
+  // has eleven settings, and eleven useStates is eleven chances to forget one
+  // in the save.
+  const [mapPage, setMapPage] = useState<MapPageConfig>(MAP_PAGE_DEFAULTS)
+  // Separate, and never populated from the config. Blank means "leave it as it
+  // is" — a form that round-trips a doorcode through the renderer to save an
+  // unrelated toggle is a form that can lose it.
+  const [mapPass, setMapPass] = useState('')
 
   const [newUser, setNewUser] = useState('')
   const [newPass, setNewPass] = useState('')
@@ -74,6 +84,7 @@ export function WebPanelView(): JSX.Element {
     setSiteEnabled(st.site.enabled)
     setSitePort(st.site.port)
     setBindLan(st.bindLan)
+    setMapPage(st.mapPage ?? MAP_PAGE_DEFAULTS)
     setOriginsText((st.apiOrigins ?? []).join('\n'))
     setUsers(await window.msms.listWebUsers())
     setRoles(await window.msms.listRoles())
@@ -139,10 +150,16 @@ export function WebPanelView(): JSX.Element {
       bindLan,
       siteEnabled,
       sitePort: Number(sitePort),
-      apiOrigins: originsText.split('\n').map((s) => s.trim()).filter(Boolean)
+      apiOrigins: originsText.split('\n').map((s) => s.trim()).filter(Boolean),
+      mapPage,
+      // Blank leaves the stored one alone. The main process treats it that way
+      // too; sending '' from here on every save would otherwise clear the
+      // doorcode each time an unrelated toggle moved.
+      mapPagePass: mapPass
     })
     setStatus(st)
     setOriginsText((st.apiOrigins ?? []).join('\n'))
+    setMapPass('')
     toast('success', 'web.saved')
   }
 
@@ -258,6 +275,139 @@ export function WebPanelView(): JSX.Element {
             {status?.site.running && (
               <div className="row wrap" style={{ gap: 6 }}>
                 {status.site.urls.map((u) => (
+                  <button key={u} className="btn sm" onClick={() => window.msms.openExternal(u)}>
+                    <ExternalLink size={12} /> {u}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* The map page (#146): its own listener, so the map can be handed out
+              without the shop or the panel going with it. */}
+          <div className="listener">
+            <div className="mod-name" style={{ marginBottom: 8 }}>
+              {t('web.mapSection')}
+              <span className={`badge ${status?.map.running ? 'op-badge' : ''}`}>
+                <span className={`dot ${status?.map.running ? 'running' : 'stopped'}`} />
+                {status?.map.running ? t('web.running') : t('web.stopped')}
+              </span>
+            </div>
+            <label className="switch" style={{ marginBottom: 10 }}>
+              <input
+                type="checkbox"
+                checked={mapPage.enabled}
+                onChange={(e) => setMapPage({ ...mapPage, enabled: e.target.checked })}
+              />
+              {t('web.mapEnable')}
+            </label>
+            <div className="row wrap" style={{ gap: 8 }}>
+              <div className="field" style={{ width: 120 }}>
+                <label>{t('web.mapPort')}</label>
+                <input
+                  className="input"
+                  type="number"
+                  value={mapPage.port}
+                  onChange={(e) => setMapPage({ ...mapPage, port: Number(e.target.value) })}
+                />
+              </div>
+              <div className="field" style={{ flex: 1, minWidth: 150 }}>
+                <label>{t('web.mapServer')}</label>
+                <select
+                  className="select"
+                  value={mapPage.serverId}
+                  onChange={(e) => setMapPage({ ...mapPage, serverId: e.target.value })}
+                >
+                  <option value="">{t('web.mapNoServer')}</option>
+                  {servers.map((s) => (
+                    <option key={s.id} value={s.id}>{s.name}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div className="field">
+              <label>{t('web.mapTitle')}</label>
+              <input
+                className="input"
+                value={mapPage.title}
+                onChange={(e) => setMapPage({ ...mapPage, title: e.target.value })}
+              />
+            </div>
+            <div className="field">
+              <label>{t('web.mapAccess')}</label>
+              <select
+                className="select"
+                value={mapPage.access}
+                onChange={(e) => setMapPage({ ...mapPage, access: e.target.value as MapPageAccess })}
+              >
+                <option value="open">{t('web.mapAccessOpen')}</option>
+                <option value="password">{t('web.mapAccessPassword')}</option>
+                <option value="players">{t('web.mapAccessPlayers')}</option>
+              </select>
+            </div>
+            {mapPage.access === 'password' && (
+              <div className="field">
+                <label>{t('web.mapPass')}</label>
+                <input
+                  className="input"
+                  value={mapPass}
+                  placeholder={t('web.mapPassKeep')}
+                  onChange={(e) => setMapPass(e.target.value)}
+                />
+                {/* A shared doorcode, not a personal credential: the operator has
+                    to be able to read it back and tell people. Saying so beats
+                    letting them assume otherwise. */}
+                <p className="hint" style={{ margin: '4px 0 0' }}>{t('web.mapPassHint')}</p>
+              </div>
+            )}
+            <div className="field">
+              <label>{t('web.mapShows')}</label>
+              <div className="row wrap" style={{ gap: 10 }}>
+                {([
+                  ['world', 'web.mapWorld'],
+                  ['players', 'web.mapPlayers'],
+                  ['names', 'web.mapNames'],
+                  ['heads', 'web.mapHeads'],
+                  ['areas', 'web.mapAreas'],
+                  ['structures', 'web.mapStructures'],
+                  ['heatmap', 'web.mapHeat']
+                ] as const).map(([k, label]) => (
+                  <label key={k} className="switch" style={{ fontSize: 12 }}>
+                    <input
+                      type="checkbox"
+                      checked={mapPage[k]}
+                      onChange={(e) => setMapPage({ ...mapPage, [k]: e.target.checked })}
+                    />
+                    {t(label)}
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div className="row wrap" style={{ gap: 8 }}>
+              <div className="field" style={{ width: 130 }}>
+                <label>{t('web.mapRound')}</label>
+                <input
+                  className="input"
+                  type="number"
+                  min={0}
+                  max={512}
+                  value={mapPage.round}
+                  onChange={(e) => setMapPage({ ...mapPage, round: Number(e.target.value) })}
+                />
+              </div>
+              <div className="field" style={{ flex: 1, minWidth: 140 }}>
+                <label>{t('web.mapPin')}</label>
+                <input
+                  className="input"
+                  placeholder={t('web.mapPinAny')}
+                  value={mapPage.fixedDim}
+                  onChange={(e) => setMapPage({ ...mapPage, fixedDim: e.target.value })}
+                />
+              </div>
+            </div>
+            {status?.map.running && (
+              <div className="row wrap" style={{ gap: 6 }}>
+                {status.map.urls.map((u) => (
                   <button key={u} className="btn sm" onClick={() => window.msms.openExternal(u)}>
                     <ExternalLink size={12} /> {u}
                   </button>

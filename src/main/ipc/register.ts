@@ -22,6 +22,7 @@ import * as bridgeInstall from '../core/bridgeInstall'
 import * as worldTiles from '../core/worldTiles'
 import * as chunkAreas from '../core/chunkAreas'
 import { areaChunkCount } from '@shared/chunkAreas'
+import { normalizeMapPage } from '@shared/mapPage'
 import type { AreaInput } from '@shared/chunkAreas'
 import * as backups from '../core/backups'
 import * as worlds from '../core/worlds'
@@ -421,11 +422,21 @@ export function registerIpc(): void {
         // allowlist entry that matches an empty Origin header.
         apiOrigins: (Array.isArray(cfg.apiOrigins) ? cfg.apiOrigins : [])
           .map((o) => String(o).trim())
-          .filter(Boolean)
+          .filter(Boolean),
+        // Clamped on the way IN, like every other config: a value only checked
+        // when it is read back is still a wrong number in the file (#146).
+        mapPage: normalizeMapPage(cfg.mapPage),
+        // Kept as sent, and kept when omitted. The settings form sends '' for a
+        // passphrase it is not changing - treating that as "clear it" would
+        // lock everybody out of the map every time an unrelated toggle moved.
+        mapPagePass:
+          typeof cfg.mapPagePass === 'string' && cfg.mapPagePass
+            ? cfg.mapPagePass
+            : c.web?.mapPagePass ?? ''
       }
     })
     const w = getConfig().web
-    if (w?.enabled || w?.siteEnabled) startWebServer()
+    if (w?.enabled || w?.siteEnabled || w?.mapPage?.enabled) startWebServer()
     else stopWebServer()
     return getWebStatus()
   })
