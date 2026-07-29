@@ -4720,6 +4720,9 @@ export async function runWebSmoke(): Promise<void> {
         rr = await spost('/api/public/profile/refresh', {}, ptok)
         if (rr.status !== 429) return fail('a fourth refresh expected 429, got ' + rr.status)
         if (!rr.headers.get('retry-after')) return fail('a refused refresh sent no Retry-After')
+        // The three 200s above are themselves the assertion that feasibility is
+        // checked before the budget: the fixture server is stopped, so a refresh
+        // is possible (its data was written on shutdown) and must not 409.
         console.log('WEB-SMOKE: public profile OK (own vs stranger, admin token is a stranger, 400 on a bad name)')
       } finally {
         siteMod.setSiteConfig({ storeServerId: storeBefore, profile: profileBefore })

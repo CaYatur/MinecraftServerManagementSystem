@@ -116,10 +116,32 @@ async function flushAndInvalidate(serverId: string): Promise<boolean> {
   return true
 }
 
+/**
+ * Whether a refresh could do anything at all, checked BEFORE spending budget.
+ *
+ * A stopped server already wrote its player data on shutdown, so re-reading is
+ * the whole refresh. A running one needs a channel to ask for the save. Without
+ * this check the budget is spent first and the flush fails afterwards, so a
+ * player on a server with no RCON burns three a minute on requests that do
+ * nothing — the "a refusal costs nothing" rule the limiter is built around,
+ * broken one layer above it.
+ */
+function canRefresh(serverId: string): boolean {
+  return !processManager.isRunning(serverId) || rcon.isConnected(serverId)
+}
+
 /** One budget per actor, whoever they are: a player name or a panel username. */
 function spendRefresh(actor: string): ReturnType<typeof tryRefresh> {
   const v = tryRefresh(refreshState.get(actor) ?? newRefreshState(), INVENTORY_REFRESH, Date.now())
   refreshState.set(actor, v.state)
+  // Anyone with no live hits is indistinguishable from someone who has never
+  // asked, so dropping them is free — and this map is keyed by a name a
+  // stranger chooses, which is not something to grow without bound.
+  if (refreshState.size > 512) {
+    for (const [k, s] of refreshState) {
+      if (!s.hits.length) refreshState.delete(k)
+    }
+  }
   return v
 }
 import * as metrics from '../core/metrics'
@@ -625,6 +647,8 @@ async function handlePublic(
     if (!who) return sendJson(res, 401, { error: tok0 ? 'session-expired' : 'login-required' })
     const rsid = site.siteServerId()
     if (!rsid || !getServer(rsid)) return sendJson(res, 404, { error: 'not-found' })
+    // Before the budget, not after.
+    if (!canRefresh(rsid)) return sendJson(res, 409, { error: 'server-unreachable' })
     const verdict = spendRefresh('player:' + who.mcName.toLowerCase())
     if (!verdict.allowed) {
       res.setHeader('Retry-After', String(verdict.retryAfterSec))
