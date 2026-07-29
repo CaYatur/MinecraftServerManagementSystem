@@ -125,6 +125,7 @@ export default {
     needsBridge:
       'No live positions yet — this server has no MSMS-Bridge plugin. Positions arrive over the server console, so installing it opens no extra port.',
     heads: 'Heads',
+    goTo: 'Centre the map here',
     world: 'World',
     resetView: 'Reset view',
     installBridge: 'Install MSMS-Bridge {{version}}',
@@ -715,6 +716,11 @@ export default {
     mapRound: 'Round to (blocks)',
     mapNames: 'Show names',
     mapHeads: 'Draw skin heads',
+    mapWorld: 'Show the terrain',
+    mapStructures: 'Show villages and dungeons',
+    mapLoadAhead: 'Load ahead of the view',
+    mapLoadHint:
+      'MSMS never generates terrain — it reads what the server has already written. “Load ahead” only reads a ring of chunks around the view so panning is already drawn; it costs more parsing and changes nothing about the world.',
     profile_inventory: 'Publish inventories',
     profile_enderChest: 'Publish ender chests',
     profile_stats: 'Publish health and XP',

@@ -127,6 +127,7 @@ const tr: typeof en = {
     needsBridge:
       'Henüz canlı konum yok — bu sunucuda MSMS-Bridge eklentisi yok. Konumlar sunucu konsolu üzerinden geldiği için kurmak ek bir port açmaz.',
     heads: 'Kafalar',
+    goTo: 'Haritayı buraya ortala',
     world: 'Dünya',
     resetView: 'Görünümü sıfırla',
     installBridge: 'MSMS-Bridge {{version}} kur',
@@ -719,6 +720,11 @@ const tr: typeof en = {
     mapRound: 'Yuvarlama (blok)',
     mapNames: 'İsimleri göster',
     mapHeads: 'Oyuncu kafalarını çiz',
+    mapWorld: 'Araziyi göster',
+    mapStructures: 'Köyleri ve zindanları göster',
+    mapLoadAhead: 'Görünümün ötesini önceden yükle',
+    mapLoadHint:
+      'MSMS arazi üretmez — sunucunun zaten yazdığını okur. “Önceden yükle” yalnızca görünümün etrafındaki chunk halkasını okur, böylece kaydırınca çizilmiş olur; daha fazla ayrıştırma demektir, dünyada hiçbir şeyi değiştirmez.',
     profile_inventory: 'Envanterleri yayınla',
     profile_enderChest: 'Ender sandıklarını yayınla',
     profile_stats: 'Can ve XP’yi yayınla',

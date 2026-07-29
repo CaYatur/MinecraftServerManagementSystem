@@ -100,7 +100,9 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
   const [bridge, setBridge] = useState(false)
   const [dim, setDim] = useState('overworld')
   const [cell, setCell] = useState(16)
-  const [showHeat, setShowHeat] = useState(true)
+  // An analysis overlay, not what a map is for: a red block over the one player
+  // online was the first thing anyone saw (#131).
+  const [showHeat, setShowHeat] = useState(false)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   // Only to explain an empty canvas. The install itself is `BridgeNotice`,
   // which renders above the map whether or not there is anyone to draw — this
@@ -494,13 +496,22 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
       </div>
       {shown.length > 0 && (
         <div className="row wrap" style={{ gap: 6, marginTop: 8 }}>
+          {/* Click to centre on them, keeping the zoom — with several people
+              online, finding one meant panning around reading the coordinate
+              readout (#131). */}
           {shown.map((p) => (
-            <span key={p.name} className="badge">
+            <button
+              key={p.name}
+              className="badge"
+              style={{ cursor: 'pointer', font: 'inherit', color: 'inherit' }}
+              title={t('map.goTo')}
+              onClick={() => view && setView({ cx: p.x, cz: p.z, scale: view.scale })}
+            >
               {p.name}{' '}
               <span className="dim">
                 {p.x}, {p.y}, {p.z}
               </span>
-            </span>
+            </button>
           ))}
         </div>
       )}

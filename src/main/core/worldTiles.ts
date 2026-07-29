@@ -29,9 +29,11 @@ import {
   regionOf,
   unpackIndices,
   seeThrough,
+  structureKind,
   CHUNK_AXIS,
   INVISIBLE
 } from '@shared/regionFormat'
+import type { StructureMark } from '@shared/regionFormat'
 
 /** A chunk's surface: 256 columns, row-major (x fastest). */
 export interface ChunkTile {
@@ -39,6 +41,13 @@ export interface ChunkTile {
   colour: number[]
   /** World Y of the drawn block, for cross-chunk shading. */
   height: number[]
+  /**
+   * Structures starting in this chunk (#131).
+   *
+   * Read from the same NBT the surface came from, so it costs one more object
+   * lookup rather than a second pass over the world. Absent on most chunks.
+   */
+  marks?: StructureMark[]
 }
 
 interface RegionEntry {
@@ -178,7 +187,37 @@ export function tileFromChunk(chunk: any): ChunkTile | null {
   }
   // Nothing at all: an ungenerated or empty chunk, which is not a tile.
   if (remaining === colour.length) return null
-  return { colour, height }
+  const marks = structuresOf(v)
+  return { colour, height, ...(marks.length ? { marks } : {}) }
+}
+
+/**
+ * Structures whose start is in this chunk.
+ *
+ * `structures.starts` is keyed by structure id and each entry carries the chunk
+ * it starts in — `ChunkX`/`ChunkZ` in chunk units, which is why they are
+ * multiplied here rather than used raw. A chunk that merely CONTAINS part of a
+ * structure lists it in `References`, not `starts`, so this yields one mark per
+ * structure rather than one per chunk it sprawls across.
+ */
+function structuresOf(v: any): StructureMark[] {
+  const starts = tag(tag(v.structures)?.starts) ?? tag(tag(tag(v.Level)?.Structures)?.Starts)
+  if (!starts || typeof starts !== 'object') return []
+  const out: StructureMark[] = []
+  for (const [id, raw] of Object.entries(starts)) {
+    const s = tag(raw)
+    if (!s || typeof s !== 'object') continue
+    const cx = Number(tag((s as any).ChunkX))
+    const cz = Number(tag((s as any).ChunkZ))
+    if (!Number.isFinite(cx) || !Number.isFinite(cz)) continue
+    out.push({
+      kind: structureKind(id),
+      id: String(id).replace(/^minecraft:/, ''),
+      x: cx * CHUNK_AXIS + CHUNK_AXIS / 2,
+      z: cz * CHUNK_AXIS + CHUNK_AXIS / 2
+    })
+  }
+  return out
 }
 
 function decompress(buf: Buffer, kind: number): Buffer | null {
@@ -316,14 +355,23 @@ let working = false
 export function requestTiles(
   serverId: string,
   dim: string,
-  want: { cx: number; cz: number }[]
-): { tiles: Record<string, { c: number[]; h: number[] }>; pending: number } {
-  const tiles: Record<string, { c: number[]; h: number[] }> = {}
+  want: { cx: number; cz: number }[],
+  opts: { marks?: boolean } = {}
+): { tiles: Record<string, { c: number[]; h: number[]; m?: StructureMark[] }>; pending: number } {
+  const tiles: Record<string, { c: number[]; h: number[]; m?: StructureMark[] }> = {}
   const missing: { cx: number; cz: number }[] = []
   for (const w of want) {
     const t = peekChunkTile(serverId, dim, w.cx, w.cz)
     if (t === undefined) missing.push(w)
-    else if (t) tiles[w.cx + ',' + w.cz] = { c: t.colour, h: t.height }
+    // Structures are omitted unless asked for. They are a spoiler, and a
+    // payload that carries them "in case" is one the public feed could leak.
+    else if (t) {
+      tiles[w.cx + ',' + w.cz] = {
+        c: t.colour,
+        h: t.height,
+        ...(opts.marks && t.marks ? { m: t.marks } : {})
+      }
+    }
   }
   for (const m of missing) {
     if (queue.length > 4096) break
