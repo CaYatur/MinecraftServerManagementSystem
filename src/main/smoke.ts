@@ -164,6 +164,7 @@ import {
   hasBridgeMarker,
   reconcileTps,
   newBridgeSnapshot,
+  BRIDGE_MARKER,
   BRIDGE_STALE_FACTOR,
   BRIDGE_DEFAULT_INTERVAL_MS,
   type BridgeSnapshot
@@ -1250,7 +1251,28 @@ export async function runBridgeSmoke(): Promise<void> {
     if (!withStdout || withStdout.t !== 'tick' || withStdout.tps !== 20) {
       return fail('a tick behind a [STDOUT] tag did not parse')
     }
-    console.log('BRIDGE-SMOKE: marker parsed at column 0, behind [INFO]: and behind [STDOUT]')
+    // The plugin reports through its own logger now rather than System.out, so
+    // Paper puts the PLUGIN NAME in front of the marker — and the plugin is
+    // called `MSMS-Bridge` while the marker is `[MSMS-BRIDGE]`. Those differ
+    // only in case, and the parser slices at the first match: if the two ever
+    // became the same string, every message would be cut at the wrong place and
+    // parse as nothing. That is one rename away, so it is asserted.
+    const viaLogger = parseBridgeLine(
+      '[12:34:58 INFO]: [MSMS-Bridge] [MSMS-BRIDGE] {"v":1,"t":"tick","tps":19.5,"tps5":20,"tps15":20,"mspt":4.2}'
+    )
+    if (!viaLogger || viaLogger.t !== 'tick' || viaLogger.tps !== 19.5) {
+      return fail('a tick behind the plugin logger prefix did not parse')
+    }
+    // Tied to the real sources rather than to a literal: the marker the parser
+    // looks for, and the name Paper prints in front of it.
+    const pluginName = /^name:\s*(.+)$/m
+      .exec(readFileSync(join(process.cwd(), 'bridge', 'src', 'main', 'resources', 'plugin.yml'), 'utf-8'))?.[1]
+      ?.trim()
+    if (!pluginName) return fail('plugin.yml has no name')
+    if (BRIDGE_MARKER === '[' + pluginName + ']') {
+      return fail('the marker is identical to the plugin name — the logger prefix would be sliced instead')
+    }
+    console.log('BRIDGE-SMOKE: marker parsed at column 0, behind [INFO]:, [STDOUT] and the plugin logger prefix')
 
     // --- marker detection must not fire on ordinary console lines ---
     if (!hasBridgeMarker('[12:00:00 INFO]: [MSMS-BRIDGE] {"v":1,"t":"bye"}')) {
