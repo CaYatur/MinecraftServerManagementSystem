@@ -87,6 +87,16 @@ import {
   sha256Of
 } from '@shared/bridgeRelease'
 import type { GhRelease } from '@shared/bridgeRelease'
+import {
+  bitsPerIndex,
+  blockColour,
+  localChunk,
+  packingFor,
+  parseLocationTable,
+  regionOf,
+  shade,
+  unpackIndices
+} from '@shared/regionFormat'
 import { publicVerifyReply, verifyDecision } from '@shared/playerVerify'
 import { newRefreshState, tryRefresh, INVENTORY_REFRESH } from '@shared/refreshLimit'
 import {
@@ -960,6 +970,91 @@ export async function runModUpdateSmoke(): Promise<void> {
       return fail('planModSwap did not sanitise the new filename')
     }
     console.log('MODUPDATE-SMOKE: update swap OK (case-collision safe, disabled stays disabled, traversal stripped)')
+
+    // ---- region decoding (#119) ----
+    {
+      // The packing change at 1.16 is the trap: before it an index could span
+      // two longs, after it each long is padded so they never do. Decode one as
+      // the other and you get a map that LOOKS like a map — right scale, right
+      // shape, wrong blocks, drifting further out of alignment the deeper into
+      // the chunk you read. There is no exception to catch, which is why this
+      // is a table rather than an assumption.
+      if (packingFor(2565) !== 'spanning') return fail('a pre-1.16 chunk was read as padded')
+      if (packingFor(2566) !== 'padded') return fail('1.16 was read as spanning')
+      if (packingFor(3700) !== 'padded') return fail('a modern chunk was read as spanning')
+      if (packingFor(undefined) !== 'padded') return fail('an unknown version should assume modern')
+
+      // Padded: 5 bits, so 12 per long with 4 bits of padding left over. Index
+      // 12 must come from the SECOND long, not from the top of the first.
+      const padded = unpackIndices([0b00010_00001n, 0b00111n], 5, 14, 'padded')
+      if (padded[0] !== 1 || padded[1] !== 2) return fail('padded low indices wrong: ' + padded.slice(0, 2))
+      if (padded[12] !== 7) return fail('padded index 12 came from the wrong long: ' + padded[12])
+
+      // Spanning: the same 5-bit indices packed continuously. Index 12 starts
+      // at bit 60 and takes its top bit from the next long — the exact case the
+      // padded reader gets wrong.
+      let packed = 0n
+      for (let i = 0; i < 13; i++) packed |= BigInt(i % 32) << BigInt(i * 5)
+      const spanLongs = [BigInt.asIntN(64, packed), BigInt.asIntN(64, packed >> 64n)]
+      const spanning = unpackIndices(spanLongs, 5, 13, 'spanning')
+      for (let i = 0; i < 12; i++) {
+        if (spanning[i] !== i % 32) return fail('spanning index ' + i + ' was ' + spanning[i])
+      }
+      // ...and the two readers disagree exactly where they should.
+      const asPadded = unpackIndices(spanLongs, 5, 13, 'padded')
+      if (asPadded[12] === spanning[12]) {
+        return fail('the two packings produced the same straddling index — one of them is not implemented')
+      }
+
+      // A negative long is normal: these are signed 64-bit values and the sign
+      // bit is data. A plain shift fills with ones and every high index comes
+      // back wrong.
+      const negative = unpackIndices([-1n], 4, 16, 'padded')
+      if (negative.some((v) => v !== 15)) return fail('a negative long decoded to ' + negative[0])
+
+      // Four bits minimum whatever the palette holds.
+      if (bitsPerIndex(1) !== 4 || bitsPerIndex(16) !== 4) return fail('small palettes must still use 4 bits')
+      if (bitsPerIndex(17) !== 5) return fail('17 entries needs 5 bits')
+      if (bitsPerIndex(4096) !== 12) return fail('4096 entries needs 12 bits')
+
+      // The location table, including the "never generated" case that covers
+      // most of a fresh region file.
+      const header = new Uint8Array(4096)
+      header[0] = 0
+      header[1] = 0
+      header[2] = 2
+      header[3] = 1
+      const table = parseLocationTable(header)
+      if (table[0].offset !== 2 * 4096) return fail('chunk 0 offset wrong: ' + table[0].offset)
+      if (table[0].byteLength !== 4096) return fail('chunk 0 length wrong')
+      if (table[1].offset !== 0) return fail('an ungenerated chunk reported an offset')
+      if (parseLocationTable(new Uint8Array(0)).length !== 1024) {
+        return fail('a truncated header must still describe 1024 slots')
+      }
+
+      // Negative coordinates: `-1 / 32 | 0` is 0, which would put every chunk
+      // west of spawn in the wrong region file.
+      if (regionOf(-1) !== -1) return fail('regionOf(-1) should be -1')
+      if (regionOf(-32) !== -1 || regionOf(-33) !== -2) return fail('regionOf is wrong for negatives')
+      if (localChunk(-1) !== 31) return fail('localChunk(-1) should be 31')
+      if (localChunk(-32) !== 0) return fail('localChunk(-32) should be 0')
+
+      // Colours are stable — an unknown block must look the same on every tile
+      // and every reload, or the map shimmers as chunks are re-rendered.
+      const a = blockColour('some_modded_block')
+      const b = blockColour('some_modded_block')
+      if (a.r !== b.r || a.g !== b.g || a.b !== b.b) return fail('an unknown block colour is not stable')
+      if (blockColour('minecraft:water').b <= blockColour('minecraft:water').r) {
+        return fail('water is not blue')
+      }
+      if (blockColour('birch_leaves').g <= blockColour('birch_leaves').r) return fail('leaves are not green')
+      // Shading is what makes a cliff visible.
+      const flat = shade({ r: 100, g: 100, b: 100 }, 0)
+      if (shade({ r: 100, g: 100, b: 100 }, 3).r <= flat.r) return fail('a step up is not lighter')
+      if (shade({ r: 100, g: 100, b: 100 }, -3).r >= flat.r) return fail('a step down is not darker')
+
+      console.log('MODUPDATE-SMOKE: region decoding OK (1.16 packing split, negative longs and coords, stable colours)')
+    }
 
     // ---- the Bridge plugin installer (#103) ----
     {

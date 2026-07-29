@@ -312,6 +312,8 @@ export interface PublicSite {
    */
   showMap: boolean
   mapHeads: boolean
+  /** Whether the terrain is published too — a separate decision (#119). */
+  mapWorld: boolean
   /** Whether a profile page is worth offering at all. */
   showProfiles: boolean
   theme: SiteTheme

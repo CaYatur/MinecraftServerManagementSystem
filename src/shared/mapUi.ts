@@ -66,6 +66,7 @@ export const MAP_HTML = `
     </select>
     <button onclick="mapToggleHeat()" id="mpHeatBtn">Heatmap: on</button>
     <button onclick="mapToggleHeads()" id="mpHeadsBtn">Heads: off</button>
+    <button onclick="mapToggleWorld()" id="mpWorldBtn">World: off</button>
     <button onclick="mapResetView()" title="Fit the view to everyone online">Reset view</button>
   </div>
   <div class="mp-canvas-wrap">
@@ -102,7 +103,7 @@ export const MAP_HTML = `
  */
 export const MAP_JS = `
 var MAP={data:null,heat:true,timer:null,dim:'overworld',bridge:null,busy:false,msg:'',
- view:null,vp:{width:640,height:400},fitFor:null,drag:null,cursor:null,headsOn:false};
+ view:null,vp:{width:640,height:400},fitFor:null,drag:null,cursor:null,headsOn:false,world:false};
 /* The bridge warning and its install button (#103).
    Deliberately here, in the empty map, and nowhere else: this is where an
    operator finds out positions are missing, so it is the only place the answer
@@ -231,6 +232,76 @@ function mapCursorText(){
 /* Heads are drawn from an avatar service by uuid, and a fetch that fails must
    leave a dot rather than a hole. Cached per uuid so a 2s redraw does not
    re-request every avatar on the server. */
+/* ---- the world under the markers (#119) ----
+   Tiles are 16x16 columns of packed colour plus a height, drawn into a small
+   offscreen canvas per chunk and then blitted. Building an ImageData per frame
+   for every visible chunk is the difference between a map that pans and one
+   that stutters; a chunk only changes when the server rewrites its region. */
+var MAP_TILES={},MAP_TILE_PENDING=false;
+function mapTileKey(cx,cz){return cx+','+cz}
+function mapVisibleChunks(){
+ if(!MAP.view)return [];
+ var tl=mapS2W({x:0,y:0}),br=mapS2W({x:MAP.vp.width,y:MAP.vp.height});
+ var out=[];
+ var x0=Math.floor(tl.x/16),x1=Math.floor(br.x/16);
+ var z0=Math.floor(tl.z/16),z1=Math.floor(br.z/16);
+ /* Capped: zoomed all the way out a viewport covers tens of thousands of
+    chunks, and asking for them would be pointless as well as expensive — at
+    that scale a chunk is a fraction of a pixel. */
+ if((x1-x0+1)*(z1-z0+1)>4096)return [];
+ for(var z=z0;z<=z1;z++)for(var x=x0;x<=x1;x++)out.push({cx:x,cz:z});
+ return out}
+function mapFetchTiles(){
+ if(!MAP.world||MAP_TILE_PENDING||!MAP.view)return;
+ var want=mapVisibleChunks().filter(function(c){return MAP_TILES[mapTileKey(c.cx,c.cz)]===undefined});
+ if(!want.length)return;
+ want=want.slice(0,64);
+ MAP_TILE_PENDING=true;
+ mapGet(mapTilesUrl(MAP.dim,want.map(function(c){return c.cx+','+c.cz}).join(';'))).then(function(d){
+  MAP_TILE_PENDING=false;
+  if(!d||!d.tiles)return;
+  for(var i=0;i<want.length;i++){
+   var k=mapTileKey(want[i].cx,want[i].cz);
+   var t=d.tiles[k];
+   /* null, not undefined, for a chunk the server has parsed and found empty —
+      otherwise it is re-requested forever. A pending one is left unset so the
+      next poll asks again. */
+   if(t)MAP_TILES[k]=mapBakeTile(t);
+   else if(!d.pending)MAP_TILES[k]=null}
+  mapDraw()})}
+function mapBakeTile(t){
+ var cv=document.createElement('canvas');cv.width=16;cv.height=16;
+ var g=cv.getContext('2d');var img=g.createImageData(16,16);
+ for(var i=0;i<256;i++){
+  var c=t.c[i];var o=i*4;
+  if(c<0){img.data[o+3]=0;continue}
+  /* Shaded by the step to the column to the north, which is what makes a cliff
+     visible. Without it the map is a flat colour chart. */
+  var north=(i>=16)?t.h[i-16]:t.h[i];
+  var f=(t.h[i]>north)?1.12:(t.h[i]<north)?0.86:1;
+  img.data[o]=Math.max(0,Math.min(255,Math.round(((c>>16)&255)*f)));
+  img.data[o+1]=Math.max(0,Math.min(255,Math.round(((c>>8)&255)*f)));
+  img.data[o+2]=Math.max(0,Math.min(255,Math.round((c&255)*f)));
+  img.data[o+3]=255}
+ g.putImageData(img,0,0);return cv}
+function mapDrawTiles(g,w,h,dpr){
+ if(!MAP.world)return;
+ var chunks=mapVisibleChunks();
+ if(!chunks.length)return;
+ var sx=w/MAP.vp.width,sy=h/MAP.vp.height;
+ var size=16*MAP.view.scale;
+ /* Nearest-neighbour: this is 16x16 pixel art scaled up, and smoothing it turns
+    a blocky world map into a blur. */
+ g.imageSmoothingEnabled=false;
+ for(var i=0;i<chunks.length;i++){
+  var t=MAP_TILES[mapTileKey(chunks[i].cx,chunks[i].cz)];
+  if(!t)continue;
+  var p=mapW2S({x:chunks[i].cx*16,z:chunks[i].cz*16});
+  g.drawImage(t,p.x*sx,p.y*sy,size*sx+1,size*sy+1)}
+ g.imageSmoothingEnabled=true}
+function mapToggleWorld(){MAP.world=!MAP.world;
+ document.getElementById('mpWorldBtn').textContent='World: '+(MAP.world?'on':'off');
+ if(MAP.world)mapFetchTiles();mapDraw()}
 var MAP_HEADS={};
 function mapHead(name){
  /* Keyed by NAME since #116: the uuid MSMS holds is the offline-mode one on a
@@ -270,6 +341,9 @@ function mapDraw(){
  if(db)db.style.display=(d.heads===false)?'none':'';
  var g=cv.getContext('2d');g.clearRect(0,0,w,h);
  var sx=w/MAP.vp.width,sy=h/MAP.vp.height;
+ /* The world first: everything else is drawn on top of it. */
+ mapDrawTiles(g,w,h,dpr);
+ mapFetchTiles();
  var px=function(x){return mapW2S({x:x,z:0}).x*sx};
  var pz=function(z){return mapW2S({x:0,z:z}).y*sy};
  /* A grid that adapts to the zoom: a fixed 64-block step is invisible when

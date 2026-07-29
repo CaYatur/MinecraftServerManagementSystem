@@ -233,9 +233,18 @@ export interface PublicMapConfig {
   serverId: string
   /** Coordinates are snapped to this many blocks. */
   round: number
-  /** Draw skin heads, which means sending uuids to an avatar service. */
+  /** Draw skin heads, which means sending names to an avatar service. */
   heads: boolean
   names: boolean
+  /**
+   * Render the actual terrain under the markers (#119).
+   *
+   * Its own decision, separate from publishing the map. Player positions can be
+   * rounded; terrain cannot — a rendered world is an accurate map of a private
+   * server, every base and every farm on it, which is a different thing to
+   * agree to than "show roughly where people are".
+   */
+  world: boolean
 }
 
 /**
@@ -249,7 +258,8 @@ export const PUBLIC_MAP_DEFAULTS: PublicMapConfig = {
   serverId: '',
   round: 64,
   heads: false,
-  names: true
+  names: true,
+  world: false
 }
 
 export const MAX_MAP_ROUND = 512

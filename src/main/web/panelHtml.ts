@@ -794,6 +794,8 @@ function mapFeedUrl(dim,cell){
  return '/api/servers/'+mapServerId()+'/map?dim='+encodeURIComponent(dim)+'&cell='+encodeURIComponent(cell)}
 /* The map engine does not know how this page wraps a response, and must not:
    the two pages disagree, and it used to assume this one (#115). */
+function mapTilesUrl(dim,list){
+ return '/api/servers/'+mapServerId()+'/map/tiles?dim='+encodeURIComponent(dim)+'&c='+encodeURIComponent(list)}
 function mapGet(u){return api(u).then(function(r){return r.ok?r.body:null}).catch(function(){return null})}
 function mapPost(u){return api(u,{method:'POST'}).then(function(r){
  /* A refusal still has a body worth showing — "no jar available" is the answer,
