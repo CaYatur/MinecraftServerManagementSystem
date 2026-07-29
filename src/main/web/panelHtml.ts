@@ -3,6 +3,7 @@
 import { CRATE_CSS, CRATE_JS, CRATE_MODAL_HTML } from '@shared/crateUi'
 import { STORE_CSS, STORE_JS, STORE_MODAL_HTML, CRATE_ICON_SVG } from '@shared/storeUi'
 import { avatarUrl } from '@shared/profile'
+import { STRUCTURE_ICONS } from '@shared/mapIcons'
 import { MAP_CSS, MAP_HTML, MAP_JS } from '@shared/mapUi'
 export function getPanelHtml(): string {
   return `<!doctype html><html lang="en"><head>
@@ -349,12 +350,24 @@ h2{margin:8px 0;font-weight:800;letter-spacing:-.4px}
         <div class="row"><button class="btn sm" onclick="togglePerf()"><span id="mpPerfCaret">▸</span></button>
           <b>Map performance</b><div class="spacer"></div><span class="dim" id="mpPerfMsg" style="font-size:12px"></span></div>
         <div id="mpPerfBody" style="display:none;margin-top:10px">
+          <div class="dim" style="font-size:12px;margin-bottom:10px">
+            These are settings for <b>this server</b>, not for this window — the desktop app,
+            this panel and the public site all read the same tiles, so a change here applies to
+            every one of them.
+          </div>
           <label class="row" style="gap:8px;margin-bottom:6px">
             <input type="checkbox" id="mpPerfCache" onchange="savePerf()"/> Cache parsed tiles on disk
           </label>
           <div class="dim" style="font-size:12px;margin-bottom:10px">
             A region costs a few hundred milliseconds to parse and about a millisecond to read back.
             With this on it is parsed once and re-parsed only when the server rewrites it.
+          </div>
+          <label class="row" style="gap:8px;margin-bottom:6px">
+            <input type="checkbox" id="mpPerfPan" onchange="savePerf()"/> Keep loading as the view moves
+          </label>
+          <div class="dim" style="font-size:12px;margin-bottom:10px">
+            Off, the map draws what it already holds and asks for nothing more until you press
+            “Load this view” — so panning across a large world costs nothing.
           </div>
           <div class="row" style="align-items:flex-end">
             <div style="min-width:140px"><div class="dim" style="font-size:12px">Regions in memory</div>
@@ -834,12 +847,15 @@ function loadPerf(){
  mapGet('/api/servers/'+current.id+'/map/perf').then(function(p){
   if(!p)return;
   document.getElementById('mpPerfCache').checked=p.cache!==false;
+  document.getElementById('mpPerfPan').checked=p.loadOnPan!==false;
   document.getElementById('mpPerfMem').value=p.memoryRegions;
   document.getElementById('mpPerfGap').value=p.parseGapMs;
-  document.getElementById('mpPerfLimit').value=p.cacheLimitMB})}
+  document.getElementById('mpPerfLimit').value=p.cacheLimitMB;
+  MAP.loadOnPan=p.loadOnPan!==false;mapDraw()})}
 function savePerf(){
  if(!current)return;
  var body={cache:document.getElementById('mpPerfCache').checked,
+  loadOnPan:document.getElementById('mpPerfPan').checked,
   memoryRegions:Number(document.getElementById('mpPerfMem').value),
   parseGapMs:Number(document.getElementById('mpPerfGap').value),
   cacheLimitMB:Number(document.getElementById('mpPerfLimit').value)};
@@ -851,6 +867,7 @@ function savePerf(){
   document.getElementById('mpPerfMem').value=p.memoryRegions;
   document.getElementById('mpPerfGap').value=p.parseGapMs;
   document.getElementById('mpPerfLimit').value=p.cacheLimitMB;
+  MAP.loadOnPan=p.loadOnPan!==false;mapDraw();
   document.getElementById('mpPerfMsg').textContent='Saved'})}
 function clearMapCache(){
  if(!current)return;
@@ -873,6 +890,10 @@ function mapPost(u){return api(u,{method:'POST'}).then(function(r){
    point it elsewhere, and so the public site can refuse to draw heads at
    all (#104). */
 var avatarUrl=${avatarUrl.toString()};
+/* The structure glyphs, shared with the desktop so a village is the same shape
+   in all three surfaces (#136). Self-contained, like every embedded helper. */
+var MAP_ICONS=${JSON.stringify(STRUCTURE_ICONS)};
+function mapIconFor(kind){return MAP_ICONS[kind]||MAP_ICONS.other}
 function mapAvatarUrl(name){return avatarUrl(name,32)}
 var CRATE_ICON_SVG=${JSON.stringify(CRATE_ICON_SVG)};
 

@@ -176,13 +176,23 @@ export interface MapPerfConfig {
   parseGapMs: number
   /** Ceiling on the on-disk cache, in MB. Oldest evicted first. */
   cacheLimitMB: number
+  /**
+   * Keep reading new area as the view moves.
+   *
+   * Off, the map draws what it already holds and stops there until asked — so
+   * panning across a large world costs nothing at all. On a machine where the
+   * reading itself is the problem, this is the switch that ends it; the price
+   * is that new ground stays blank until you press to load it.
+   */
+  loadOnPan: boolean
 }
 
 export const MAP_PERF_DEFAULTS: MapPerfConfig = {
   cache: true,
   memoryRegions: 12,
   parseGapMs: 250,
-  cacheLimitMB: 512
+  cacheLimitMB: 512,
+  loadOnPan: true
 }
 
 /**
@@ -201,6 +211,7 @@ export function normalizeMapPerf(raw: unknown): MapPerfConfig {
     cache: r.cache !== false,
     memoryRegions: num(r.memoryRegions, 2, 64, MAP_PERF_DEFAULTS.memoryRegions),
     parseGapMs: num(r.parseGapMs, 0, 5000, MAP_PERF_DEFAULTS.parseGapMs),
-    cacheLimitMB: num(r.cacheLimitMB, 0, 20_000, MAP_PERF_DEFAULTS.cacheLimitMB)
+    cacheLimitMB: num(r.cacheLimitMB, 0, 20_000, MAP_PERF_DEFAULTS.cacheLimitMB),
+    loadOnPan: r.loadOnPan !== false
   }
 }

@@ -82,6 +82,7 @@ export const MAP_HTML = `
     <button onclick="mapToggleHeat()" id="mpHeatBtn">Heatmap: off</button>
     <button onclick="mapToggleHeads()" id="mpHeadsBtn">Heads: on</button>
     <button onclick="mapToggleWorld()" id="mpWorldBtn">World: on</button>
+    <button onclick="mapLoadHere()" id="mpLoadBtn" class="hidden" title="Read the area now">Load this view</button>
     <button onclick="mapToggleMarks()" id="mpMarksBtn">Structures: off</button>
     <select id="mpMarkFilter" onchange="mapSetMarkFilter(this.value)" title="Which structures to show">
       <option value="">All structures</option>
@@ -313,8 +314,12 @@ function mapDrawableChunks(){
   out.push({cx:cx,cz:cz})}
  return out}
 var MAP_MARKS={};
-function mapFetchTiles(){
+function mapFetchTiles(force){
  if(!MAP.world||MAP_TILE_PENDING||!MAP.view)return;
+ /* When loading-on-pan is off the map draws what it holds and asks for nothing
+    more until the operator presses to load. On a machine where the reading
+    itself is the problem, this is the switch that ends it (#136). */
+ if(MAP.loadOnPan===false&&!force)return;
  var chunks=mapVisibleChunks();
  /* Read ahead of the viewport when asked: a ring of chunks around what is on
     screen, so panning is already drawn. This never GENERATES terrain — MSMS
@@ -351,17 +356,23 @@ function mapFetchTiles(){
   /* Ask again straight away while anything is still coming. Waiting for the
      2-second position poll is why a viewport filled in visible bands over ten
      seconds instead of arriving at once. */
-  if(d.pending>0){clearTimeout(MAP_TILE_SOON);MAP_TILE_SOON=setTimeout(mapFetchTiles,180)}})}
+  /* A follow-up is finishing a load the operator already asked for, so it is
+     not gated on loading-on-pan. */
+  if(d.pending>0){clearTimeout(MAP_TILE_SOON);MAP_TILE_SOON=setTimeout(function(){mapFetchTiles(true)},180)}})}
 var MAP_TILE_SOON=null;
 /* Structure markers. Off by default: they are a spoiler for the players and
    clutter for everyone else. The server decides whether they arrive at all —
    the public feed sends none unless an operator published them. */
-var MAP_MARK_STYLE={village:['#e3b341','V'],dungeon:['#b5504f','D'],temple:['#c58bd6','T'],
- fortress:['#8b6f4e','F'],mine:['#9aa0a6','M'],other:['#6fa8dc','?']};
+/* Cached Path2D per kind: rebuilding one from its path string for every marker
+   on every frame is parsing the same string hundreds of times a second. */
+var MAP_ICON_PATHS={};
+function mapIconPath(kind){
+ if(!MAP_ICON_PATHS[kind]){
+  try{MAP_ICON_PATHS[kind]=new Path2D(mapIconFor(kind).path)}catch(e){MAP_ICON_PATHS[kind]=null}}
+ return MAP_ICON_PATHS[kind]}
 function mapDrawMarks(g,w,h,dpr){
  if(!MAP.marksOn)return;
  var sx=w/MAP.vp.width,sy=h/MAP.vp.height;
- g.textAlign='center';g.textBaseline='middle';g.font='bold '+(10*dpr)+'px Inter,system-ui,sans-serif';
  var chunks=mapDrawableChunks();
  for(var i=0;i<chunks.length;i++){
   var list=MAP_MARKS[mapTileKey(chunks[i].cx,chunks[i].cz)];
@@ -369,13 +380,21 @@ function mapDrawMarks(g,w,h,dpr){
   for(var j=0;j<list.length;j++){
    var mk=list[j];
    if(MAP.markFilter&&MAP.markFilter[mk.kind]===false)continue;
-   var st=MAP_MARK_STYLE[mk.kind]||MAP_MARK_STYLE.other;
+   var ic=mapIconFor(mk.kind);
    var p=mapW2S({x:mk.x,z:mk.z});
-   var x=p.x*sx,y=p.y*sy,r=7*dpr;
+   var x=p.x*sx,y=p.y*sy,r=9*dpr;
+   /* A disc behind the glyph so it reads against grass, water or netherrack
+      alike — a bare silhouette disappears on anything its own colour. */
    g.beginPath();g.arc(x,y,r,0,Math.PI*2);
-   g.fillStyle=st[0];g.fill();
-   g.lineWidth=1.5*dpr;g.strokeStyle='rgba(0,0,0,.6)';g.stroke();
-   g.fillStyle='#101014';g.fillText(st[1],x,y+0.5*dpr)}}}
+   g.fillStyle='rgba(16,16,20,.72)';g.fill();
+   g.lineWidth=1.5*dpr;g.strokeStyle=ic.colour;g.stroke();
+   var path=mapIconPath(mk.kind);
+   if(path){
+    var s=(r*1.5)/24;
+    g.save();g.translate(x-r*0.75,y-r*0.75);g.scale(s,s);
+    g.fillStyle=ic.colour;g.fill(path);g.restore()}}}}
+/* Load what is on screen, once, when loading-on-pan is off. */
+function mapLoadHere(){mapFetchTiles(true)}
 function mapSetMarkFilter(kind){
  /* '' is everything. A single-kind filter is a whitelist of one, which reads
     better than five checkboxes for a list this short. */
@@ -521,6 +540,9 @@ function mapDraw(){
  if(mb)mb.style.display=admin?'':'none';
  var mf=document.getElementById('mpMarkFilter');
  if(mf)mf.style.display=(MAP.marksOn)?'':'none';
+ /* Only meaningful when the map will not fetch by itself. */
+ var lb=document.getElementById('mpLoadBtn');
+ if(lb)lb.classList.toggle('hidden',MAP.loadOnPan!==false);
  var g=cv.getContext('2d');g.clearRect(0,0,w,h);
  var sx=w/MAP.vp.width,sy=h/MAP.vp.height;
  /* The world first: everything else is drawn on top of it. */
