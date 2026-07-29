@@ -80,7 +80,7 @@ const api: MsmsApi = {
 
   bridgeStatus: (id) => ipcRenderer.invoke(IPC.bridgeStatus, id),
   installBridge: (id) => ipcRenderer.invoke(IPC.bridgeInstall, id),
-  mapTiles: (id, dim, chunks) => ipcRenderer.invoke(IPC.mapTiles, id, dim, chunks),
+  mapTiles: (id, dim, chunks, marks) => ipcRenderer.invoke(IPC.mapTiles, id, dim, chunks, marks),
 
   listJava: (refresh) => ipcRenderer.invoke(IPC.javaList, refresh),
   resolveJava: (override) => ipcRenderer.invoke(IPC.javaResolve, override),

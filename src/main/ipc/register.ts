@@ -302,10 +302,17 @@ export function registerIpc(): void {
   H(IPC.bridgeInstall, (_e, id: string) =>
     bridgeInstall.installBridge(id, { by: 'desktop', source: 'panel' })
   )
-  H(IPC.mapTiles, (_e, id: string, dim: string, chunks: { cx: number; cz: number }[]) =>
-    // Capped here too: the renderer is trusted, but a bug there should not be
-    // able to queue a whole world any more than a web caller can.
-    worldTiles.requestTiles(id, dim, (chunks ?? []).slice(0, worldTiles.MAX_TILES_PER_REQUEST))
+  H(
+    IPC.mapTiles,
+    (_e, id: string, dim: string, chunks: { cx: number; cz: number }[], marks?: boolean) =>
+      // Capped here too: the renderer is trusted, but a bug there should not be
+      // able to queue a whole world any more than a web caller can.
+      worldTiles.requestTiles(
+        id,
+        dim,
+        (chunks ?? []).slice(0, worldTiles.MAX_TILES_PER_REQUEST),
+        { marks: !!marks }
+      )
   )
 
   // --- java installs ---

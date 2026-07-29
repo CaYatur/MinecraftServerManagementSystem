@@ -183,6 +183,10 @@ function mapRefresh(){
      that is not one. Keeping the last good frame beats blanking the canvas on
      one dropped poll. */
   if(!d||typeof d.dimension!=='string')return;
+  /* Tiles are keyed by chunk alone, and the nether uses the same coordinates as
+     the overworld — so switching dimension without dropping them draws one
+     world's terrain under another world's players. */
+  if(MAP.dim!==d.dimension){MAP_TILES={};MAP_MARKS={}}
   MAP.data=d;MAP.dim=d.dimension;
   var dot=document.getElementById('mpDot'),state=document.getElementById('mpState');
   dot.className='mp-dot'+(d.bridge?' on':'');
@@ -427,7 +431,6 @@ function mapDraw(){
  /* The world first: everything else is drawn on top of it. */
  mapDrawTiles(g,w,h);
  mapFetchTiles();
- mapDrawMarks(g,w,h,dpr);
  var px=function(x){return mapW2S({x:x,z:0}).x*sx};
  var pz=function(z){return mapW2S({x:0,z:z}).y*sy};
  /* A grid that adapts to the zoom: a fixed 64-block step is invisible when
@@ -447,6 +450,9 @@ function mapDraw(){
   for(var i=0;i<d.heatmap.length;i++){var c=d.heatmap[i];
    g.fillStyle='rgba(220,39,39,'+(0.12+0.55*(c.count/max)).toFixed(3)+')';
    g.fillRect(px(c.x),pz(c.z),Math.max(2*dpr,cw),Math.max(2*dpr,ch))}}
+ /* After the grid and the heatmap, before the players: a marker under a grid
+    line reads as a smudge, and a player must never be hidden behind one. */
+ mapDrawMarks(g,w,h,dpr);
  var ps=d.players||[];
  g.font=(11*dpr)+'px Inter,system-ui,sans-serif';g.textAlign='center';g.textBaseline='bottom';
  for(var j=0;j<ps.length;j++){var p=ps[j];var x=px(p.x),y=pz(p.z);
