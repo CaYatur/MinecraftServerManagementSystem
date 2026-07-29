@@ -4,6 +4,8 @@ import { CRATE_CSS, CRATE_JS, CRATE_MODAL_HTML } from '@shared/crateUi'
 import { STORE_CSS, STORE_JS, STORE_MODAL_HTML, CRATE_ICON_SVG } from '@shared/storeUi'
 import { avatarUrl } from '@shared/profile'
 import { iconSvg, STRUCTURE_ICONS } from '@shared/mapIcons'
+import { usageSamples, API_KEY_HEADER, USAGE_NOTES } from '@shared/apiUsage'
+import { API_PREFIX } from '@shared/apiSurface'
 import { MAP_CSS, MAP_HTML, MAP_JS } from '@shared/mapUi'
 export function getPanelHtml(): string {
   return `<!doctype html><html lang="en"><head>
@@ -894,6 +896,12 @@ var avatarUrl=${avatarUrl.toString()};
    in all three surfaces (#136). Self-contained, like every embedded helper. */
 /* Named exactly as the shared module names it: iconSvg is embedded by
    stringifying it and reads the table through this identifier. */
+/* Self-contained by construction: it reads API_PREFIX through a name the page
+   defines, and calls nothing. See #116. */
+var API_PREFIX=${JSON.stringify(API_PREFIX)};
+var API_KEY_HEADER=${JSON.stringify(API_KEY_HEADER)};
+var API_USAGE_NOTES=${JSON.stringify(USAGE_NOTES)};
+var apiUsageSamples=${usageSamples.toString()};
 var STRUCTURE_ICONS=${JSON.stringify(STRUCTURE_ICONS)};
 var MAP_ICONS=STRUCTURE_ICONS;
 function mapIconFor(kind){return STRUCTURE_ICONS[kind]||STRUCTURE_ICONS.other}
@@ -1142,7 +1150,10 @@ function loadKeys(){renderKeyScopes();
   if(r.status===403){el.innerHTML='<div class="card dim">Owner access required.</div>';return}
   if(!r.ok){el.innerHTML='<div class="card dim">Could not load API keys.</div>';return}
   renderKeys(r.body.keys||[])})}
-function keyState(k){if(k.revoked)return 'revoked';if(k.expiresAt&&k.expiresAt<=Date.now())return 'expired';return 'active'}
+/* Disabled is its own state, not a kind of revoked: one is reversible and the
+   other is what you do to a key you think has leaked (#EK). */
+function keyState(k){if(k.revoked)return 'revoked';if(k.disabled)return 'disabled';
+ if(k.expiresAt&&k.expiresAt<=Date.now())return 'expired';return 'active'}
 function renderKeys(keys){var el=document.getElementById('keysList');
  if(!keys.length){el.innerHTML='<div class="card dim">No API keys yet.</div>';return}
  el.innerHTML='<div class="card">'+keys.map(function(k){var st=keyState(k);
@@ -1152,8 +1163,31 @@ function renderKeys(keys){var el=document.getElementById('keysList');
    '<div class="dim" style="font-size:12px">'+esc((k.scopes||[]).join(', ')||'no permissions')+' · '+esc(where)+
    (k.expiresAt?' · expires '+new Date(k.expiresAt).toLocaleDateString():'')+
    (k.lastUsedAt?' · last used '+new Date(k.lastUsedAt).toLocaleString():' · never used')+'</div></div>'+
+   '<button class="btn sm" onclick="showKeyUsage(\\''+k.id+'\\')">How to use</button>'+
+   (k.revoked?'':'<button class="btn sm" onclick="toggleKey(\\''+k.id+'\\','+(k.disabled?'false':'true')+')">'+
+     (k.disabled?'Enable':'Disable')+'</button>')+
    (k.revoked?'':'<button class="btn sm" onclick="revokeKey(\\''+k.id+'\\')">Revoke</button>')+
-   '<button class="btn sm danger" onclick="deleteKey(\\''+k.id+'\\')">🗑</button></div>'}).join('')+'</div>'}
+   '<button class="btn sm danger" onclick="deleteKey(\\''+k.id+'\\')">🗑</button></div>'+
+   '<div id="ku_'+k.id+'" class="hidden" style="padding:0 0 10px 34px"></div>'}).join('')+'</div>'}
+/* Disable is reversible; revoke is not. Two buttons because they are two
+   different decisions. */
+function toggleKey(id,off){
+ api('/api/keys/disabled',{method:'POST',body:JSON.stringify({keyId:id,disabled:off})}).then(function(r){
+  if(!r.ok){alert(r.body&&r.body.error==='key-revoked'?'That key is revoked — issue a new one.':'Could not change the key.');return}
+  loadKeys()})}
+/* The samples an operator needs to make a first request. The real secret is
+   gone after creation, so these carry a clearly marked placeholder rather than
+   something that looks like a key and is not. */
+function showKeyUsage(id){
+ var box=document.getElementById('ku_'+id);if(!box)return;
+ if(!box.classList.contains('hidden')){box.classList.add('hidden');return}
+ box.classList.remove('hidden');
+ var s=apiUsageSamples({baseUrl:location.origin});
+ box.innerHTML='<div class="dim" style="font-size:12px;margin-bottom:6px">'+
+  API_USAGE_NOTES.map(function(n){return esc(n)}).join('<br/>')+'</div>'+
+  s.map(function(x){return '<div style="margin-top:8px"><b style="font-size:12px">'+esc(x.lang)+'</b>'+
+   '<pre style="white-space:pre-wrap;word-break:break-word;font-size:11.5px;background:var(--elev);'+
+   'padding:9px;border-radius:8px;margin:4px 0 0">'+esc(x.code)+'</pre></div>'}).join('')}
 function createKey(){var label=document.getElementById('kLabel').value.trim();if(!label){alert('Give the key a label.');return}
  var scopes=KEY_SCOPES.filter(function(s){return kScopeSel[s]});
  var all=document.getElementById('kAll').checked;

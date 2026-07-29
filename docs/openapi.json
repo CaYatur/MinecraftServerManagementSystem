@@ -4028,7 +4028,7 @@
         ],
         "parameters": [
           {
-            "name": "id",
+            "name": "keyId",
             "in": "query",
             "required": true,
             "description": "Key id.",
@@ -4066,7 +4066,51 @@
       "post": {
         "operationId": "postKeysRevoke",
         "summary": "Revoke a key, keeping the record.",
-        "description": "Owner **session** only — no API key can hold a role, so no key reaches this.\n\nBody fields:\n- `id` — Key id.",
+        "description": "Owner **session** only — no API key can hold a role, so no key reaches this.\n\nBody fields:\n- `keyId` — Key id.",
+        "tags": [
+          "keys"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      }
+    },
+    "/api/v1/keys/disabled": {
+      "post": {
+        "operationId": "postKeysDisabled",
+        "summary": "Switch a key off or back on. Unlike revoking, this is reversible.",
+        "description": "Owner **session** only — no API key can hold a role, so no key reaches this.\n\nBody fields:\n- `keyId` — Key id.\n- `disabled` — true to switch off, false to switch back on.\n\nA revoked key cannot be switched back on; that answer is 409.",
         "tags": [
           "keys"
         ],

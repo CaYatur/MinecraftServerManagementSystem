@@ -11,12 +11,16 @@ import {
   X,
   Ban,
   Copy,
-  Terminal
+  Terminal,
+  BookOpen,
+  Pause,
+  Play
 } from 'lucide-react'
 import { useStore } from '../store'
 import { SCOPES } from '@shared/web'
 import { effectiveScopes } from '@shared/rbac'
 import { isKeyUsable } from '@shared/apikeys'
+import { usageSamples, USAGE_NOTES } from '@shared/apiUsage'
 import type { RoleDef } from '@shared/rbac'
 import type { ApiKeyView, KeyServers } from '@shared/apikeys'
 import type { Scope, WebRole, WebStatus, WebUserView } from '@shared/web'
@@ -50,6 +54,7 @@ export function WebPanelView(): JSX.Element {
 
   // ---- API keys (#48) ----
   const [keys, setKeys] = useState<ApiKeyView[]>([])
+  const [usageFor, setUsageFor] = useState<string | null>(null)
   const [keyLabel, setKeyLabel] = useState('')
   const [keyScopes, setKeyScopes] = useState<Scope[]>(['view'])
   const [keyAllServers, setKeyAllServers] = useState(true)
@@ -504,9 +509,11 @@ export function WebPanelView(): JSX.Element {
                       <span className={`badge ${usable ? 'op-badge' : 'error-badge'}`}>
                         {k.revoked
                           ? t('web.keyRevoked')
-                          : usable
-                            ? t('web.keyActive')
-                            : t('web.keyExpired')}
+                          : k.disabled
+                            ? t('web.keyDisabled')
+                            : usable
+                              ? t('web.keyActive')
+                              : t('web.keyExpired')}
                       </span>
                     </div>
                     <div className="dim" style={{ fontSize: 11 }}>
@@ -523,6 +530,30 @@ export function WebPanelView(): JSX.Element {
                         : ` · ${t('web.keyNeverUsed')}`}
                     </div>
                   </div>
+                  {/* A key nobody can work out how to send is a key that does
+                      nothing — the route list says which scope each call needs
+                      and never how to make one. */}
+                  <button
+                    className="btn ghost sm"
+                    title={t('web.keyHowTo')}
+                    onClick={() => setUsageFor(usageFor === k.id ? null : k.id)}
+                  >
+                    <BookOpen size={14} />
+                  </button>
+                  {/* Reversible. Revoke, below, is not — pausing an integration
+                      and destroying a leaked credential are different acts. */}
+                  {!k.revoked && (
+                    <button
+                      className="btn ghost sm"
+                      title={k.disabled ? t('web.keyEnable') : t('web.keyDisable')}
+                      onClick={async () => {
+                        await window.msms.setApiKeyDisabled(k.id, !k.disabled)
+                        void refresh()
+                      }}
+                    >
+                      {k.disabled ? <Play size={14} /> : <Pause size={14} />}
+                    </button>
+                  )}
                   {!k.revoked && (
                     <button
                       className="btn ghost sm"
@@ -548,6 +579,29 @@ export function WebPanelView(): JSX.Element {
                 </div>
               )
             })}
+            {usageFor && (
+              <div className="panel" style={{ marginTop: 8 }}>
+                {USAGE_NOTES.map((n) => (
+                  <p className="hint" key={n} style={{ marginTop: 0 }}>
+                    {n}
+                  </p>
+                ))}
+                {/* The real secret exists only in the moment after creation, so
+                    these carry a marked placeholder rather than something that
+                    looks like a key and is not. */}
+                {/* The panel listener is the one that serves the API. */}
+                {usageSamples({
+                  baseUrl: status?.panel.urls[0] ?? `http://127.0.0.1:${status?.panel.port ?? 8080}`
+                }).map((s) => (
+                  <div key={s.lang} style={{ marginTop: 10 }}>
+                    <b style={{ fontSize: 12 }}>{s.lang}</b>
+                    <pre className="code-block" style={{ whiteSpace: 'pre-wrap', fontSize: 11.5 }}>
+                      {s.code}
+                    </pre>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 

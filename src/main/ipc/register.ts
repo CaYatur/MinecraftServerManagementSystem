@@ -467,6 +467,16 @@ export function registerIpc(): void {
     })
     return created
   })
+  H(IPC.apiKeyDisabled, (_e, keyId: string, disabled: boolean) => {
+    const k = apikeys.setKeyDisabled(keyId, disabled)
+    audit.record({
+      source: 'panel',
+      action: disabled ? 'apikey.disable' : 'apikey.enable',
+      actor: 'operator',
+      target: k.label
+    })
+    return k
+  })
   H(IPC.apiKeyRevoke, (_e, keyId: string) => {
     const k = apikeys.revokeKey(keyId)
     audit.record({ source: 'panel', action: 'apikey.revoke', actor: 'operator', target: k.label })

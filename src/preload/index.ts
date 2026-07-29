@@ -82,6 +82,7 @@ const api: MsmsApi = {
   installBridge: (id) => ipcRenderer.invoke(IPC.bridgeInstall, id),
   mapTiles: (id, dim, chunks, marks) => ipcRenderer.invoke(IPC.mapTiles, id, dim, chunks, marks),
   clearMapCache: () => ipcRenderer.invoke(IPC.mapCacheClear),
+  setApiKeyDisabled: (id, disabled) => ipcRenderer.invoke(IPC.apiKeyDisabled, id, disabled),
 
   listJava: (refresh) => ipcRenderer.invoke(IPC.javaList, refresh),
   resolveJava: (override) => ipcRenderer.invoke(IPC.javaResolve, override),

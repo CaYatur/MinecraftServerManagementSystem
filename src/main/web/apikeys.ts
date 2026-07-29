@@ -73,6 +73,7 @@ const view = (k: StoredKey): ApiKeyView => ({
   lastUsedAt: k.lastUsedAt,
   expiresAt: k.expiresAt,
   revoked: k.revoked,
+  disabled: k.disabled,
   canAudit: k.canAudit
 })
 
@@ -128,6 +129,23 @@ export function revokeKey(id: string): ApiKeyView {
   // Revoked, not deleted: the audit trail references this id, and a deleted key
   // would leave those entries pointing at nothing.
   k.revoked = true
+  save()
+  return view(k)
+}
+
+/**
+ * Switch a key off, or back on.
+ *
+ * Reversible, unlike `revokeKey`. A revoked key stays revoked — that is the
+ * point of revocation — so this refuses rather than quietly resurrecting one.
+ */
+export function setKeyDisabled(id: string, disabled: boolean): ApiKeyView {
+  load()
+  const k = keys.find((x) => x.id === id)
+  if (!k) throw new Error('key-not-found')
+  if (k.revoked) throw new Error('key-revoked')
+  if (disabled) k.disabled = true
+  else delete k.disabled
   save()
   return view(k)
 }

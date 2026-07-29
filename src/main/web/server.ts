@@ -2260,6 +2260,26 @@ async function handlePanel(req: IncomingMessage, res: ServerResponse): Promise<v
         return sendJson(res, 404, { error: 'key-not-found' })
       }
     }
+    // Reversible, unlike revoke. Pausing an integration and destroying a leaked
+    // credential are different actions and must not share a button.
+    if (path === '/api/keys/disabled' && method === 'POST') {
+      const b = (await readBody(req).catch(() => ({}))) as { keyId?: string; disabled?: boolean }
+      try {
+        const k = apikeys.setKeyDisabled(b.keyId ?? '', !!b.disabled)
+        audit.record({
+          source: 'webpanel',
+          action: b.disabled ? 'apikey.disable' : 'apikey.enable',
+          actor: user.username,
+          target: k.label,
+          ok: true,
+          ip
+        })
+        return sendJson(res, 200, k)
+      } catch (e) {
+        const why = String(e).includes('revoked') ? 'key-revoked' : 'key-not-found'
+        return sendJson(res, why === 'key-revoked' ? 409 : 404, { error: why })
+      }
+    }
     if (path === '/api/keys' && method === 'DELETE') {
       const keyId = url.searchParams.get('keyId') ?? ''
       apikeys.deleteKey(keyId)
