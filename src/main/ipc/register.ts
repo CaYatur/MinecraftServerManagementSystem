@@ -20,6 +20,9 @@ import * as rcon from '../core/rcon'
 import * as mods from '../core/mods'
 import * as bridgeInstall from '../core/bridgeInstall'
 import * as worldTiles from '../core/worldTiles'
+import * as chunkAreas from '../core/chunkAreas'
+import { areaChunkCount } from '@shared/chunkAreas'
+import type { AreaInput } from '@shared/chunkAreas'
 import * as backups from '../core/backups'
 import * as worlds from '../core/worlds'
 import * as scheduler from '../core/scheduler'
@@ -476,6 +479,34 @@ export function registerIpc(): void {
       target: k.label
     })
     return k
+  })
+  // Named chunk areas (#144). The rules and the store are shared with the HTTP
+  // routes — this is the same call the panel makes, reached a different way.
+  H(IPC.areasList, (_e, serverId: string) => chunkAreas.listAreas(serverId))
+  H(IPC.areasSave, (_e, serverId: string, input: AreaInput & { areaId?: string }) => {
+    const area = input.areaId
+      ? chunkAreas.updateArea(serverId, input.areaId, input)
+      : chunkAreas.createArea(serverId, input)
+    audit.record({
+      source: 'panel',
+      action: input.areaId ? 'area.update' : 'area.create',
+      actor: 'operator',
+      target: area.name,
+      detail: area.dim + ' ' + areaChunkCount(area) + ' chunks',
+      serverId
+    })
+    return area
+  })
+  H(IPC.areasDelete, (_e, serverId: string, areaId: string) => {
+    const gone = chunkAreas.listAreas(serverId).find((a) => a.id === areaId)
+    chunkAreas.deleteArea(serverId, areaId)
+    audit.record({
+      source: 'panel',
+      action: 'area.delete',
+      actor: 'operator',
+      target: gone?.name ?? areaId,
+      serverId
+    })
   })
   H(IPC.apiKeyRevoke, (_e, keyId: string) => {
     const k = apikeys.revokeKey(keyId)

@@ -52,6 +52,9 @@
       "name": "store"
     },
     {
+      "name": "areas"
+    },
+    {
       "name": "site"
     },
     {
@@ -2808,6 +2811,154 @@
             "in": "path",
             "required": true,
             "description": "Server id, as returned by GET /servers.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{id}/areas": {
+      "get": {
+        "operationId": "getServersIdAreas",
+        "summary": "Named chunk areas, including hidden ones.",
+        "description": "Scope `view` on the server.\n\nThe public map serves its own copy without the hidden areas or the timestamps.",
+        "tags": [
+          "areas"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Server id, as returned by GET /servers.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      },
+      "post": {
+        "operationId": "postServersIdAreas",
+        "summary": "Create an area, or edit one by passing `areaId`.",
+        "description": "Scope `settings` on the server.\n\nBody fields:\n- `areaId` — Omit to create; pass an existing id to replace that area.\n- `name` — Shown on hover and on click. 1-48 characters.\n- `note` — The second line of the tooltip, e.g. who owns the area. Up to 280 characters.\n- `colour` — `#rrggbb` (`#rgb` is expanded). Anything else falls back to the first palette colour.\n- `dim` — `overworld` | `nether` | `end`, or a modded key. An area belongs to exactly one.\n- `rects` — Array of `{x1,z1,x2,z2}` in CHUNK coordinates, inclusive, corners in any order.\n- `hidden` — Keep it off every map but the operator's own.\n\nRectangles are tidied on the way in: duplicates and contained rects are dropped and neighbours that share a full edge are merged, so the stored shape covers exactly the chunks you sent. Refusals name themselves: `name-required`, `name-too-long`, `note-too-long`, `no-chunks`, `too-many-chunks` (max 65536), `too-many-areas` (max 200), `area-not-found`.",
+        "tags": [
+          "areas"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Server id, as returned by GET /servers.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteServersIdAreas",
+        "summary": "Delete one area.",
+        "description": "Scope `settings` on the server.",
+        "tags": [
+          "areas"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Server id, as returned by GET /servers.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "areaId",
+            "in": "query",
+            "required": true,
+            "description": "Area to delete.",
             "schema": {
               "type": "string"
             }

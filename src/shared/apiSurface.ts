@@ -201,6 +201,28 @@ export const API_ROUTES: ApiRoute[] = [
   { method: 'POST', path: '/servers/{id}/map/perf', gate: 'settings', group: 'players', summary: 'Change it. Values are clamped on the way in.', params: [serverId], body: { cache: 'Keep parsed tiles on disk (default on).', memoryRegions: 'Regions held in memory, 2-64.', parseGapMs: 'Minimum gap between region parses, 0-5000.', cacheLimitMB: 'On-disk ceiling, oldest evicted first.' } },
   { method: 'DELETE', path: '/servers/{id}/map/cache', gate: 'settings', group: 'players', summary: 'Drop this server\'s cached map tiles.', params: [serverId], notes: 'Only this server\'s: the cache filename carries the owner so one server\'s clear cannot take another\'s with it.' },
   { method: 'GET', path: '/servers/{id}/map/tiles', gate: 'view', group: 'players', summary: 'Rendered surface colours for the requested chunks.', params: [serverId], notes: 'Ask with `?c=cx,cz;cx,cz` (max 64) and `?dim=`. Answers only with regions already parsed and queues the rest — `pending` says how many are still coming, so a caller polls rather than blocking. A request never parses a region itself.' },
+  // ---- chunk areas ----
+  { method: 'GET', path: '/servers/{id}/areas', gate: 'view', group: 'areas', summary: 'Named chunk areas, including hidden ones.', params: [serverId], notes: 'The public map serves its own copy without the hidden areas or the timestamps.' },
+  {
+    method: 'POST',
+    path: '/servers/{id}/areas',
+    gate: 'settings',
+    group: 'areas',
+    summary: 'Create an area, or edit one by passing `areaId`.',
+    params: [serverId],
+    body: {
+      areaId: 'Omit to create; pass an existing id to replace that area.',
+      name: 'Shown on hover and on click. 1-48 characters.',
+      note: 'The second line of the tooltip, e.g. who owns the area. Up to 280 characters.',
+      colour: '`#rrggbb` (`#rgb` is expanded). Anything else falls back to the first palette colour.',
+      dim: '`overworld` | `nether` | `end`, or a modded key. An area belongs to exactly one.',
+      rects: 'Array of `{x1,z1,x2,z2}` in CHUNK coordinates, inclusive, corners in any order.',
+      hidden: 'Keep it off every map but the operator\'s own.'
+    },
+    notes: 'Rectangles are tidied on the way in: duplicates and contained rects are dropped and neighbours that share a full edge are merged, so the stored shape covers exactly the chunks you sent. Refusals name themselves: `name-required`, `name-too-long`, `note-too-long`, `no-chunks`, `too-many-chunks` (max 65536), `too-many-areas` (max 200), `area-not-found`.'
+  },
+  { method: 'DELETE', path: '/servers/{id}/areas', gate: 'settings', group: 'areas', summary: 'Delete one area.', params: [serverId, { name: 'areaId', in: 'query', required: true, description: 'Area to delete.' }] },
+
   { method: 'GET', path: '/servers/{id}/player-requests', gate: 'settings', group: 'players', summary: 'Account claims waiting for a human, on a server running in offline mode.', params: [serverId], notes: 'Empty unless `online-mode=false`: with Mojang authentication on, the in-game code proves ownership by itself.' },
   { method: 'POST', path: '/servers/{id}/player-requests/approve', gate: 'settings', group: 'players', summary: 'Vouch for a claim; the verification code is then whispered in game.', params: [serverId], body: { id: 'Request to approve.' }, notes: 'Gated on `settings` rather than `players`: this grants credentials to a website account with a balance, which is authority over an identity, not over a session.' },
   { method: 'POST', path: '/servers/{id}/player-requests/deny', gate: 'settings', group: 'players', summary: 'Drop a claim without issuing a code.', params: [serverId], body: { id: 'Request to deny.' } },

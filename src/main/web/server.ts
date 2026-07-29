@@ -19,6 +19,9 @@ import * as mods from '../core/mods'
 import * as bridgeInstall from '../core/bridgeInstall'
 import * as rcon from '../core/rcon'
 import * as worldTiles from '../core/worldTiles'
+import * as chunkAreas from '../core/chunkAreas'
+import { areaChunkCount } from '@shared/chunkAreas'
+import type { AreaInput } from '@shared/chunkAreas'
 import { normalizeMapPerf } from '@shared/tileCache'
 import { listJavaInstalls } from '../core/javaScan'
 import { installJava } from '../core/javaProvision'
@@ -761,6 +764,22 @@ async function handlePublic(
     )
   }
 
+  // Named chunk areas, as a visitor may read them (#144).
+  //
+  // Tied to publishing the map at all, not to publishing the terrain: an area is
+  // a label the operator wrote on purpose, so it is fit to show wherever the map
+  // is. `listPublicAreas` drops the hidden ones and the timestamps; the panel's
+  // own route is the one that returns everything.
+  if (sub === 'map/areas' && method === 'GET') {
+    const cfg = site.publicMapConfig()
+    if (!cfg) return sendJson(res, 404, { error: 'not-found' })
+    const q = new URL(req.url ?? '/', 'http://localhost').searchParams
+    const dim = cfg.fixedDim
+      ? normalizeDimension(cfg.fixedDim)
+      : normalizeDimension(q.get('dim') ?? 'overworld')
+    return sendJson(res, 200, { dimension: dim, areas: chunkAreas.listPublicAreas(cfg.serverId, dim) })
+  }
+
   const sid = site.siteServerId()
   if (sub === 'store' && method === 'GET') {
     if (!sid || !getServer(sid)) return sendJson(res, 200, { currency: '', products: [] })
@@ -1294,6 +1313,63 @@ async function handlePanel(req: IncomingMessage, res: ServerResponse): Promise<v
           marks: url.searchParams.get('marks') === '1'
         })
       )
+    }
+    // ---- named chunk areas (#144) ----
+    //
+    // Gated like the rest of the map's configuration: `view` to read, `settings`
+    // to change. Not `worlds` — writing a label on a map should not require the
+    // scope that can delete the world underneath it.
+    if (sub === 'areas' && method === 'GET') {
+      if (!gate('view')) return
+      // The operator's own list, hidden areas included. `publicChunkAreas` is
+      // what strips those, and it is only ever called on the public routes.
+      return sendJson(res, 200, { areas: chunkAreas.listAreas(id) })
+    }
+    if (sub === 'areas' && method === 'POST') {
+      if (!gate('settings')) return
+      const b = (await readBody(req).catch(() => ({}))) as AreaInput & { areaId?: string }
+      try {
+        // One route for both, keyed on whether the caller named an existing
+        // area. The alternative is a third path segment, and this router has
+        // already shipped one route nobody could reach because of that (#130).
+        const area = b.areaId
+          ? chunkAreas.updateArea(id, b.areaId, b)
+          : chunkAreas.createArea(id, b)
+        audit.record({
+          source: user.apiKey ? 'api' : 'webpanel',
+          action: b.areaId ? 'area.update' : 'area.create',
+          actor: user.username,
+          target: area.name,
+          detail: area.dim + ' ' + areaChunkCount(area) + ' chunks',
+          ok: true,
+          ip,
+          serverId: id
+        })
+        return sendJson(res, 200, area)
+      } catch (e) {
+        const why = String(e).replace(/^Error:\s*/, '')
+        return sendJson(res, why === 'area-not-found' ? 404 : 400, { error: why })
+      }
+    }
+    if (sub === 'areas' && method === 'DELETE') {
+      if (!gate('settings')) return
+      const areaId = url.searchParams.get('areaId') ?? ''
+      const gone = chunkAreas.listAreas(id).find((a) => a.id === areaId)
+      try {
+        chunkAreas.deleteArea(id, areaId)
+      } catch {
+        return sendJson(res, 404, { error: 'area-not-found' })
+      }
+      audit.record({
+        source: user.apiKey ? 'api' : 'webpanel',
+        action: 'area.delete',
+        actor: user.username,
+        target: gone?.name ?? areaId,
+        ok: true,
+        ip,
+        serverId: id
+      })
+      return sendJson(res, 200, { ok: true })
     }
     if (sub === 'map' && method === 'GET') {
       if (!gate('view')) return
