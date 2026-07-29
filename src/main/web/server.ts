@@ -2510,7 +2510,9 @@ async function handleMapPage(req: IncomingMessage, res: ServerResponse): Promise
     // below are what actually refuse, so a visitor sees a door rather than a
     // blank page, and no map data rides along with it.
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
-    res.end(getMapPageHtml(cfg))
+    // The operator's own website colours, so the map page looks like part of
+    // the same server rather than a different product.
+    res.end(getMapPageHtml(cfg, site.getSiteConfig().theme))
     return
   }
   if (path === '/api/map/state' && method === 'GET') {

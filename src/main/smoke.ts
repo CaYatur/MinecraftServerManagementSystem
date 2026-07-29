@@ -132,6 +132,7 @@ import * as areasMod2 from './core/chunkAreas'
 import * as tilesMod from './core/worldTiles'
 import * as tex from '@shared/textures'
 import { MAP_CSS, MAP_HTML } from '@shared/mapUi'
+import { getMapPageHtml } from './web/mapPageHtml'
 import * as pngMod from './core/png'
 import { deflateSync } from 'node:zlib'
 import * as assetsMod from './core/clientAssets'
@@ -6782,6 +6783,49 @@ export async function runWebSmoke(): Promise<void> {
           current: { id, name: 'S', scopes: ['view', 'store'], status: 'stopped' }
         })
         site = runPageScript(getPublicSiteHtml())
+
+        // The map page is the FOURTH host of the shared map engine, and until
+        // #153 the smoke never ran its script — so it shipped missing half the
+        // host contract. With structures switched on, `mapDraw` threw
+        // "MAP_ICONS is not defined" and took the whole draw down with it: the
+        // map simply stopped updating, on the page whose entire purpose is the
+        // map.
+        //
+        // Every setting ON, because the defect only appeared with structures
+        // enabled and a page tested at its defaults would still pass.
+        const mapPage = runPageScript(
+          getMapPageHtml(
+            normalizeMapPage({
+              enabled: true,
+              serverId: id,
+              structures: true,
+              areas: true,
+              heatmap: true,
+              world: true,
+              players: true,
+              names: true,
+              heads: true
+            })
+          )
+        )
+        const mctx = mapPage.ctx as Record<string, unknown>
+        // What MAP_JS reaches for and this page has to supply. Naming them is
+        // the point: a missing one is a ReferenceError at draw time, which is
+        // silent until somebody opens the page with that layer on.
+        for (const need of [
+          'mapGet', 'mapPost', 'mapServerId', 'mapFeedUrl', 'mapTilesUrl',
+          'mapAvatarUrl', 'mapIconFor', 'mapIconSvg', 'MAP_ICONS', 'STRUCTURE_ICONS'
+        ]) {
+          if (mctx[need] === undefined) return fail('the map page never defines ' + need)
+        }
+        // ...and then actually draw, which is what threw. Structures on, so the
+        // icon key is built rather than skipped.
+        try {
+          ;(mctx['MAP'] as { marksOn: boolean; areasOn: boolean }).marksOn = true
+          ;(mctx['mapDraw'] as () => void)()
+        } catch (e) {
+          return fail('the map page threw while drawing: ' + String(e))
+        }
       } catch (e) {
         return fail('a served page threw on load: ' + String(e))
       }
