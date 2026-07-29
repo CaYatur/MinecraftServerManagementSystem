@@ -542,6 +542,9 @@ function mapDraw(){
     visitor two switches that do nothing. */
  var hb=document.getElementById('mpHeatBtn');
  if(hb)hb.style.display=d.heatmap?'':'none';
+ /* Pinned: the operator chose the world, so there is nothing to switch to. */
+ var ds=document.getElementById('mpDim');
+ if(ds)ds.style.display=d.pinned?'none':'';
  var db=document.getElementById('mpHeadsBtn');
  if(db)db.style.display=(d.heads===false)?'none':'';
  /* The structure controls belong to whoever may change the answer. On the

@@ -42,7 +42,12 @@ img{max-width:100%;display:block}
 /* header */
 header{position:sticky;top:0;z-index:40;backdrop-filter:blur(16px) saturate(140%);background:color-mix(in srgb,var(--bg) 76%,transparent);border-bottom:1px solid var(--line)}
 .nav{display:flex;align-items:center;gap:8px;height:70px}
-.brand{display:flex;align-items:center;gap:11px;font-weight:850;font-size:19.5px;letter-spacing:-.3px;margin-right:18px}
+/* min-width:0 so a long server name shortens instead of shoving the nav links
+   and the account chip out of the row (#137). */
+.brand{display:flex;align-items:center;gap:11px;font-weight:850;font-size:19.5px;letter-spacing:-.3px;
+  margin-right:18px;min-width:0;flex-shrink:0}
+.brand span:last-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.navend{display:flex;align-items:center;gap:8px;flex-shrink:0;margin-left:auto}
 .brand img{width:36px;height:36px;border-radius:10px;object-fit:cover;box-shadow:0 0 0 1px var(--line),0 6px 18px -6px var(--glow)}
 .brand svg{width:36px;height:36px;filter:drop-shadow(0 4px 14px var(--glow))}
 .navlinks{display:flex;gap:2px;flex:1}
@@ -257,17 +262,45 @@ body.classic .hero .desc{margin-left:0}
 body.classic .hero h1{letter-spacing:-1.2px}
 @media(max-width:820px){.stat{flex:1;min-width:130px}}
 @media(max-width:720px){.nav{height:auto;flex-wrap:wrap;padding:10px 0;gap:6px}
-  .navlinks{order:3;width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}
+  /* Brand and the account controls share the top row; the links get their own
+     full-width, scrollable strip underneath. */
+  .brand{margin-right:0;font-size:17px}
+  .navend{order:2}
+  .navlinks{order:3;width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;
+    flex:0 0 100%;padding-bottom:2px;scrollbar-width:none}
+  .navlinks::-webkit-scrollbar{display:none}
+  .navlink{white-space:nowrap;padding:8px 11px;font-size:14px}
   .hero{padding:64px 0 48px}.hero.image{padding:88px 0 62px}
   .section{padding:44px 0}.stats{gap:10px}.stat{padding:13px 16px;min-width:0}
-  .stat b{font-size:22px}.foot{flex-direction:column;text-align:center}}
+  .stat b{font-size:22px}.foot{flex-direction:column;text-align:center}
+  /* The profile stacks rather than running off the side. */
+  .phero{gap:14px}.phero .big{width:72px;height:72px}
+  .pid h2{font-size:25px}
+  .pmeta>div,.pcoords>div{flex:1 1 128px;min-width:0}
+  .inv{grid-template-columns:repeat(auto-fill,minmax(72px,1fr))}
+  .ihead{gap:8px}
+  .mp-bar{gap:6px}.mp-bar select,.mp-bar button{font-size:12.5px;padding:7px 9px}}
+@media(max-width:460px){
+  /* At phone width the brand name is the first thing worth dropping — the logo
+     still says which server this is, and the account chip must not be pushed
+     off the screen for a word. */
+  .brand span:last-child{display:none}
+  .btn{padding:9px 14px;font-size:13.5px}
+  .wrap{padding:0 14px}
+  .hero h1{font-size:clamp(28px,9vw,44px)}
+  .inv{grid-template-columns:repeat(auto-fill,minmax(64px,1fr))}
+  .whoami span{max-width:88px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}
 </style></head>
 <body>
 <header><div class="wrap nav">
   <a class="brand" href="#/"><span id="brandLogo"></span><span id="brandName">Server</span></a>
   <nav class="navlinks" id="navlinks"></nav>
-  <select class="lang" id="langSel" onchange="setLang(this.value)"></select>
-  <span id="accBtn"></span>
+  <!-- The right-hand controls are one group, so a narrow window moves them
+       together instead of dealing them out between the nav links (#137). -->
+  <div class="navend">
+    <select class="lang" id="langSel" onchange="setLang(this.value)"></select>
+    <span id="accBtn"></span>
+  </div>
 </div></header>
 
 <main id="app"></main>

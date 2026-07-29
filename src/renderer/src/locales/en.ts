@@ -741,6 +741,10 @@ export default {
     mapNames: 'Show names',
     mapHeads: 'Draw skin heads',
     mapWorld: 'Show the terrain',
+    mapFixed: 'World shown',
+    mapFollowPlayers: 'Follow the players',
+    mapFixedHint:
+      'Pinning a world makes the map worth opening on a quiet server: it renders with nobody online, and visitors get no dimension switcher because you have already chosen.',
     mapStructures: 'Show villages and dungeons',
     mapLoadAhead: 'Load ahead of the view',
     mapLoadHint:

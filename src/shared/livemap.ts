@@ -253,6 +253,15 @@ export interface PublicMapConfig {
    */
   structures: boolean
   /**
+   * Always show this world, whoever is online (#137).
+   *
+   * Empty means the default: follow whichever dimension people are standing in,
+   * and show nothing when nobody is. Set, the site shows one place — which is
+   * what makes an empty server's map worth opening, and is why the visitor gets
+   * no dimension switcher with it.
+   */
+  fixedDim: string
+  /**
    * Read a ring of chunks around the viewport as well, so panning is already
    * drawn. Costs more parsing; changes nothing about the world.
    *
@@ -278,7 +287,8 @@ export const PUBLIC_MAP_DEFAULTS: PublicMapConfig = {
   // live map was the thing that made the feature look broken (#135).
   world: true,
   structures: false,
-  loadAhead: false
+  loadAhead: false,
+  fixedDim: ''
 }
 
 export const MAX_MAP_ROUND = 512

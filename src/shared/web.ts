@@ -316,6 +316,8 @@ export interface PublicSite {
   mapWorld: boolean
   /** Whether villages, dungeons and temples are published (#131). */
   mapStructures: boolean
+  /** The map shows one fixed world, so there is no dimension switcher (#137). */
+  mapPinned: boolean
   /** Whether the public map reads ahead of the viewport (#131). */
   mapLoadAhead: boolean
   /** Whether a profile page is worth offering at all. */

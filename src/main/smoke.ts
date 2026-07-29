@@ -4946,6 +4946,47 @@ export async function runWebSmoke(): Promise<void> {
         if (itemLabel('') !== '?') return fail('an empty item id has no label')
       }
 
+      // ---- pinning the public map to one world (#137) ----
+      {
+        const before = siteMod.getSiteConfig().map
+        try {
+          siteMod.setSiteConfig({ map: { ...before, enabled: true, serverId: id, fixedDim: 'nether' } })
+          const cfg = siteMod.publicMapConfig()
+          if (cfg?.fixedDim !== 'nether') return fail('the pinned world did not survive the config')
+
+          // A dimension name becomes a path segment when the tiles are read, so
+          // anything that is not a plain name is refused at the boundary rather
+          // than trusted at the point of use.
+          for (const bad of ['../../etc', 'a/b', '..', '.', 'x'.repeat(80), 'a b']) {
+            siteMod.setSiteConfig({ map: { ...before, enabled: true, serverId: id, fixedDim: bad } })
+            const got = siteMod.getSiteConfig().map.fixedDim
+            if (got !== '') return fail('a bad pinned world was accepted: ' + JSON.stringify(bad) + ' -> ' + got)
+          }
+
+          // Pinned, the feed answers with that world whatever the caller asks
+          // for, and offers exactly one — a switcher that cannot change the
+          // answer is not a switcher.
+          siteMod.setSiteConfig({ map: { ...before, enabled: true, serverId: id, fixedDim: 'end' } })
+          const pr2 = await sget('/api/public/map?dim=overworld')
+          if (pr2.status !== 200) return fail('the pinned public map expected 200, got ' + pr2.status)
+          const feed = (await pr2.json()) as { dimension: string; dimensions: string[]; pinned: boolean }
+          if (feed.dimension !== 'end') return fail('the pin did not override the query: ' + feed.dimension)
+          if (!feed.pinned) return fail('the feed did not say it was pinned')
+          if (feed.dimensions.length !== 1 || feed.dimensions[0] !== 'end') {
+            return fail('a pinned feed offered a switcher: ' + JSON.stringify(feed.dimensions))
+          }
+
+          // Unpinned, it follows the query again.
+          siteMod.setSiteConfig({ map: { ...before, enabled: true, serverId: id, fixedDim: '' } })
+          const pr3 = await sget('/api/public/map?dim=nether')
+          const feed3 = (await pr3.json()) as { dimension: string; pinned: boolean }
+          if (feed3.dimension !== 'nether') return fail('an unpinned map ignored the query')
+          if (feed3.pinned) return fail('an unpinned map claimed to be pinned')
+        } finally {
+          siteMod.setSiteConfig({ map: before })
+        }
+      }
+
       console.log('WEB-SMOKE: profile visibility OK (' + checked + ' checks, omitted not hidden, per-field toggles)')
 
       // ---- the refresh budget (#117) ----

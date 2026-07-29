@@ -146,6 +146,12 @@ export function setSiteConfig(patch: Partial<SiteConfig>): SiteConfig {
     if (m.world !== undefined) s.map.world = !!m.world
     if (m.structures !== undefined) s.map.structures = !!m.structures
     if (m.loadAhead !== undefined) s.map.loadAhead = !!m.loadAhead
+    if (m.fixedDim !== undefined) {
+      // A dimension name becomes a PATH SEGMENT when the tiles are read, so it
+      // is restricted here rather than trusted at the point of use.
+      const d = String(m.fixedDim ?? '').trim()
+      s.map.fixedDim = /^[A-Za-z0-9_.-]{0,64}$/.test(d) && d !== '.' && d !== '..' ? d : ''
+    }
   }
   if (patch.profile) {
     // Field by field and coerced, for the reason above: "false" is truthy, and
@@ -319,6 +325,9 @@ export function publicSite(): PublicSite {
     mapHeads: s.map.enabled && s.map.heads,
     mapWorld: s.map.enabled && s.map.world,
     mapStructures: s.map.enabled && s.map.structures,
+    // A pinned map is worth showing with nobody online — that is the point of
+    // pinning it — so the nav link cannot be gated on there being players.
+    mapPinned: s.map.enabled && !!s.map.fixedDim,
     mapLoadAhead: s.map.enabled && s.map.loadAhead,
     // A profile needs a server to read a roster from. Without one the page
     // would render a name and a head and nothing else.
