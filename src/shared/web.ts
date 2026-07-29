@@ -1,6 +1,7 @@
 import type { CrateAnimation } from './crate'
 import type { StoreLayout } from './storefront'
 import type { PublicMapConfig } from './livemap'
+import type { MapPageConfig } from './mapPage'
 import type { ProfilePublishing } from './profile'
 
 // Per-server permission scopes for web-panel users.
@@ -47,6 +48,23 @@ export interface WebConfig {
    * the right default for a surface authenticated with long-lived keys.
    */
   apiOrigins?: string[]
+  /**
+   * The map page (#146): a third listener that serves one fullscreen map.
+   *
+   * Its own port rather than a path on the public site, so an operator can hand
+   * out the map without handing out the shop — a firewall rule rather than
+   * trust. See `normalizeMapPage`.
+   */
+  mapPage?: MapPageConfig
+  /**
+   * The map page passphrase, in the clear.
+   *
+   * Deliberately not hashed: this is a shared doorcode an operator has to be
+   * able to read back and tell people, not a credential belonging to a person.
+   * Hashing it would only mean they cannot look it up, while anyone who can
+   * read this config file can already change it.
+   */
+  mapPagePass?: string
 }
 
 export interface ListenerStatus {
@@ -330,6 +348,15 @@ export interface WebStatus {
   bindLan: boolean
   panel: ListenerStatus
   site: ListenerStatus
+  /** The fullscreen map page (#146). */
+  map: ListenerStatus
+  /**
+   * What the map page is set to show. Carried here so the settings UI has one
+   * round trip rather than two, and because every field of it is an operator
+   * decision rather than a secret - the passphrase lives in the config and is
+   * deliberately NOT part of this.
+   */
+  mapPage: MapPageConfig
   /** Browser origins allowed to call the API (#50). Empty = deny all. */
   apiOrigins: string[]
 }

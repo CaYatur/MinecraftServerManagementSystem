@@ -150,6 +150,7 @@ import {
   MIN_SCALE,
   PUBLIC_MAP_DEFAULTS
 } from '@shared/livemap'
+import { normalizeMapPage, mapPagePublic, MAP_PAGE_DEFAULTS } from '@shared/mapPage'
 import type { LivePlayer, MapView } from '@shared/livemap'
 import { listJavaInstalls, _resetJavaCache } from './core/javaScan'
 import { checkJava, javaRequirement } from '@shared/javaCompat'
@@ -5288,6 +5289,181 @@ export async function runWebSmoke(): Promise<void> {
         console.log('WEB-SMOKE: chunk areas over HTTP OK (gated, tidied, hidden ones stay off the public feed)')
       }
 
+      // ---- the map page: a third listener with its own door (#146) ----
+      {
+        const cfgBefore = getConfig().web
+        const mport = 8797
+        const mbase = 'http://127.0.0.1:' + mport
+        const mget = (p: string, cookie?: string): Promise<Response> =>
+          fetch(mbase + p, { headers: cookie ? { Cookie: cookie } : {} })
+        const mpost = (p: string, body: unknown): Promise<Response> =>
+          fetch(mbase + p, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+          })
+        const setMap = (patch: Record<string, unknown>, pass?: string): void => {
+          updateConfig((c) => {
+            c.web = {
+              ...(c.web ?? { enabled: false, port: 8799, bindLan: false, siteEnabled: false, sitePort: 8798 }),
+              mapPage: normalizeMapPage({ enabled: true, port: mport, serverId: id, ...patch }),
+              ...(pass !== undefined ? { mapPagePass: pass } : {})
+            }
+          })
+          startWebServer()
+        }
+        try {
+          // ---- pure rules first ----
+          // Clamped on the way IN. A port of 0 means "whatever the OS gives us",
+          // which is a port nobody can bookmark.
+          if (normalizeMapPage({ port: 0 }).port !== MAP_PAGE_DEFAULTS.port) return fail('port 0 was accepted')
+          if (normalizeMapPage({ port: 99999 }).port !== MAP_PAGE_DEFAULTS.port) return fail('a huge port was accepted')
+          if (normalizeMapPage({ access: 'nonsense' }).access !== 'open') return fail('a junk access mode got through')
+          // A dimension becomes a folder name when its regions are read.
+          for (const bad of ['../etc', 'a/b', '..', 'a b', 'x'.repeat(80)]) {
+            if (normalizeMapPage({ fixedDim: bad }).fixedDim !== '') {
+              return fail('a bad pinned world was accepted: ' + JSON.stringify(bad))
+            }
+          }
+          if (normalizeMapPage({ fixedDim: 'THE_END' }).fixedDim !== 'end') return fail('a good pin was rejected')
+          // Heads without names would be a lie: a face identifies a player
+          // exactly as well as their name (#116).
+          const lying = mapPagePublic(normalizeMapPage({ heads: true, names: false }))
+          if (lying.heads) return fail('heads survived with names off')
+          // The page is told what it may draw, not who it belongs to.
+          const shape = Object.keys(mapPagePublic(normalizeMapPage({}))).sort().join(',')
+          if (shape.includes('serverId') || shape.includes('port') || shape.includes('access')) {
+            return fail('the page payload carries operator config: ' + shape)
+          }
+
+          // ---- open ----
+          setMap({ access: 'open' })
+          await sleep(250)
+          let mr = await mget('/')
+          if (mr.status !== 200) return fail('the map page did not serve: ' + mr.status)
+          const html = await mr.text()
+          if (!html.includes('mpCanvas')) return fail('the map page served something without a map in it')
+          if (html.includes('mapPagePass')) return fail('the passphrase reached the page')
+          const state = (await (await mget('/api/map/state')).json()) as { allowed: boolean }
+          if (!state.allowed) return fail('an open map refused a visitor')
+          if ((await mget('/api/map')).status !== 200) return fail('the open feed refused')
+
+          // ---- password ----
+          setMap({ access: 'password' }, 'hunter2')
+          await sleep(250)
+          const shut = (await (await mget('/api/map/state')).json()) as { allowed: boolean; access: string }
+          if (shut.allowed) return fail('a protected map let a visitor straight in')
+          if (shut.access !== 'password') return fail('the gate did not say which door it is')
+          // The DATA is what must refuse. A page that gates only its HTML is a
+          // page whose data anybody can fetch directly.
+          for (const p of ['/api/map', '/api/map/tiles?c=0,0', '/api/map/areas']) {
+            const r2 = await mget(p)
+            if (r2.status !== 403) return fail('protected ' + p + ' answered ' + r2.status)
+          }
+          if ((await mpost('/api/map/open', { pass: 'wrong' })).status !== 401) return fail('a wrong passphrase was accepted')
+          const opened = await mpost('/api/map/open', { pass: 'hunter2' })
+          if (opened.status !== 200) return fail('the right passphrase was refused: ' + opened.status)
+          const cookie = String(opened.headers.get('set-cookie') ?? '')
+          if (!cookie.includes('HttpOnly')) return fail('the map cookie is readable from script')
+          const token = /msms_map=([a-f0-9]+)/.exec(cookie)?.[1] ?? ''
+          if (!token) return fail('no map cookie was set')
+          if (token.includes('hunter2')) return fail('the cookie carries the passphrase')
+          if ((await mget('/api/map', 'msms_map=' + token)).status !== 200) return fail('the cookie did not open the map')
+          // Changing the passphrase invalidates it — the only thing changing it
+          // is for.
+          setMap({ access: 'password' }, 'different')
+          await sleep(250)
+          if ((await mget('/api/map', 'msms_map=' + token)).status !== 403) {
+            return fail('an old cookie survived a passphrase change')
+          }
+
+          // ---- players ----
+          //
+          // The mode that had no test at all, and did not work. It reached for
+          // the public site's session, which lives in `localStorage` — per
+          // ORIGIN, and a different port IS a different origin, so this page
+          // could never read it. `players` was a door that never opened, and
+          // only a test that actually signs somebody in says so.
+          setMap({ access: 'players' })
+          await sleep(250)
+          const shutP = (await (await mget('/api/map/state')).json()) as { allowed: boolean; access: string }
+          if (shutP.allowed) return fail('a players-only map let an anonymous visitor in')
+          if (shutP.access !== 'players') return fail('the gate named the wrong door: ' + shutP.access)
+          if ((await mget('/api/map')).status !== 403) return fail('a players-only feed answered anonymously')
+          // A player the public site already knows. `registerPlayer` is what the
+          // site's own sign-up calls, so this is the same account either would.
+          const mcName = 'MapViewer'
+          webPlayerAuth._testCreateAccount(mcName, 'mappass1')
+          if ((await mpost('/api/map/login', { mcName, password: 'wrong' })).status !== 401) {
+            return fail('a wrong password opened the map')
+          }
+          const signedIn = await mpost('/api/map/login', { mcName, password: 'mappass1' })
+          if (signedIn.status !== 200) return fail('a real player could not sign in: ' + signedIn.status + ' ' + (await signedIn.text()))
+          const pc = String(signedIn.headers.get('set-cookie') ?? '')
+          if (!pc.includes('HttpOnly')) return fail('the player cookie is readable from script')
+          const ptok = /msms_map_player=([^;]+)/.exec(pc)?.[1] ?? ''
+          if (!ptok) return fail('signing in set no cookie')
+          if ((await mget('/api/map', 'msms_map_player=' + ptok)).status !== 200) {
+            return fail('a signed-in player still could not read the map')
+          }
+          // The site's own storage key is NOT what this page reads — asserting
+          // the negative, because reading it is the bug that was here.
+          if ((await mget('/api/map', 'msms_ptoken=' + decodeURIComponent(ptok))).status === 200) {
+            return fail('the map accepted the public site cookie name')
+          }
+          // The passphrase route does not exist in this mode, and vice versa:
+          // an unused door left open is a door.
+          if ((await mpost('/api/map/open', { pass: 'anything' })).status !== 404) {
+            return fail('the passphrase route answered in players mode')
+          }
+          setMap({ access: 'password' }, 'x')
+          await sleep(250)
+          if ((await mpost('/api/map/login', { mcName, password: 'mappass1' })).status !== 404) {
+            return fail('the player login answered in password mode')
+          }
+
+          // A page title is operator text and lands inside a <script> block.
+          // `JSON.stringify` escapes quotes and leaves `<` alone, so a closing
+          // script tag in it would end the block and the rest is markup.
+          setMap({ access: 'open', title: 'evil</script><img src=x>' })
+          await sleep(250)
+          const nasty = await (await mget('/')).text()
+          if (nasty.includes('</script><img')) return fail('a page title broke out of the script block')
+          if (!nasty.includes('u003c/script')) return fail('the title was not escaped the way it must be')
+
+          // ---- what the operator switched off is not served ----
+          setMap({ access: 'open', world: false, areas: false, players: false })
+          await sleep(250)
+          if ((await mget('/api/map/tiles?c=0,0')).status !== 404) return fail('terrain was served with it off')
+          const noAreas = (await (await mget('/api/map/areas')).json()) as { areas: unknown[] }
+          if (noAreas.areas.length !== 0) return fail('areas were served with them off')
+          const noPlayers = (await (await mget('/api/map')).json()) as { players: unknown[] }
+          if (noPlayers.players.length !== 0) return fail('positions were served with them off')
+
+          // Off entirely: the port closes. A listener still answering after the
+          // operator switched the page off is the whole feature failing quietly.
+          updateConfig((c) => {
+            c.web = { ...(c.web as NonNullable<typeof c.web>), mapPage: normalizeMapPage({ enabled: false, port: mport }) }
+          })
+          startWebServer()
+          await sleep(250)
+          let closed = false
+          try {
+            await mget('/')
+          } catch {
+            closed = true
+          }
+          if (!closed) return fail('the map port still answers with the page off')
+        } finally {
+          updateConfig((c) => {
+            c.web = cfgBefore
+          })
+          startWebServer()
+          await sleep(250)
+        }
+        console.log('WEB-SMOKE: map page OK (own listener, gate refuses data not just html, settings honoured)')
+      }
+
       console.log('WEB-SMOKE: profile visibility OK (' + checked + ' checks, omitted not hidden, per-field toggles)')
 
       // ---- the refresh budget (#117) ----
@@ -7703,9 +7879,21 @@ export async function runWebSmoke(): Promise<void> {
       if (!existsSync(srcPath)) return fail('cannot read the router source at ' + srcPath)
       const whole = readFileSync(srcPath, 'utf-8')
       const from = whole.indexOf('async function handlePanel')
-      const to = whole.indexOf('export function startWebServer')
+      // The NEXT top-level function, not `startWebServer`. That marker held only
+      // while `handlePanel` happened to be the last thing before it; #146 put
+      // `handleMapPage` in between, and its routes — which belong to a different
+      // listener and are deliberately not part of the `/api/v1` surface — were
+      // then read as undocumented panel routes.
+      const after = whole.slice(from + 1)
+      const next = after.search(/\n(?:export )?(?:async )?function /)
+      const to = next < 0 ? whole.indexOf('export function startWebServer') : from + 1 + next
       if (from < 0 || to < 0 || to < from) return fail('could not isolate handlePanel in the source')
       const router = whole.slice(from, to)
+      // The isolation is load-bearing: too short and the coverage check reads a
+      // handful of routes and passes, which looks exactly like success.
+      if (!router.includes('/api/keys') || router.length < 20000) {
+        return fail('handlePanel was isolated to ' + router.length + ' chars — the slice is wrong')
+      }
 
       // `/api/…` literals, mapped onto the versioned form the table uses.
       for (const m of router.matchAll(/\b(?:raw)?[Pp]ath === '(\/api\/[^']*)'/g)) {
