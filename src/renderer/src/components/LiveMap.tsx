@@ -8,6 +8,7 @@ import { fitView, heatmap, mapBounds, panBy, screenToWorld, worldToScreen, zoomA
 import type { LivePlayer, MapView, Viewport } from '@shared/livemap'
 import { avatarUrl } from '@shared/profile'
 import type { StructureMark } from '@shared/regionFormat'
+import { iconFor, ICON_BOX } from '@shared/mapIcons'
 import type { BridgeStatus } from '@shared/bridgeRelease'
 import { BridgeNotice } from './BridgeNotice'
 
@@ -27,14 +28,23 @@ import { BridgeNotice } from './BridgeNotice'
 
 const CELL_CHOICES = [16, 32, 64, 128]
 
-/** Matches the web map's, so a village is the same dot in all three (#131). */
-const MARK_STYLE: Record<string, [string, string]> = {
-  village: ['#e3b341', 'V'],
-  dungeon: ['#b5504f', 'D'],
-  temple: ['#c58bd6', 'T'],
-  fortress: ['#8b6f4e', 'F'],
-  mine: ['#9aa0a6', 'M'],
-  other: ['#6fa8dc', '?']
+/**
+ * `Path2D` per structure kind, built once.
+ *
+ * Rebuilding one from its path string for every marker on every frame is
+ * parsing the same string hundreds of times a second.
+ */
+const ICON_PATHS = new Map<string, Path2D>()
+function iconPath(kind: string): Path2D | null {
+  const hit = ICON_PATHS.get(kind)
+  if (hit) return hit
+  try {
+    const p = new Path2D(iconFor(kind).path)
+    ICON_PATHS.set(kind, p)
+    return p
+  } catch {
+    return null
+  }
 }
 
 /**
@@ -206,6 +216,9 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
   )
   const [showPerf, setShowPerf] = useState(false)
   const [cleared, setCleared] = useState<number | null>(null)
+  // Bumped by "Load this view" so one fetch happens even with loading-on-pan
+  // off. A counter rather than a flag: two presses in a row must both count.
+  const [loadNow, setLoadNow] = useState(0)
 
   const savePerf = (patch: Partial<MapPerfConfig>): void => {
     // Normalised before it is stored, not after it is read: a value that only
@@ -267,6 +280,9 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
   // and the parse budget, shared with the web surfaces.
   useEffect(() => {
     if (!world || !view || tilesPending.current) return
+    // Off, the map draws what it holds and asks for nothing more until the
+    // operator presses to load (#136).
+    if (!perf.loadOnPan && !loadNow) return
     const want = visibleChunks()
       .filter((c: { cx: number; cz: number }) => !tiles.current.has(c.cx + ',' + c.cz))
       .slice(0, 64)
@@ -297,7 +313,7 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
       .catch(() => {
         tilesPending.current = false
       })
-  }, [world, view, vp, dim, serverId, visibleChunks, tick2, marks])
+  }, [world, view, vp, dim, serverId, visibleChunks, tick2, marks, perf.loadOnPan, loadNow])
 
   // A different server or dimension is a different world; nothing carries over.
   // The nether shares the overworld's coordinates, so keeping tiles across a
@@ -406,24 +422,32 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
 
     // After the grid and the heatmap, before the players.
     if (marks) {
-      g.textAlign = 'center'
-      g.textBaseline = 'middle'
-      g.font = `bold ${10 * dpr}px Inter, system-ui, sans-serif`
       for (const c of drawableChunks()) {
         for (const mk of markStore.current.get(c.cx + ',' + c.cz) ?? []) {
           if (markKind && mk.kind !== markKind) continue
-          const st = MARK_STYLE[mk.kind] ?? MARK_STYLE.other
+          const ic = iconFor(mk.kind)
           const x = px(mk.x)
           const y = pz(mk.z)
+          const r = 9 * dpr
+          // A disc behind the glyph, so a silhouette does not disappear against
+          // terrain its own colour.
           g.beginPath()
-          g.arc(x, y, 7 * dpr, 0, Math.PI * 2)
-          g.fillStyle = st[0]
+          g.arc(x, y, r, 0, Math.PI * 2)
+          g.fillStyle = 'rgba(16,16,20,.72)'
           g.fill()
           g.lineWidth = 1.5 * dpr
-          g.strokeStyle = 'rgba(0,0,0,.6)'
+          g.strokeStyle = ic.colour
           g.stroke()
-          g.fillStyle = '#101014'
-          g.fillText(st[1], x, y + 0.5 * dpr)
+          const path = iconPath(mk.kind)
+          if (path) {
+            const s = (r * 1.5) / ICON_BOX
+            g.save()
+            g.translate(x - r * 0.75, y - r * 0.75)
+            g.scale(s, s)
+            g.fillStyle = ic.colour
+            g.fill(path)
+            g.restore()
+          }
         }
       }
     }
@@ -553,6 +577,11 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
             ))}
           </select>
         )}
+        {!perf.loadOnPan && (
+          <button className="btn sm" onClick={() => setLoadNow((n) => n + 1)}>
+            {t('map.loadHere')}
+          </button>
+        )}
         <button className="btn sm" onClick={() => setView(null)}>
           {t('map.resetView')}
         </button>
@@ -565,6 +594,11 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
           an operator meets the cost, so it is where the dials belong (#133). */}
       {showPerf && (
         <div className="panel" style={{ marginBottom: 10 }}>
+          {/* These persist on the server, so they are not a preference of this
+              window — say so, or they read as one (#136). */}
+          <p className="hint" style={{ marginTop: 0 }}>
+            {t('map.perfScope')}
+          </p>
           <label className="switch" style={{ marginBottom: 8 }}>
             <input
               type="checkbox"
@@ -575,6 +609,17 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
           </label>
           <p className="hint" style={{ marginTop: 0 }}>
             {t('map.perfCacheHint')}
+          </p>
+          <label className="switch" style={{ marginBottom: 8 }}>
+            <input
+              type="checkbox"
+              checked={perf.loadOnPan}
+              onChange={(e) => savePerf({ loadOnPan: e.target.checked })}
+            />
+            {t('map.perfPan')}
+          </label>
+          <p className="hint" style={{ marginTop: 0 }}>
+            {t('map.perfPanHint')}
           </p>
           <div className="row wrap" style={{ gap: 12, alignItems: 'flex-end' }}>
             <div style={{ minWidth: 150 }}>

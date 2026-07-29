@@ -634,6 +634,10 @@ async function handlePublic(
       bounds: mapBounds(players.map((p) => ({ ...p, name: p.name ?? '', y: 0 }))),
       round: cfg.round,
       heads: cfg.heads,
+      // The operator's map budget applies to every surface that reads these
+      // tiles, and the public site is one of them — the settings UI says so, so
+      // the feed has to carry it (#136).
+      loadOnPan: normalizeMapPerf(getServer(cfg.serverId)?.map).loadOnPan,
       at: now
     })
   }

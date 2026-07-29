@@ -96,6 +96,8 @@ import {
   sha256Of
 } from '@shared/bridgeRelease'
 import type { GhRelease } from '@shared/bridgeRelease'
+import { iconFor, iconSvg, ICON_BOX, STRUCTURE_ICONS } from '@shared/mapIcons'
+import { STRUCTURE_KINDS } from '@shared/regionFormat'
 import {
   bitsPerIndex,
   blockColour,
@@ -1278,6 +1280,43 @@ export async function runModUpdateSmoke(): Promise<void> {
         if (normalizeMapPerf(null).memoryRegions !== MAP_PERF_DEFAULTS.memoryRegions) {
           return fail('an absent config did not fall back to the defaults')
         }
+        if (normalizeMapPerf({}).loadOnPan !== true) return fail('loading as the view moves must default on')
+        if (normalizeMapPerf({ loadOnPan: false }).loadOnPan !== false) {
+          return fail('loading as the view moves cannot be turned off')
+        }
+      }
+
+      // ---- structure glyphs (#136) ----
+      //
+      // Path data is drawn by `new Path2D(...)`, which throws nothing on
+      // nonsense — a malformed path renders as an empty shape, so a typo
+      // produces a marker with a hole in it and no error anywhere.
+      {
+        for (const kind of STRUCTURE_KINDS) {
+          const ic = iconFor(kind)
+          if (!ic.path) return fail('no glyph for ' + kind)
+          if (!ic.colour.startsWith('#')) return fail('the ' + kind + ' glyph has no colour')
+          if (!ic.label) return fail('the ' + kind + ' glyph has no label')
+          // Every command a path may contain, and nothing else. A stray letter
+          // silently truncates the shape at that point.
+          if (!/^[MmLlHhVvCcSsQqTtAaZz0-9smart.,\-\s]+$/.test(ic.path.replace(/[a-z]/gi, (c) => c))) {
+            return fail('the ' + kind + ' glyph has characters a path cannot hold')
+          }
+          if (!/^[Mm]/.test(ic.path.trim())) return fail('the ' + kind + ' glyph does not start with a move')
+          if (!/[Zz]\s*$/.test(ic.path.trim())) return fail('the ' + kind + ' glyph is not closed')
+          // Inside the 24-box it claims, or it will not sit where it is placed.
+          for (const n of ic.path.match(/-?\d+(\.\d+)?/g) ?? []) {
+            const v = Number(n)
+            if (v < -1 || v > ICON_BOX + 1) {
+              return fail('the ' + kind + ' glyph leaves its box: ' + v)
+            }
+          }
+        }
+        // An unknown kind still draws something rather than nothing.
+        if (iconFor('not-a-structure') !== STRUCTURE_ICONS.other) {
+          return fail('an unknown structure kind has no fallback glyph')
+        }
+        if (!iconSvg('village', 12).includes('width="12"')) return fail('the legend svg ignores its size')
       }
 
       console.log('MODUPDATE-SMOKE: region decoding OK (1.16 packing split, real NBT chunk renders, foliage seen through, cache round-trips)')
@@ -6178,6 +6217,18 @@ export async function runWebSmoke(): Promise<void> {
         for (const n of ['CaYatur', '../../etc/passwd', 'Steve']) {
           if (pctx['avatarUrl'](n, 32) !== avatarUrl(n, 32)) {
             return fail('the ' + label + ' page avatarUrl disagrees for ' + JSON.stringify(n))
+          }
+        }
+        // The map legend's glyph builder, embedded the same way. It reads the
+        // icon table through a name the page has to define under exactly that
+        // identifier — get it wrong and the legend throws in the browser with
+        // nothing wrong in the source (#116, again).
+        if (typeof pctx['mapIconSvg'] !== 'function') {
+          return fail('the ' + label + ' page has no embedded mapIconSvg')
+        }
+        for (const k of ['village', 'mine', 'not-a-kind']) {
+          if (pctx['mapIconSvg'](k, 14) !== iconSvg(k, 14)) {
+            return fail('the ' + label + ' page mapIconSvg disagrees for ' + k)
           }
         }
         // Only the site embeds the item helpers; the panel has no inventory.

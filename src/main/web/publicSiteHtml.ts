@@ -6,6 +6,7 @@ import { CRATE_CSS, CRATE_JS, CRATE_MODAL_HTML } from '@shared/crateUi'
 import { STORE_CSS, STORE_JS, STORE_MODAL_HTML, CRATE_ICON_SVG } from '@shared/storeUi'
 import { MAP_CSS, MAP_HTML, MAP_JS } from '@shared/mapUi'
 import { avatarUrl, itemIconId, itemIconUrl, itemLabel } from '@shared/profile'
+import { iconSvg, STRUCTURE_ICONS } from '@shared/mapIcons'
 
 export function getPublicSiteHtml(): string {
   return `<!doctype html><html lang="en"><head>
@@ -537,6 +538,10 @@ function staleSession(){
    derived offline one, which no skin service has ever seen — every head was a
    broken image on exactly the servers this app is most used on (#116). */
 var avatarUrl=${avatarUrl.toString()};
+var STRUCTURE_ICONS=${JSON.stringify(STRUCTURE_ICONS)};
+var MAP_ICONS=STRUCTURE_ICONS;
+function mapIconFor(kind){return STRUCTURE_ICONS[kind]||STRUCTURE_ICONS.other}
+var mapIconSvg=${iconSvg.toString()};
 var itemIconUrl=${itemIconUrl.toString()};
 var itemIconId=${itemIconId.toString()};
 var itemLabel=${itemLabel.toString()};

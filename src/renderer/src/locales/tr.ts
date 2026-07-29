@@ -129,6 +129,12 @@ const tr: typeof en = {
     heads: 'Kafalar',
     goTo: 'Haritayı buraya ortala',
     performance: 'Performans',
+    perfScope:
+      'Bunlar BU SUNUCUNUN ayarları, bu pencerenin değil — uygulama, web paneli ve herkese açık site aynı parçaları okur, yani burada yapılan değişiklik hepsine uygulanır.',
+    perfPan: 'Görünüm hareket ettikçe yüklemeye devam et',
+    perfPanHint:
+      'Kapalıyken harita elindekini çizer ve “Bu görünümü yükle” demeden başka bir şey istemez — böylece büyük bir dünyada gezinmek hiçbir maliyet çıkarmaz.',
+    loadHere: 'Bu görünümü yükle',
     perfCache: 'Çözümlenmiş parçaları diskte önbelleğe al',
     perfCacheHint:
       'Bir bölgeyi çözümlemek birkaç yüz milisaniye, geri okumak yaklaşık bir milisaniye sürer. Bu açıkken bir bölge bir kez çözümlenir ve yalnızca sunucu onu yeniden yazdığında tekrar çözümlenir.',

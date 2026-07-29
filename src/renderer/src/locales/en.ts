@@ -127,6 +127,12 @@ export default {
     heads: 'Heads',
     goTo: 'Centre the map here',
     performance: 'Performance',
+    perfScope:
+      'These are settings for THIS SERVER, not for this window — the app, the web panel and the public site all read the same tiles, so a change here applies to every one of them.',
+    perfPan: 'Keep loading as the view moves',
+    perfPanHint:
+      'Off, the map draws what it already holds and asks for nothing more until you press “Load this view” — so panning across a large world costs nothing.',
+    loadHere: 'Load this view',
     perfCache: 'Cache parsed tiles on disk',
     perfCacheHint:
       'A region costs a few hundred milliseconds to parse and about a millisecond to read back. With this on, a region is parsed once and re-parsed only when the server rewrites it.',
