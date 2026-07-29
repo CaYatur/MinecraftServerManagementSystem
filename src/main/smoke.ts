@@ -128,6 +128,8 @@ import * as alertsMod from './core/alerts'
 import * as worldsMod from './core/worlds'
 import * as areasMod from '@shared/chunkAreas'
 import * as areasMod2 from './core/chunkAreas'
+import * as tex from '@shared/textures'
+import * as assetsMod from './core/clientAssets'
 import {
   isValidMcName,
   isValidWorldName,
@@ -189,7 +191,7 @@ import { aggregateJoins, type JoinRecord } from '@shared/joins'
 import * as auditMod from './core/audit'
 import type { UptimeReport } from '@shared/uptime'
 import type { JavaArgsConfig, MetricSeries, ServerConfig, ServerEvent, ServerType } from '@shared/types'
-import { alertsPath, uploadsDir, auditDir, dataDir } from './paths'
+import { alertsPath, uploadsDir, auditDir, dataDir, cacheDir } from './paths'
 import { analyzeCrash } from './core/crash'
 import { CREATABLE_TYPES, createErrorKey } from '@shared/versions'
 
@@ -2230,6 +2232,97 @@ export async function runWorldsSmoke(): Promise<void> {
     rmSync(evilZip, { force: true })
     rmSync(emptyZip, { force: true })
     console.log('WORLDS-SMOKE: import refuses zip-slip and worldless archives, cleans up after itself')
+
+    // --- 12b. item textures from the client jar (#127) ----------------------
+    {
+      // Which paths are worth trying. The old CDN only ever asked for
+      // `item/<id>.png` and then `block/<id>.png`, which is why a chest, a log
+      // or a grass block fell through to a three-letter text chip.
+      const cands = tex.textureCandidates('oak_log')
+      if (cands[0] !== 'item/oak_log') return fail('an item is not tried first: ' + cands[0])
+      if (!cands.includes('block/oak_log')) return fail('the block folder is not tried')
+      if (!cands.includes('block/oak_log_top')) return fail('the top face is not tried')
+      // grass_block has no block/grass_block.png at all — only _top and _side.
+      if (!tex.textureCandidates('grass_block').includes('block/grass_block_side')) {
+        return fail('grass_block would still find nothing')
+      }
+      // A namespaced id is the same item.
+      if (tex.textureCandidates('minecraft:apple')[0] !== 'item/apple') return fail('the namespace was not stripped')
+      // An id from hand-edited NBT must not become a path. This is the only
+      // thing between a crafted inventory entry and the cache directory.
+      for (const bad of ['../../etc/passwd', 'a/b', '..', '', 'x'.repeat(80), 'Apple!', 'a b']) {
+        const c = tex.textureCandidates(bad)
+        if (c.length) return fail('an unsafe id produced candidates: ' + JSON.stringify(bad))
+      }
+
+      // What the extractor keeps. The client jar holds thousands of files and
+      // only two folders are ever looked up.
+      if (!tex.wantsTexture('assets/minecraft/textures/item/apple.png')) return fail('an item texture was skipped')
+      if (!tex.wantsTexture('assets/minecraft/textures/block/stone.png')) return fail('a block texture was skipped')
+      for (const skip of [
+        'assets/minecraft/textures/entity/creeper/creeper.png',
+        'assets/minecraft/textures/item/apple.png.mcmeta',
+        'assets/minecraft/lang/en_us.json',
+        '../../../evil.png',
+        'assets/minecraft/textures/item/sub/dir.png'
+      ]) {
+        if (tex.wantsTexture(skip)) return fail('the extractor would keep ' + skip)
+      }
+      if (tex.textureKey('assets/minecraft/textures/block/stone.png') !== 'block/stone') {
+        return fail('the texture key is wrong')
+      }
+
+      // Which version's jar. Snapshots and modded strings reduce to the release
+      // they are built on; there is no point downloading twenty snapshots to
+      // get the same apple.
+      for (const [given, want] of [
+        ['1.21.4', '1.21.4'],
+        ['1.21', '1.21'],
+        ['1.21.4-pre2', '1.21.4'],
+        ['1.20.1-forge-47.2.0', '1.20.1'],
+        ['nonsense', ''],
+        ['', '']
+      ] as const) {
+        if (tex.assetVersion(given) !== want) {
+          return fail('assetVersion(' + JSON.stringify(given) + ') = ' + tex.assetVersion(given))
+        }
+      }
+
+      // ...and the round trip, without the network: write a texture where the
+      // extractor would have put it and check the lookup finds it through the
+      // candidate list rather than only by an exact name.
+      const av = tex.assetVersion('1.21.4')
+      const adir = join(cacheDir(), 'assets', av)
+      const hadIndex = existsSync(join(adir, 'index.json'))
+      if (!hadIndex) {
+        mkdirSync(adir, { recursive: true })
+        // A one-pixel PNG. Only the bytes coming back matter here.
+        const png = Buffer.from(
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+          'base64'
+        )
+        writeFileSync(join(adir, 'block__grass_block_side.png'), png)
+        writeFileSync(join(adir, 'item__apple.png'), png)
+        writeFileSync(join(adir, 'index.json'), JSON.stringify({ version: av, keys: ['item/apple'] }))
+        try {
+          if (!assetsMod.itemTexture('1.21.4', 'apple')) return fail('a written item texture was not found')
+          // The case the CDN got wrong: found by suffix, not by exact name.
+          if (!assetsMod.itemTexture('1.21.4', 'grass_block')) return fail('grass_block was not found by alias')
+          if (assetsMod.itemTexture('1.21.4', 'nonexistent_thing')) return fail('a missing texture returned bytes')
+          if (assetsMod.itemTexture('1.21.4', '../../evil')) return fail('an unsafe id reached the disk')
+          const many = assetsMod.itemTextures('1.21.4', ['apple', 'apple', 'nonexistent_thing'])
+          if (!many['apple']?.startsWith('data:image/png;base64,')) return fail('the batch lookup returned no data url')
+          if (many['nonexistent_thing']) return fail('the batch lookup invented a texture')
+          if (!assetsMod.assetStatus('1.21.4').ready) return fail('the status does not see the index')
+          // An unknown version is not ready and does not throw — an operator on
+          // a modded string must still get an app, not an exception.
+          if (assetsMod.assetStatus('nonsense').ready) return fail('an unknown version claimed to be ready')
+        } finally {
+          rmSync(adir, { recursive: true, force: true })
+        }
+      }
+      console.log('WORLDS-SMOKE: client-jar textures OK (candidates, extractor filter, safe ids, local lookup)')
+    }
 
     // --- 12. chunk areas: the rules four map surfaces have to share (#144) ---
     {

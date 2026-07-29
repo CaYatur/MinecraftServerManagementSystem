@@ -1,43 +1,53 @@
 import { useState, useEffect } from 'react'
 
 /**
- * Minecraft item/block icon from an online, always-updatable source
- * (assets.mcasset.cloud, which mirrors Mojang textures by version).
- * Tries item/ then block/, then falls back to a text chip.
+ * A Minecraft item or block icon.
+ *
+ * Drawn from the textures MSMS extracted out of Mojang's own client jar (#127),
+ * which is why this takes a `src` rather than building a URL: the picture is a
+ * `data:` URI the main process produced from a local file, so there is no third
+ * party in the middle of a private server's inventory and it works with no
+ * internet at all.
+ *
+ * It used to hot-link `assets.mcasset.cloud`. That host does not have a texture
+ * at `item/<id>.png` for most blocks, so a chest, a log or a grass block fell
+ * through to the three-letter chip — the "icons aren't loading" this replaces.
+ *
+ * No `src` means the operator has not downloaded the assets for this version, or
+ * the id has no texture at all. The chip is the fallback, and it is not
+ * politeness: it is what keeps an inventory readable before anything has been
+ * downloaded.
  */
 export function ItemIcon({
   id,
-  version,
+  src,
   size = 32
 }: {
   id: string
-  version?: string
+  src?: string
   size?: number
 }): JSX.Element {
-  const ver = version && /^1\.\d+(\.\d+)?$/.test(version) ? version : '1.21.4'
-  const [stage, setStage] = useState(0) // 0=item, 1=block, 2=text
-  useEffect(() => setStage(0), [id, ver])
+  const [broken, setBroken] = useState(false)
+  useEffect(() => setBroken(false), [src, id])
 
-  if (stage >= 2) {
+  if (!src || broken) {
     return (
       <div className="item-fallback" style={{ width: size, height: size }} title={id}>
         {id.slice(0, 3)}
       </div>
     )
   }
-  const folder = stage === 0 ? 'item' : 'block'
-  const url = `https://assets.mcasset.cloud/${ver}/assets/minecraft/textures/${folder}/${id}.png`
   return (
     <img
       className="item-icon"
-      src={url}
+      src={src}
       width={size}
       height={size}
       alt={id}
       title={id}
       loading="lazy"
       style={{ imageRendering: 'pixelated' }}
-      onError={() => setStage((s) => s + 1)}
+      onError={() => setBroken(true)}
     />
   )
 }

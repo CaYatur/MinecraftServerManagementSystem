@@ -465,6 +465,10 @@ const tr: typeof en = {
     inventory: 'Envanter',
     enderChest: 'Ender sandığı',
     inventorySoon: 'Canlı envanter görüntüleyici sonraki güncellemede gelecek.',
+    assetsMissing: '{{version}} için item görselleri henüz indirilmedi.',
+    assetsGet: 'Görselleri indir',
+    assetsFetching: 'İndiriliyor…',
+    assetsReady: 'Item görselleri hazır.',
     noInventory: 'Kayıtlı envanter yok (oyuncu giriş yapmış ve dünya kaydedilmiş olmalı). Simgeler çevrimiçi kaynaktan yüklenir.',
     clickHint: 'Ayrıntılar ve işlemler için bir oyuncu kartına tıklayın.',
     offline: 'Çevrimdışı'

@@ -462,6 +462,10 @@ export default {
     inventory: 'Inventory',
     enderChest: 'Ender chest',
     inventorySoon: 'Live inventory viewer is coming in a later update.',
+    assetsMissing: 'Item pictures for {{version}} are not downloaded yet.',
+    assetsGet: 'Download textures',
+    assetsFetching: 'Downloading…',
+    assetsReady: 'Item textures ready.',
     noInventory: 'No saved inventory (the player must have logged in and the world saved). Icons load from an online source.',
     clickHint: 'Click a player card for details and actions.',
     offline: 'Offline'
