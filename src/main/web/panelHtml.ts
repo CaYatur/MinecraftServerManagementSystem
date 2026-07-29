@@ -7,6 +7,7 @@ import { iconSvg, STRUCTURE_ICONS } from '@shared/mapIcons'
 import { usageSamples, API_KEY_HEADER, USAGE_NOTES } from '@shared/apiUsage'
 import { API_PREFIX } from '@shared/apiSurface'
 import { MAP_CSS, MAP_HTML, MAP_JS } from '@shared/mapUi'
+import { AREA_COLOURS } from '@shared/chunkAreas'
 export function getPanelHtml(): string {
   return `<!doctype html><html lang="en"><head>
 <meta charset="utf-8"/>
@@ -345,6 +346,50 @@ h2{margin:8px 0;font-weight:800;letter-spacing:-.4px}
     <div id="panelTimeline" class="hidden"><div class="card tight" id="dEvents"></div></div>
     <div id="panelMap" class="hidden">
       <div class="card">${MAP_HTML}</div>
+      <!-- Named chunk areas (#144). Hidden without the settings scope, like the
+           performance card: an area is stored on the server and shown to
+           everyone, so writing one is not a per-session view preference. -->
+      <div class="card hidden" id="mpAreas">
+        <div class="row"><button class="btn sm" onclick="toggleAreaCard()"><span id="mpAreaCaret">▸</span></button>
+          <b>Chunk areas</b><div class="spacer"></div>
+          <button class="btn sm" onclick="areaNew()">New area</button></div>
+        <div id="mpAreaBody" style="display:none;margin-top:10px">
+          <div class="dim" style="font-size:12px;margin-bottom:10px">
+            A named, coloured region measured in chunks. Everyone looking at the map sees it and can
+            read the note — on the public site too, unless you mark it operator-only.
+          </div>
+          <div id="mpAreaList" class="mp-list" style="margin-bottom:10px"></div>
+          <div id="mpAreaForm" class="hidden">
+            <div class="row" style="margin-bottom:6px">
+              <input id="mpAreaName" placeholder="Area name, e.g. spawn town" style="flex:1;min-width:160px"/>
+              <span id="mpAreaSwatches"></span>
+            </div>
+            <input id="mpAreaNote" placeholder="Note — shown under the name, e.g. owner: CaYatur"
+              style="width:100%;margin-bottom:6px"/>
+            <div class="row" style="margin-bottom:6px">
+              <button class="btn sm" id="mpAreaPickBtn" onclick="areaTogglePick()">Pick chunks on the map</button>
+              <span class="dim" id="mpAreaCount" style="font-size:12px"></span>
+              <button class="btn sm" onclick="areaClearPick()">Clear selection</button>
+              <div class="spacer"></div>
+              <label class="row" style="gap:6px;font-size:12px">
+                <input type="checkbox" id="mpAreaHidden"/> Operator only
+              </label>
+            </div>
+            <div class="row" style="margin-bottom:6px">
+              <input id="mpAreaTyped" placeholder="Or type: 10,20  or  30,40 - 32,42"
+                style="flex:1;min-width:200px;font-family:ui-monospace,monospace;font-size:12px"/>
+              <button class="btn sm" onclick="areaAddTyped()">Add</button>
+            </div>
+            <div class="dim" id="mpAreaMsg" style="font-size:12px;margin-bottom:6px"></div>
+            <div class="row">
+              <button class="btn primary sm" onclick="areaSave()">Save</button>
+              <button class="btn sm" onclick="areaCancel()">Cancel</button>
+              <div class="spacer"></div>
+              <button class="btn sm danger hidden" id="mpAreaDel" onclick="areaDelete()">Delete</button>
+            </div>
+          </div>
+        </div>
+      </div>
       <!-- The same per-server dials the desktop map has (#133). Hidden without
            the settings scope: these persist and apply to every surface, so they
            are not a per-session view preference. -->
@@ -507,7 +552,7 @@ function showTab(tab){activeTab=tab;
  /* Only poll while the tab is visible: the feed is every two seconds, and a
     background tab quietly hammering it is the kind of cost nobody attributes
     to the page they left open. */
- if(tab==='map'){mapStart();loadPerf()}else mapStop();
+ if(tab==='map'){mapStart();loadPerf();loadAreas()}else mapStop();
  if(tab==='manage')loadManage();
  if(tab==='stats')loadStats();
  if(tab==='timeline')loadEvents();
@@ -836,6 +881,158 @@ function mapFeedUrl(dim,cell){
  return '/api/servers/'+mapServerId()+'/map?dim='+encodeURIComponent(dim)+'&cell='+encodeURIComponent(cell)}
 /* The map engine does not know how this page wraps a response, and must not:
    the two pages disagree, and it used to assume this one (#115). */
+/* ---- the chunk-area editor (#144) ----
+   Two ways in on purpose: clicking chunks is how you draw a town you can see,
+   typing coordinates is how you enter the four hundred somebody sent you. They
+   edit the same selection, so switching between them mid-edit loses nothing.
+   The colours are the shared palette, pasted in as data. */
+var AREA_COLOURS=${JSON.stringify(AREA_COLOURS)};
+var AREA_EDIT=null,AREA_PICK=[],AREA_PICKING=false,AREA_COLOUR=AREA_COLOURS[0];
+/* The hooks the shared map engine looks for. Optional there — the public site
+   defines none of them and gets a read-only map. */
+function mapAreasChanged(){areaRenderList()}
+function mapAreaPicking(){return AREA_PICKING}
+function mapAreaPickRects(){return AREA_PICKING?AREA_PICK:[]}
+function toggleAreaCard(){var b=document.getElementById('mpAreaBody');
+ var open=b.style.display!=='none';b.style.display=open?'none':'block';
+ document.getElementById('mpAreaCaret').textContent=open?'▸':'▾'}
+function loadAreas(){
+ var card=document.getElementById('mpAreas');if(!card||!current)return;
+ /* Reading areas needs the view scope, which anyone on this map already has;
+    WRITING them needs settings. Showing the editor to a session that cannot
+    save is offering a form that ends in a 403. */
+ var may=current.scopes.indexOf('settings')>=0;
+ card.classList.toggle('hidden',!may);
+ mapFetchAreas();
+ if(may)areaRenderList()}
+function areaRenderList(){
+ var el=document.getElementById('mpAreaList');if(!el)return;
+ var here=MAP_AREAS.filter(function(a){return mapNormDim(a.dim)===mapNormDim(MAP.dim)});
+ el.innerHTML=here.length?here.map(function(a){
+  return '<button class="mp-chip" style="border-color:'+mapEsc(a.colour)+
+   (a.hidden?';opacity:.55':'')+'" onclick="areaEdit(\\''+a.id+'\\')">'+
+   '<span style="display:inline-block;width:9px;height:9px;border-radius:3px;margin-right:5px;background:'+
+   mapEsc(a.colour)+'"></span>'+mapEsc(a.name)+(a.hidden?' ·':'')+'</button>'}).join('')
+  :'<span class="dim" style="font-size:12px">No areas in '+mapEsc(MAP.dim)+' yet.</span>'}
+function areaSwatches(){
+ document.getElementById('mpAreaSwatches').innerHTML=AREA_COLOURS.map(function(c){
+  return '<button title="'+c+'" onclick="areaSetColour(\\''+c+'\\')" style="width:22px;height:22px;'+
+   'border-radius:6px;cursor:pointer;margin-left:4px;background:'+c+';border:'+
+   (c===AREA_COLOUR?'2px solid #fff':'1px solid rgba(0,0,0,.35)')+'"></button>'}).join('')}
+function areaSetColour(c){AREA_COLOUR=c;areaSwatches()}
+function areaNew(){
+ AREA_EDIT=null;AREA_PICK=[];AREA_COLOUR=AREA_COLOURS[0];
+ document.getElementById('mpAreaBody').style.display='block';
+ document.getElementById('mpAreaCaret').textContent='▾';
+ document.getElementById('mpAreaForm').classList.remove('hidden');
+ document.getElementById('mpAreaName').value='';
+ document.getElementById('mpAreaNote').value='';
+ document.getElementById('mpAreaHidden').checked=false;
+ document.getElementById('mpAreaDel').classList.add('hidden');
+ document.getElementById('mpAreaMsg').textContent='';
+ areaSwatches();areaSetPicking(true);areaCountText()}
+function areaEdit(id){
+ var a=null;for(var i=0;i<MAP_AREAS.length;i++)if(MAP_AREAS[i].id===id)a=MAP_AREAS[i];
+ if(!a)return;
+ AREA_EDIT=a;AREA_PICK=(a.rects||[]).slice();AREA_COLOUR=a.colour;
+ document.getElementById('mpAreaForm').classList.remove('hidden');
+ document.getElementById('mpAreaName').value=a.name;
+ document.getElementById('mpAreaNote').value=a.note||'';
+ document.getElementById('mpAreaHidden').checked=!!a.hidden;
+ document.getElementById('mpAreaDel').classList.remove('hidden');
+ document.getElementById('mpAreaMsg').textContent='';
+ areaSwatches();areaSetPicking(false);areaCountText();
+ /* Centre on it. An area listed but off-screen is a name with nowhere to look. */
+ if(MAP.view&&AREA_PICK.length){var r=AREA_PICK[0];
+  MAP.view={cx:(r.x1+r.x2+1)*8,cz:(r.z1+r.z2+1)*8,scale:MAP.view.scale}}
+ mapDraw()}
+function areaCancel(){
+ AREA_EDIT=null;AREA_PICK=[];areaSetPicking(false);
+ document.getElementById('mpAreaForm').classList.add('hidden');mapDraw()}
+function areaSetPicking(on){
+ AREA_PICKING=on;
+ var b=document.getElementById('mpAreaPickBtn');
+ if(b){b.textContent=on?'Picking — click chunks to add or remove':'Pick chunks on the map';
+  b.className='btn sm'+(on?' primary':'')}
+ mapDraw()}
+function areaTogglePick(){areaSetPicking(!AREA_PICKING)}
+function areaClearPick(){AREA_PICK=[];areaCountText();mapDraw()}
+function areaCountText(){
+ var n=0;for(var i=0;i<AREA_PICK.length;i++){var r=AREA_PICK[i];
+  n+=(r.x2-r.x1+1)*(r.z2-r.z1+1)}
+ var el=document.getElementById('mpAreaCount');
+ if(el)el.textContent=n+' chunks in '+AREA_PICK.length+' rectangles'}
+/* Tidy the selection the same way the server will: duplicates and contained
+   rects go, neighbours that share a full edge merge. Done here as well so the
+   count the operator reads is the count that gets stored. */
+function areaTidy(list){
+ var out=[];
+ for(var i=0;i<list.length;i++){var r=list[i];
+  if(!r||!isFinite(r.x1)||!isFinite(r.z1)||!isFinite(r.x2)||!isFinite(r.z2))continue;
+  out.push({x1:Math.min(r.x1,r.x2),x2:Math.max(r.x1,r.x2),
+   z1:Math.min(r.z1,r.z2),z2:Math.max(r.z1,r.z2)})}
+ var merged=true;
+ while(merged&&out.length>1){merged=false;
+  for(var a=0;a<out.length&&!merged;a++){
+   for(var b=a+1;b<out.length;b++){
+    var p=out[a],q=out[b],j=null;
+    if(p.z1===q.z1&&p.z2===q.z2&&(p.x2+1===q.x1||q.x2+1===p.x1))
+     j={x1:Math.min(p.x1,q.x1),x2:Math.max(p.x2,q.x2),z1:p.z1,z2:p.z2};
+    else if(p.x1===q.x1&&p.x2===q.x2&&(p.z2+1===q.z1||q.z2+1===p.z1))
+     j={x1:p.x1,x2:p.x2,z1:Math.min(p.z1,q.z1),z2:Math.max(p.z2,q.z2)};
+    else if(q.x1>=p.x1&&q.x2<=p.x2&&q.z1>=p.z1&&q.z2<=p.z2)j=p;
+    else if(p.x1>=q.x1&&p.x2<=q.x2&&p.z1>=q.z1&&p.z2<=q.z2)j=q;
+    if(j){var keep=[];for(var k=0;k<out.length;k++)if(k!==a&&k!==b)keep.push(out[k]);
+     keep.push(j);out=keep;merged=true;break}}}}
+ out.sort(function(m,n){return m.x1-n.x1||m.z1-n.z1||m.x2-n.x2||m.z2-n.z2});
+ return out}
+function areaPickChunk(cx,cz){
+ var has=false;
+ for(var i=0;i<AREA_PICK.length;i++){var r=AREA_PICK[i];
+  if(cx>=r.x1&&cx<=r.x2&&cz>=r.z1&&cz<=r.z2)has=true}
+ if(has){
+  /* Expand and drop the one chunk. Removing the whole rectangle that happens to
+     contain it would throw away the forty others it was merged with. */
+  var flat=[];
+  for(var j=0;j<AREA_PICK.length;j++){var q=AREA_PICK[j];
+   for(var x=q.x1;x<=q.x2;x++)for(var z=q.z1;z<=q.z2;z++)
+    if(!(x===cx&&z===cz))flat.push({x1:x,z1:z,x2:x,z2:z})}
+  AREA_PICK=areaTidy(flat)}
+ else AREA_PICK=areaTidy(AREA_PICK.concat([{x1:cx,z1:cz,x2:cx,z2:cz}]));
+ areaCountText();mapDraw()}
+function areaAddTyped(){
+ var el=document.getElementById('mpAreaTyped');var text=el.value||'';
+ var lines=text.split(/[\\n;]+/),bad=[],add=[];
+ for(var i=0;i<lines.length;i++){var line=lines[i].trim();if(!line)continue;
+  var nums=line.match(/-?\\d+/g);
+  if(!nums||(nums.length!==2&&nums.length!==4)){bad.push(line);continue}
+  var n=nums.map(Number);
+  add.push(n.length===2?{x1:n[0],z1:n[1],x2:n[0],z2:n[1]}
+   :{x1:n[0],z1:n[1],x2:n[2],z2:n[3]})}
+ AREA_PICK=areaTidy(AREA_PICK.concat(add));
+ el.value='';
+ document.getElementById('mpAreaMsg').textContent=bad.length?('Not understood: '+bad.join(', ')):'';
+ areaCountText();mapDraw()}
+function areaSave(){
+ if(!current)return;
+ var name=document.getElementById('mpAreaName').value.trim();
+ var msg=document.getElementById('mpAreaMsg');
+ if(!name){msg.textContent='Give the area a name.';return}
+ if(!AREA_PICK.length){msg.textContent='Pick at least one chunk, or type some coordinates.';return}
+ var body={name:name,note:document.getElementById('mpAreaNote').value.trim(),
+  colour:AREA_COLOUR,
+  /* The area keeps ITS dimension when edited, so opening the nether and saving
+     a rename does not silently move a town. */
+  dim:AREA_EDIT?AREA_EDIT.dim:MAP.dim,rects:AREA_PICK,
+  hidden:document.getElementById('mpAreaHidden').checked};
+ if(AREA_EDIT)body.areaId=AREA_EDIT.id;
+ api('/api/servers/'+current.id+'/areas',{method:'POST',body:JSON.stringify(body)}).then(function(r){
+  if(!r.ok){msg.textContent=(r.body&&r.body.error)||'Could not save the area.';return}
+  areaCancel();mapFetchAreas()})}
+function areaDelete(){
+ if(!current||!AREA_EDIT)return;
+ api('/api/servers/'+current.id+'/areas?areaId='+encodeURIComponent(AREA_EDIT.id),{method:'DELETE'})
+  .then(function(){areaCancel();mapFetchAreas()})}
 /* Map performance, per server and persisted (#133). Only for a session that may
    change settings — these apply to every surface, not just this browser. */
 function togglePerf(){var b=document.getElementById('mpPerfBody');

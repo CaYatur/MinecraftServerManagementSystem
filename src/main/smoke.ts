@@ -4175,6 +4175,13 @@ function runPageScript(html: string, seed: Record<string, unknown> = {}): PageRu
         fill: () => {},
         fillRect: () => {},
         fillText: () => {},
+        // Areas draw outlines and a dashed selection (#144). A stub that is
+        // missing a method the page calls fails the whole run with a TypeError,
+        // which reads like a bug in the page rather than a gap in the stub.
+        strokeRect: () => {},
+        strokeText: () => {},
+        setLineDash: () => {},
+        drawImage: () => {},
         set font(_v: string) {},
         set fillStyle(_v: string) {},
         set strokeStyle(_v: string) {},
@@ -6732,6 +6739,50 @@ export async function runWebSmoke(): Promise<void> {
           }
           if (compared < 5000) return fail('the area cross-check barely ran: ' + compared)
           if (overlaps < 20) return fail('the battery never hit a contested chunk: ' + overlaps)
+
+          // The panel's chunk picker. Clicking builds a selection, clicking the
+          // same chunk again takes it back, and the result is tidied the way the
+          // server will tidy it — so the count the operator reads is the count
+          // that gets stored.
+          const pnl = panel.ctx as { AREA_PICK: areasMod.ChunkRect[]; AREA_PICKING: boolean }
+          pnl.AREA_PICK = []
+          pnl.AREA_PICKING = true
+          for (let cx = 0; cx < 4; cx++) pctx['areaPickChunk'](cx, 0)
+          if (pnl.AREA_PICK.length !== 1) {
+            return fail('the picker did not merge a row: ' + JSON.stringify(pnl.AREA_PICK))
+          }
+          if (areasMod.areaChunkCount({ rects: pnl.AREA_PICK }) !== 4) return fail('the picker lost a chunk')
+          // Taking one out of the MIDDLE is the case that matters: the rect it
+          // sits in covers three others, and dropping the rect drops them too.
+          pctx['areaPickChunk'](1, 0)
+          if (areasMod.areaChunkCount({ rects: pnl.AREA_PICK }) !== 3) {
+            return fail('removing one chunk took ' + (4 - areasMod.areaChunkCount({ rects: pnl.AREA_PICK })) + ' with it')
+          }
+          for (const c of [0, 2, 3]) {
+            if (!pnl.AREA_PICK.some((r) => areasMod.rectHas(r, c, 0))) return fail('chunk ' + c + ' was lost')
+          }
+          if (pnl.AREA_PICK.some((r) => areasMod.rectHas(r, 1, 0))) return fail('the removed chunk came back')
+          // The panel tidies with its own copy of the merge, so it has to agree
+          // with the shared one — otherwise the operator counts one thing and
+          // the server stores another.
+          const theirsTidy = pctx['areaTidy']([
+            { x1: 0, z1: 0, x2: 0, z2: 0 }, { x1: 1, z1: 0, x2: 1, z2: 0 },
+            { x1: 5, z1: 5, x2: 9, z2: 9 }, { x1: 6, z1: 6, x2: 7, z2: 7 }
+          ]) as areasMod.ChunkRect[]
+          const mineTidy = areasMod.normalizeRects([
+            { x1: 0, z1: 0, x2: 0, z2: 0 }, { x1: 1, z1: 0, x2: 1, z2: 0 },
+            { x1: 5, z1: 5, x2: 9, z2: 9 }, { x1: 6, z1: 6, x2: 7, z2: 7 }
+          ])
+          // By value, not by JSON: the two build their objects with the fields
+          // in different orders, which `JSON.stringify` reports as a difference
+          // and no consumer of these rects can even observe.
+          const canon = (rs: areasMod.ChunkRect[]): string =>
+            rs.map((r) => [r.x1, r.z1, r.x2, r.z2].join(',')).join(' ')
+          if (canon(theirsTidy) !== canon(mineTidy)) {
+            return fail('the panel tidies differently: ' + canon(theirsTidy) + ' vs ' + canon(mineTidy))
+          }
+          pnl.AREA_PICKING = false
+          pnl.AREA_PICK = []
         }
 
         // #104: the same empty state on the PUBLIC page must not talk about

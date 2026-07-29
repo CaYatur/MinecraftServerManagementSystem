@@ -302,11 +302,17 @@ function mapBindNav(){
     and the two are only told apart by how far the pointer moved. */
  cv.addEventListener('mousedown',function(e){MAP._down={x:e.clientX,y:e.clientY}});
  cv.addEventListener('click',function(e){
-  if(!MAP.view||!MAP.areasOn)return;
+  if(!MAP.view)return;
   var d0=MAP._down;
   if(d0&&(Math.abs(e.clientX-d0.x)>4||Math.abs(e.clientY-d0.y)>4))return;
   var pt=mapS2W(mapLocalPoint(e,cv));
   var c=mapChunkOf(pt.x,pt.z);
+  /* Picking, when the host has an editor open, takes the click: adding a chunk
+     and pinning the area under it at the same time would fight each other. */
+  if(typeof mapAreaPicking==='function'&&mapAreaPicking()){
+   if(typeof mapAreaPickChunk==='function')mapAreaPickChunk(c.cx,c.cz);
+   return}
+  if(!MAP.areasOn)return;
   mapPinArea(mapAreaAt(MAP_AREAS,c.cx,c.cz,MAP.dim))});
  cv.addEventListener('wheel',function(e){
   if(!MAP.view)return;
@@ -358,7 +364,24 @@ function mapAreasUrl(){
  return sid?('/api/servers/'+sid+'/areas'):'/api/public/map/areas?dim='+encodeURIComponent(MAP.dim)}
 function mapFetchAreas(){
  mapGet(mapAreasUrl()).then(function(d){
-  MAP_AREAS=(d&&d.areas)||[];mapDraw()})}
+  MAP_AREAS=(d&&d.areas)||[];
+  /* Optional host hook, like mapServerId: the panel keeps an editable list
+     beside the map and has to redraw it when the areas change. The public site
+     defines nothing and gets nothing. */
+  if(typeof mapAreasChanged==='function')mapAreasChanged();
+  mapDraw()})}
+/* The selection in progress, when the host is offering one. Drawn in white
+   rather than a palette colour so it cannot be mistaken for a saved area. */
+function mapDrawPick(g,w,h,dpr){
+ if(typeof mapAreaPickRects!=='function')return;
+ var rs=mapAreaPickRects()||[];if(!rs.length)return;
+ var sx=w/MAP.vp.width,sy=h/MAP.vp.height;
+ for(var i=0;i<rs.length;i++){var r=rs[i];
+  var p0=mapW2S({x:r.x1*16,z:r.z1*16}),p1=mapW2S({x:(r.x2+1)*16,z:(r.z2+1)*16});
+  var x=p0.x*sx,y=p0.y*sy,ww=(p1.x-p0.x)*sx,hh=(p1.y-p0.y)*sy;
+  g.fillStyle='rgba(255,255,255,.22)';g.fillRect(x,y,ww,hh);
+  g.strokeStyle='rgba(255,255,255,.9)';g.lineWidth=1.5*dpr;
+  g.setLineDash([4*dpr,3*dpr]);g.strokeRect(x,y,ww,hh);g.setLineDash([])}}
 function mapDrawAreas(g,w,h,dpr){
  if(!MAP.areasOn||!MAP.view)return;
  var sx=w/MAP.vp.width,sy=h/MAP.vp.height;
@@ -727,6 +750,7 @@ function mapDraw(){
  /* Areas sit on the terrain and under everything that has to stay readable: a
     translucent claim over a village icon is fine, over a player is not. */
  mapDrawAreas(g,w,h,dpr);
+ mapDrawPick(g,w,h,dpr);
  /* After the grid and the heatmap, before the players: a marker under a grid
     line reads as a smudge, and a player must never be hidden behind one. */
  mapDrawMarks(g,w,h,dpr);
