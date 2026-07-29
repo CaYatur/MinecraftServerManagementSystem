@@ -494,28 +494,6 @@ const REGION_PARSE_GAP_MS = 250
 let lastParseAt = 0
 
 /** Whether a parse is allowed to start right now. */
-/**
- * Whether serving this chunk means parsing a region, rather than reading one
- * that is already in memory or on disk.
- *
- * Only a real parse needs the brake. Asking the question costs two stats; not
- * asking it cost a 250ms wait on work that takes one millisecond.
- */
-function willParse(serverId: string, dim: string, cx: number, cz: number): boolean {
-  const path = regionPath(serverId, dim, regionOf(cx), regionOf(cz))
-  if (!path || !existsSync(path)) return false
-  let mtimeMs = 0
-  try {
-    mtimeMs = statSync(path).mtimeMs
-  } catch {
-    return false
-  }
-  if (regions.get(path)?.mtimeMs === mtimeMs) return false
-  if (!perfFor(serverId).cache) return true
-  const f = cacheFileFor(serverId, path)
-  return !existsSync(f)
-}
-
 export function parseBudgetReady(serverId?: string, now = Date.now()): boolean {
   const gap = serverId ? perfFor(serverId).parseGapMs : REGION_PARSE_GAP_MS
   return now - lastParseAt >= gap
@@ -558,13 +536,28 @@ function loadRegion(
   }
 
   lastParseAt = Date.now()
+  /**
+   * A region that cannot be read is remembered as EMPTY rather than as "not
+   * read yet".
+   *
+   * Returning null leaves `peekChunkTile` answering `undefined` forever, so the
+   * client keeps asking, the queue keeps re-running it, and the chunk never
+   * resolves — one unreadable region file is a permanent polling loop. An empty
+   * entry is honest (there is nothing to draw) and terminates.
+   */
+  const giveUp = (): RegionEntry => {
+    const empty: RegionEntry = { at: Date.now(), mtimeMs, tiles: new Map() }
+    regions.set(path, empty)
+    return empty
+  }
+
   let file: Buffer
   try {
     file = readFileSync(path)
   } catch {
-    return null
+    return giveUp()
   }
-  if (file.length < SECTOR_HEADER) return null
+  if (file.length < SECTOR_HEADER) return giveUp()
 
   const table = parseLocationTable(file.subarray(0, 4096))
   const tiles = new Map<number, ChunkTile | null>()
@@ -690,22 +683,26 @@ async function drain(): Promise<void> {
     while (queue.length) {
       const job = queue.shift()
       if (!job) break
-      // The budget is a brake on PARSING, and it was being applied to every job
-      // — including the ones that will hit the disk cache and cost about a
-      // millisecond. After #134 most reads are cache hits, so the brake had
-      // ended up throttling almost exclusively the fast path, which is what
-      // made loading feel no quicker with the cache than without it (#136).
-      if (willParse(job.serverId, job.dim, job.cx, job.cz) && !parseBudgetReady(job.serverId)) {
-        queue.unshift(job)
-        await new Promise((r) => setTimeout(r, 40))
-        continue
-      }
+      // The budget is a brake on PARSING, and applying it to every job throttled
+      // the cache hits too — which after #134 is almost every read, and is why
+      // loading felt no quicker with the cache than without it (#136).
+      //
+      // Measured rather than predicted: run the job, then look at whether it
+      // parsed. Predicting meant re-stat'ing the region file to guess at work
+      // the very next call was about to do anyway.
+      const before = lastParseAt
       try {
         chunkTile(job.serverId, job.dim, job.cx, job.cz)
       } catch {
         /* one bad region must not stop the queue */
       }
-      await new Promise((r) => setImmediate(r))
+      if (lastParseAt !== before) {
+        // It really parsed. Stand back for the configured gap so the console
+        // reader and everything else on this thread get a turn.
+        await new Promise((r) => setTimeout(r, perfFor(job.serverId).parseGapMs))
+      } else {
+        await new Promise((r) => setImmediate(r))
+      }
     }
   } finally {
     working = false

@@ -442,8 +442,6 @@ function mapDrawUngenerated(g,w,h,dpr){
    its own is just a colour; the sentence is what stops someone waiting. */
 function mapUngenNote(ungen,total){
  var el=document.getElementById('mpUngen');if(!el)return;
- var pending=0;
- for(var k in MAP_TILES)if(MAP_TILES[k]===undefined)pending++;
  var show=total>0&&ungen/total>0.15;
  el.classList.toggle('hidden',!show);
  if(show)el.textContent='Shaded area has never been generated — no player has been there, so there is nothing to draw.'}
