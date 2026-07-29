@@ -22,7 +22,7 @@ import { effectiveScopes } from '@shared/rbac'
 import { isKeyUsable } from '@shared/apikeys'
 import { MAP_PAGE_DEFAULTS } from '@shared/mapPage'
 import type { MapPageConfig, MapPageAccess } from '@shared/mapPage'
-import { usageSamples, USAGE_NOTES } from '@shared/apiUsage'
+import { usageSamples, USAGE_NOTES, REPO_URL } from '@shared/apiUsage'
 import type { RoleDef } from '@shared/rbac'
 import type { ApiKeyView, KeyServers } from '@shared/apikeys'
 import type { Scope, WebRole, WebStatus, WebUserView } from '@shared/web'
@@ -779,6 +779,25 @@ export function WebPanelView(): JSX.Element {
                     </pre>
                   </div>
                 ))}
+                {/* Where to go next. The reference at /docs is served by this
+                    install so it always matches the running version; the repo
+                    is where the written documentation and the source are. */}
+                <div className="row wrap" style={{ gap: 8, marginTop: 12 }}>
+                  <button
+                    className="btn sm"
+                    onClick={() =>
+                      window.msms.openExternal(
+                        (status?.panel.urls[0] ?? `http://127.0.0.1:${status?.panel.port ?? 8080}`) +
+                          '/api/v1/docs'
+                      )
+                    }
+                  >
+                    <BookOpen size={13} /> {t('web.apiDocs')}
+                  </button>
+                  <button className="btn sm" onClick={() => window.msms.openExternal(REPO_URL)}>
+                    <ExternalLink size={13} /> {t('web.apiRepo')}
+                  </button>
+                </div>
               </div>
             )}
           </div>

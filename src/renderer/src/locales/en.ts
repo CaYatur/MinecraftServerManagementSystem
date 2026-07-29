@@ -975,6 +975,8 @@ export default {
     keyNoServers: 'no servers',
     noKeys: 'No API keys yet.',
     noServers: 'No servers yet.',
+    apiDocs: 'Route reference',
+    apiRepo: 'Documentation & source',
     apiOrigins: 'Browser origins allowed to call the API',
     apiOriginsHint:
       'One origin per line, e.g. https://dash.example.com. Empty means no browser page may call the API from another site — which is the right setting unless you are building one. There is no wildcard.',
