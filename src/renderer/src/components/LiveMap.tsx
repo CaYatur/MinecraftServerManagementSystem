@@ -4,6 +4,7 @@ import { Map as MapIcon, Flame } from 'lucide-react'
 import { fitView, heatmap, mapBounds, panBy, screenToWorld, worldToScreen, zoomAt } from '@shared/livemap'
 import type { LivePlayer, MapView, Viewport } from '@shared/livemap'
 import { avatarUrl } from '@shared/profile'
+import type { StructureMark } from '@shared/regionFormat'
 import type { BridgeStatus } from '@shared/bridgeRelease'
 import { BridgeNotice } from './BridgeNotice'
 
@@ -22,6 +23,16 @@ import { BridgeNotice } from './BridgeNotice'
  */
 
 const CELL_CHOICES = [16, 32, 64, 128]
+
+/** Matches the web map's, so a village is the same dot in all three (#131). */
+const MARK_STYLE: Record<string, [string, string]> = {
+  village: ['#e3b341', 'V'],
+  dungeon: ['#b5504f', 'D'],
+  temple: ['#c58bd6', 'T'],
+  fortress: ['#8b6f4e', 'F'],
+  mine: ['#9aa0a6', 'M'],
+  other: ['#6fa8dc', '?']
+}
 
 /**
  * A chunk tile baked into a 16x16 offscreen canvas, shaded by the step to the
@@ -100,7 +111,9 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
   const [bridge, setBridge] = useState(false)
   const [dim, setDim] = useState('overworld')
   const [cell, setCell] = useState(16)
-  const [showHeat, setShowHeat] = useState(true)
+  // An analysis overlay, not what a map is for: a red block over the one player
+  // online was the first thing anyone saw (#131).
+  const [showHeat, setShowHeat] = useState(false)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   // Only to explain an empty canvas. The install itself is `BridgeNotice`,
   // which renders above the map whether or not there is anyone to draw — this
@@ -173,6 +186,12 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
   // toggle to get the obvious thing.
   const [heads, setHeads] = useState(true)
   const [world, setWorld] = useState(true)
+  // Structures, same as the web surfaces have them — off by default, and an
+  // operator may switch them on without a setting because they can already read
+  // the world folder (#131).
+  const [marks, setMarks] = useState(false)
+  const [markKind, setMarkKind] = useState('')
+  const markStore = useRef(new Map<string, StructureMark[]>())
   const headCache = useRef(new Map<string, HTMLImageElement | false>())
   const tiles = useRef(new Map<string, HTMLCanvasElement | null>())
   const tilesPending = useRef(false)
@@ -203,28 +222,40 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
     trimTiles(tiles.current, visibleChunks())
     tilesPending.current = true
     window.msms
-      .mapTiles(serverId, dim, want)
+      .mapTiles(serverId, dim, want, marks)
       .then((r) => {
         tilesPending.current = false
         for (const w of want) {
           const k = w.cx + ',' + w.cz
           const t = r.tiles[k]
-          if (t) tiles.current.set(k, bakeTile(t))
-          else if (!r.pending) tiles.current.set(k, null)
+          if (t) {
+            tiles.current.set(k, bakeTile(t))
+            if (t.m) markStore.current.set(k, t.m)
+          } else if (!r.pending) tiles.current.set(k, null)
         }
         setTick2((n) => n + 1)
       })
       .catch(() => {
         tilesPending.current = false
       })
-  }, [world, view, vp, dim, serverId, visibleChunks, tick2])
+  }, [world, view, vp, dim, serverId, visibleChunks, tick2, marks])
 
   // A different server or dimension is a different world; nothing carries over.
+  // The nether shares the overworld's coordinates, so keeping tiles across a
+  // dimension change would draw one world's terrain under another's players.
   useEffect(() => {
     tiles.current.clear()
+    markStore.current.clear()
     setView(null)
     fitFor.current = ''
   }, [serverId, dim])
+
+  // Tiles already held were fetched without markers, so they carry none.
+  useEffect(() => {
+    if (!marks) return
+    tiles.current.clear()
+    markStore.current.clear()
+  }, [marks])
 
   useEffect(() => {
     const cv = canvasRef.current
@@ -314,6 +345,30 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
       }
     }
 
+    // After the grid and the heatmap, before the players.
+    if (marks) {
+      g.textAlign = 'center'
+      g.textBaseline = 'middle'
+      g.font = `bold ${10 * dpr}px Inter, system-ui, sans-serif`
+      for (const c of visibleChunks()) {
+        for (const mk of markStore.current.get(c.cx + ',' + c.cz) ?? []) {
+          if (markKind && mk.kind !== markKind) continue
+          const st = MARK_STYLE[mk.kind] ?? MARK_STYLE.other
+          const x = px(mk.x)
+          const y = pz(mk.z)
+          g.beginPath()
+          g.arc(x, y, 7 * dpr, 0, Math.PI * 2)
+          g.fillStyle = st[0]
+          g.fill()
+          g.lineWidth = 1.5 * dpr
+          g.strokeStyle = 'rgba(0,0,0,.6)'
+          g.stroke()
+          g.fillStyle = '#101014'
+          g.fillText(st[1], x, y + 0.5 * dpr)
+        }
+      }
+    }
+
     g.font = `${11 * dpr}px Inter, system-ui, sans-serif`
     g.textAlign = 'center'
     g.textBaseline = 'bottom'
@@ -339,7 +394,7 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
       g.fillStyle = 'rgba(255,255,255,.92)'
       g.fillText(p.name, x, y - (head ? 12 : 7) * dpr)
     }
-  }, [shown, bounds, heat, cell, showHeat, view, vp, dim, heads, world, tick2, visibleChunks])
+  }, [shown, bounds, heat, cell, showHeat, view, vp, dim, heads, world, marks, markKind, tick2, visibleChunks])
 
   const localPoint = (e: React.MouseEvent): { x: number; y: number } => {
     const r = (e.target as HTMLCanvasElement).getBoundingClientRect()
@@ -399,6 +454,19 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
         <button className={`btn sm ${world ? 'primary' : ''}`} onClick={() => setWorld((v) => !v)}>
           {t('map.world')}
         </button>
+        <button className={`btn sm ${marks ? 'primary' : ''}`} onClick={() => setMarks((v) => !v)}>
+          {t('map.structures')}
+        </button>
+        {marks && (
+          <select className="select" style={{ width: 150 }} value={markKind} onChange={(e) => setMarkKind(e.target.value)}>
+            <option value="">{t('map.allStructures')}</option>
+            {(['village', 'dungeon', 'temple', 'fortress', 'mine'] as const).map((k) => (
+              <option key={k} value={k}>
+                {t('map.structure_' + k)}
+              </option>
+            ))}
+          </select>
+        )}
         <button className="btn sm" onClick={() => setView(null)}>
           {t('map.resetView')}
         </button>
@@ -494,13 +562,22 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
       </div>
       {shown.length > 0 && (
         <div className="row wrap" style={{ gap: 6, marginTop: 8 }}>
+          {/* Click to centre on them, keeping the zoom — with several people
+              online, finding one meant panning around reading the coordinate
+              readout (#131). */}
           {shown.map((p) => (
-            <span key={p.name} className="badge">
+            <button
+              key={p.name}
+              className="badge"
+              style={{ cursor: 'pointer', font: 'inherit', color: 'inherit' }}
+              title={t('map.goTo')}
+              onClick={() => view && setView({ cx: p.x, cz: p.z, scale: view.scale })}
+            >
               {p.name}{' '}
               <span className="dim">
                 {p.x}, {p.y}, {p.z}
               </span>
-            </span>
+            </button>
           ))}
         </div>
       )}

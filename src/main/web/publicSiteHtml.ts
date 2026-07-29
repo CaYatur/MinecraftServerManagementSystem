@@ -483,6 +483,12 @@ function pagePost(id){
    rounds coordinates, drops the height, and only sends a uuid when the operator
    turned heads on. */
 function pageMap(){
+ /* The operator's settings, not the visitor's. Structures and read-ahead are
+    published decisions; a visitor toggling them would only be asking for data
+    the feed refuses anyway (#131). */
+ MAP.marksOn=!!S.mapStructures;
+ MAP.loadAhead=!!S.mapLoadAhead;
+ MAP.world=!!S.mapWorld;
  setTimeout(function(){mapStart()},0);
  return '<section class="section"><div class="wrap"><div class="section-head"><h2>'+esc(T('map.title'))+'</h2>'+
   '<span class="muted" id="mapRoundNote"></span></div>'+${JSON.stringify(MAP_HTML)}+'</div></section>'}
@@ -491,6 +497,8 @@ function mapFeedUrl(dim,cell){
 /* This page's api() answers {ok,s,j}; the panel's answers {ok,status,body}. The
    map engine used to read .body unconditionally, so on this page every poll
    threw on undefined and the map never drew (#115). */
+/* No marks parameter: the public feed decides from the operator's setting and
+   ignores what the caller asks for, so there is nothing to send (#131). */
 function mapTilesUrl(dim,list){
  return '/api/public/map/tiles?dim='+encodeURIComponent(dim)+'&c='+encodeURIComponent(list)}
 function mapGet(u){return api(u).then(function(r){return r.ok?r.j:null}).catch(function(){return null})}

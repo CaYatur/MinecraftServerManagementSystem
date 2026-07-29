@@ -67,7 +67,7 @@ import { getPublicSiteHtml } from './web/publicSiteHtml'
 import { CRATE_CSS } from '@shared/crateUi'
 import { openApiDocument } from '@shared/openapi'
 import { clampGrace, deliveryDecision, queueReason, HOLD_REASONS } from '@shared/delivery'
-import { API_PREFIX } from '@shared/apiSurface'
+import { API_PREFIX, API_ROUTES } from '@shared/apiSurface'
 import { MODERATION_ACTIONS, WORLD_ACTIONS } from '@shared/ops'
 import { removeServer } from './core/serverRegistry'
 import * as sf from './core/serverFiles'
@@ -6988,6 +6988,44 @@ export async function runWebSmoke(): Promise<void> {
         if (!router.includes("'" + leaf) && !router.includes('/' + leaf)) {
           return fail('the spec documents ' + p + ' and the router has no such route')
         }
+      }
+
+      // ...and the router can actually REACH them (#130).
+      //
+      // Everything above compares documentation to source literals, which says
+      // nothing about routing. `/servers/{id}/map/tiles` was documented, present
+      // as a literal in the handler, and unreachable for weeks: the route
+      // matcher's `\w+` cannot match a slash, so every two-segment sub-route
+      // fell through to the 404 at the bottom. The desktop app hid it by going
+      // over IPC.
+      //
+      // A 404 with `not-found` is the fall-through; anything else — a real
+      // answer, a 400, a 403 — means the route was found.
+      {
+        const fixture = getConfig().servers.find((s) => s.id === id)
+        if (!fixture) return fail('the fixture server vanished before the reachability check')
+        let checked = 0
+        for (const route of API_ROUTES) {
+          if (route.method !== 'GET') continue
+          if (!route.path.startsWith('/servers/{id}')) continue
+          const url = '/api' + route.path.replace('{id}', encodeURIComponent(id))
+          // Only fixed paths. A route with another placeholder needs a value
+          // that exists, and a legitimate "no such player" is indistinguishable
+          // from "no such route" — which would make this assert nothing useful
+          // about routing while looking like it did.
+          if (url.includes('{')) continue
+          // Owner token: a refusal for want of scope would hide the real
+          // question, which is whether the router found the route at all.
+          const rr = await get(url, ot)
+          checked++
+          if (rr.status === 404) {
+            const body = (await rr.json().catch(() => ({}))) as { error?: string }
+            if (body.error === 'not-found') {
+              return fail('the router cannot reach a documented route: GET ' + url)
+            }
+          }
+        }
+        if (checked < 10) return fail('the reachability check only tried ' + checked + ' routes')
       }
 
       // Keep the checked-in copy current. It is a generated artefact, and a

@@ -144,6 +144,8 @@ export function setSiteConfig(patch: Partial<SiteConfig>): SiteConfig {
     if (m.heads !== undefined) s.map.heads = !!m.heads
     if (m.names !== undefined) s.map.names = !!m.names
     if (m.world !== undefined) s.map.world = !!m.world
+    if (m.structures !== undefined) s.map.structures = !!m.structures
+    if (m.loadAhead !== undefined) s.map.loadAhead = !!m.loadAhead
   }
   if (patch.profile) {
     // Field by field and coerced, for the reason above: "false" is truthy, and
@@ -316,6 +318,8 @@ export function publicSite(): PublicSite {
     showMap: s.map.enabled && !!getServer(s.map.serverId),
     mapHeads: s.map.enabled && s.map.heads,
     mapWorld: s.map.enabled && s.map.world,
+    mapStructures: s.map.enabled && s.map.structures,
+    mapLoadAhead: s.map.enabled && s.map.loadAhead,
     // A profile needs a server to read a roster from. Without one the page
     // would render a name and a head and nothing else.
     showProfiles: !!getServer(s.storeServerId),

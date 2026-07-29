@@ -245,6 +245,21 @@ export interface PublicMapConfig {
    * agree to than "show roughly where people are".
    */
   world: boolean
+  /**
+   * Publish structure markers — villages, dungeons, temples (#131).
+   *
+   * Separate again, and off. The terrain says what the land looks like; this
+   * says where the loot is, and an operator can want one without the other.
+   */
+  structures: boolean
+  /**
+   * Read a ring of chunks around the viewport as well, so panning is already
+   * drawn. Costs more parsing; changes nothing about the world.
+   *
+   * MSMS never GENERATES terrain — it reads what the server has written. A map
+   * that could grow a world by being panned would be a map that can fill a disk.
+   */
+  loadAhead: boolean
 }
 
 /**
@@ -259,7 +274,9 @@ export const PUBLIC_MAP_DEFAULTS: PublicMapConfig = {
   round: 64,
   heads: false,
   names: true,
-  world: false
+  world: false,
+  structures: false,
+  loadAhead: false
 }
 
 export const MAX_MAP_ROUND = 512

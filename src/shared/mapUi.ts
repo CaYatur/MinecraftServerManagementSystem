@@ -39,8 +39,10 @@ export const MAP_CSS = `
 .mp-legend .mp-hint{margin-left:auto;opacity:.6}
 .mp-legend b{font-weight:800;opacity:1}
 .mp-list{display:flex;flex-wrap:wrap;gap:6px}
-.mp-chip{padding:4px 9px;border-radius:999px;font-size:12px;font-weight:700;
+.mp-chip{padding:4px 9px;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;
+  color:inherit;font-family:inherit;
   border:1px solid var(--line,var(--border,rgba(255,255,255,.14)));background:var(--elev,rgba(255,255,255,.05))}
+.mp-chip:hover{border-color:var(--accent,#dc2727)}
 .mp-chip span{opacity:.6;font-weight:600;margin-left:5px}
 `
 
@@ -64,9 +66,18 @@ export const MAP_HTML = `
       <option value="64">64 blocks</option>
       <option value="128">128 blocks</option>
     </select>
-    <button onclick="mapToggleHeat()" id="mpHeatBtn">Heatmap: on</button>
+    <button onclick="mapToggleHeat()" id="mpHeatBtn">Heatmap: off</button>
     <button onclick="mapToggleHeads()" id="mpHeadsBtn">Heads: on</button>
     <button onclick="mapToggleWorld()" id="mpWorldBtn">World: on</button>
+    <button onclick="mapToggleMarks()" id="mpMarksBtn">Structures: off</button>
+    <select id="mpMarkFilter" onchange="mapSetMarkFilter(this.value)" title="Which structures to show">
+      <option value="">All structures</option>
+      <option value="village">Villages</option>
+      <option value="dungeon">Dungeons &amp; ruins</option>
+      <option value="temple">Temples</option>
+      <option value="fortress">Fortresses</option>
+      <option value="mine">Mineshafts</option>
+    </select>
     <button onclick="mapResetView()" title="Fit the view to everyone online">Reset view</button>
   </div>
   <div class="mp-canvas-wrap">
@@ -102,12 +113,17 @@ export const MAP_HTML = `
  * inherited one page's convention as if it were universal.
  */
 export const MAP_JS = `
-var MAP={data:null,heat:true,timer:null,dim:'overworld',bridge:null,busy:false,msg:'',
+/* The heatmap is an analysis overlay, not what a map is for — a red block over
+   the one player online was the first thing anyone saw. Off by default (#131). */
+var MAP={data:null,heat:false,timer:null,dim:'overworld',bridge:null,busy:false,msg:'',
  /* Heads and the world ON by default (#128): they are what make this a map of
     people and terrain rather than dots on a grid, and an operator should not
     have to find two toggles to get the obvious thing. The public feed can still
     refuse heads, and the public world is a separate operator decision. */
- view:null,vp:{width:640,height:400},fitFor:null,drag:null,cursor:null,headsOn:true,world:true};
+ view:null,vp:{width:640,height:400},fitFor:null,drag:null,cursor:null,headsOn:true,world:true,
+ /* Structures off, and a per-kind filter. Read-ahead follows the host: the
+    panel offers it as a control, the public map takes the operator's setting. */
+ marksOn:false,markFilter:null,loadAhead:false};
 /* The bridge warning and its install button (#103).
    Deliberately here, in the empty map, and nowhere else: this is where an
    operator finds out positions are missing, so it is the only place the answer
@@ -167,6 +183,10 @@ function mapRefresh(){
      that is not one. Keeping the last good frame beats blanking the canvas on
      one dropped poll. */
   if(!d||typeof d.dimension!=='string')return;
+  /* Tiles are keyed by chunk alone, and the nether uses the same coordinates as
+     the overworld — so switching dimension without dropping them draws one
+     world's terrain under another world's players. */
+  if(MAP.dim!==d.dimension){MAP_TILES={};MAP_MARKS={}}
   MAP.data=d;MAP.dim=d.dimension;
   var dot=document.getElementById('mpDot'),state=document.getElementById('mpState');
   dot.className='mp-dot'+(d.bridge?' on':'');
@@ -255,13 +275,26 @@ function mapVisibleChunks(){
  if((x1-x0+1)*(z1-z0+1)>4096)return [];
  for(var z=z0;z<=z1;z++)for(var x=x0;x<=x1;x++)out.push({cx:x,cz:z});
  return out}
+var MAP_MARKS={};
 function mapFetchTiles(){
  if(!MAP.world||MAP_TILE_PENDING||!MAP.view)return;
- var want=mapVisibleChunks().filter(function(c){return MAP_TILES[mapTileKey(c.cx,c.cz)]===undefined});
+ var chunks=mapVisibleChunks();
+ /* Read ahead of the viewport when asked: a ring of chunks around what is on
+    screen, so panning is already drawn. This never GENERATES terrain — MSMS
+    reads what the server has written, and a map that could grow a world by
+    being panned would be a map that can fill a disk (#131). */
+ if(MAP.loadAhead&&chunks.length){
+  var xs=chunks.map(function(c){return c.cx}),zs=chunks.map(function(c){return c.cz});
+  var x0=Math.min.apply(null,xs)-2,x1=Math.max.apply(null,xs)+2;
+  var z0=Math.min.apply(null,zs)-2,z1=Math.max.apply(null,zs)+2;
+  if((x1-x0+1)*(z1-z0+1)<=4096){
+   chunks=[];
+   for(var rz=z0;rz<=z1;rz++)for(var rx=x0;rx<=x1;rx++)chunks.push({cx:rx,cz:rz})}}
+ var want=chunks.filter(function(c){return MAP_TILES[mapTileKey(c.cx,c.cz)]===undefined});
  if(!want.length)return;
  want=want.slice(0,64);
  MAP_TILE_PENDING=true;
- mapGet(mapTilesUrl(MAP.dim,want.map(function(c){return c.cx+','+c.cz}).join(';'))).then(function(d){
+ mapGet(mapTilesUrl(MAP.dim,want.map(function(c){return c.cx+','+c.cz}).join(';'),MAP.marksOn)).then(function(d){
   MAP_TILE_PENDING=false;
   if(!d||!d.tiles)return;
   for(var i=0;i<want.length;i++){
@@ -270,9 +303,47 @@ function mapFetchTiles(){
    /* null, not undefined, for a chunk the server has parsed and found empty —
       otherwise it is re-requested forever. A pending one is left unset so the
       next poll asks again. */
-   if(t)MAP_TILES[k]=mapBakeTile(t);
+   if(t){MAP_TILES[k]=mapBakeTile(t);if(t.m)MAP_MARKS[k]=t.m}
    else if(!d.pending)MAP_TILES[k]=null}
   mapDraw()})}
+/* Structure markers. Off by default: they are a spoiler for the players and
+   clutter for everyone else. The server decides whether they arrive at all —
+   the public feed sends none unless an operator published them. */
+var MAP_MARK_STYLE={village:['#e3b341','V'],dungeon:['#b5504f','D'],temple:['#c58bd6','T'],
+ fortress:['#8b6f4e','F'],mine:['#9aa0a6','M'],other:['#6fa8dc','?']};
+function mapDrawMarks(g,w,h,dpr){
+ if(!MAP.marksOn)return;
+ var sx=w/MAP.vp.width,sy=h/MAP.vp.height;
+ g.textAlign='center';g.textBaseline='middle';g.font='bold '+(10*dpr)+'px Inter,system-ui,sans-serif';
+ var chunks=mapVisibleChunks();
+ for(var i=0;i<chunks.length;i++){
+  var list=MAP_MARKS[mapTileKey(chunks[i].cx,chunks[i].cz)];
+  if(!list)continue;
+  for(var j=0;j<list.length;j++){
+   var mk=list[j];
+   if(MAP.markFilter&&MAP.markFilter[mk.kind]===false)continue;
+   var st=MAP_MARK_STYLE[mk.kind]||MAP_MARK_STYLE.other;
+   var p=mapW2S({x:mk.x,z:mk.z});
+   var x=p.x*sx,y=p.y*sy,r=7*dpr;
+   g.beginPath();g.arc(x,y,r,0,Math.PI*2);
+   g.fillStyle=st[0];g.fill();
+   g.lineWidth=1.5*dpr;g.strokeStyle='rgba(0,0,0,.6)';g.stroke();
+   g.fillStyle='#101014';g.fillText(st[1],x,y+0.5*dpr)}}}
+function mapSetMarkFilter(kind){
+ /* '' is everything. A single-kind filter is a whitelist of one, which reads
+    better than five checkboxes for a list this short. */
+ if(!kind){MAP.markFilter=null;mapDraw();return}
+ var f={};
+ ['village','dungeon','temple','fortress','mine','other'].forEach(function(k){f[k]=(k===kind)});
+ MAP.markFilter=f;mapDraw()}
+function mapToggleMarks(){
+ MAP.marksOn=!MAP.marksOn;
+ document.getElementById('mpMarksBtn').textContent='Structures: '+(MAP.marksOn?'on':'off');
+ /* The tiles held were fetched without markers, so they carry none. Drop them
+    and ask again rather than showing an empty layer that looks like "there are
+    no villages here". */
+ if(MAP.marksOn){MAP_TILES={};MAP_MARKS={}}
+ mapFetchTiles();mapDraw()}
 function mapBakeTile(t){
  var cv=document.createElement('canvas');cv.width=16;cv.height=16;
  var g=cv.getContext('2d');var img=g.createImageData(16,16);
@@ -347,6 +418,14 @@ function mapDraw(){
  if(hb)hb.style.display=d.heatmap?'':'none';
  var db=document.getElementById('mpHeadsBtn');
  if(db)db.style.display=(d.heads===false)?'none':'';
+ /* The structure controls belong to whoever may change the answer. On the
+    public map that is the operator, in their settings — a visitor offered a
+    toggle the feed ignores is offered nothing. */
+ var admin=!!mapAdminId();
+ var mb=document.getElementById('mpMarksBtn');
+ if(mb)mb.style.display=admin?'':'none';
+ var mf=document.getElementById('mpMarkFilter');
+ if(mf)mf.style.display=(MAP.marksOn)?'':'none';
  var g=cv.getContext('2d');g.clearRect(0,0,w,h);
  var sx=w/MAP.vp.width,sy=h/MAP.vp.height;
  /* The world first: everything else is drawn on top of it. */
@@ -371,6 +450,9 @@ function mapDraw(){
   for(var i=0;i<d.heatmap.length;i++){var c=d.heatmap[i];
    g.fillStyle='rgba(220,39,39,'+(0.12+0.55*(c.count/max)).toFixed(3)+')';
    g.fillRect(px(c.x),pz(c.z),Math.max(2*dpr,cw),Math.max(2*dpr,ch))}}
+ /* After the grid and the heatmap, before the players: a marker under a grid
+    line reads as a smudge, and a player must never be hidden behind one. */
+ mapDrawMarks(g,w,h,dpr);
  var ps=d.players||[];
  g.font=(11*dpr)+'px Inter,system-ui,sans-serif';g.textAlign='center';g.textBaseline='bottom';
  for(var j=0;j<ps.length;j++){var p=ps[j];var x=px(p.x),y=pz(p.z);
@@ -397,7 +479,18 @@ function mapDraw(){
  /* Height only when the payload carries one. The public map redacts it —
     knowing a player is 12 blocks down says they are in a cave, which is when
     they cannot defend the base you would then be walking to. */
- document.getElementById('mpList').innerHTML=ps.map(function(p){
+ /* Clickable: with more than one person online, finding somebody meant panning
+    around reading the coordinate readout (#131). */
+ document.getElementById('mpList').innerHTML=ps.map(function(p,i){
   var pos=(typeof p.y==='number')?(p.x+', '+p.y+', '+p.z):(p.x+', '+p.z);
-  return '<span class="mp-chip">'+mapEsc(p.name||'?')+'<span>'+pos+'</span></span>'}).join('')}
+  return '<button class="mp-chip" onclick="mapGoTo('+i+')" title="Centre the map here">'+
+   mapEsc(p.name||'?')+'<span>'+pos+'</span></button>'}).join('')}
+/* Centre on one player, keeping the zoom. Jumping to a fixed zoom as well would
+   throw away the scale the operator had chosen, which is usually the thing they
+   were looking at them at. */
+function mapGoTo(i){
+ var d=MAP.data;if(!d||!MAP.view)return;
+ var p=(d.players||[])[i];if(!p)return;
+ MAP.view={cx:p.x,cz:p.z,scale:MAP.view.scale};
+ MAP.followed=false;mapDraw()}
 `

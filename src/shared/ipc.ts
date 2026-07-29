@@ -42,6 +42,7 @@ import type { AlertRule, NewAlertRule } from './alerts'
 import type { McVersion, BuildInfo, CreateServerOptions, CreateProgress } from './versions'
 import type { ModEntry, ModrinthDetail, ModrinthHit, ModUpdateReport } from './mods'
 import type { BridgeInstallResult, BridgeStatus } from './bridgeRelease'
+import type { StructureMark } from './regionFormat'
 import type {
   WebStatus,
   WebUserView,
@@ -345,8 +346,12 @@ export interface MsmsApi {
   mapTiles(
     id: string,
     dim: string,
-    chunks: { cx: number; cz: number }[]
-  ): Promise<{ tiles: Record<string, { c: number[]; h: number[] }>; pending: number }>
+    chunks: { cx: number; cz: number }[],
+    marks?: boolean
+  ): Promise<{
+    tiles: Record<string, { c: number[]; h: number[]; m?: StructureMark[] }>
+    pending: number
+  }>
 
   listJava(refresh?: boolean): Promise<JavaInstall[]>
   /** The Java that will actually launch, given a per-server override ('' = auto). */

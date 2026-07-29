@@ -314,6 +314,10 @@ export interface PublicSite {
   mapHeads: boolean
   /** Whether the terrain is published too — a separate decision (#119). */
   mapWorld: boolean
+  /** Whether villages, dungeons and temples are published (#131). */
+  mapStructures: boolean
+  /** Whether the public map reads ahead of the viewport (#131). */
+  mapLoadAhead: boolean
   /** Whether a profile page is worth offering at all. */
   showProfiles: boolean
   theme: SiteTheme

@@ -197,8 +197,29 @@ export function SiteView(): JSX.Element {
               <input type="checkbox" checked={cfg.map.heads} onChange={(e) => patchMap({ heads: e.target.checked })} />
               {t('site.mapHeads')}
             </label>
+            <label className="switch" style={{ paddingBottom: 8 }}>
+              <input type="checkbox" checked={cfg.map.world} onChange={(e) => patchMap({ world: e.target.checked })} />
+              {t('site.mapWorld')}
+            </label>
+            <label className="switch" style={{ paddingBottom: 8 }}>
+              <input
+                type="checkbox"
+                checked={cfg.map.structures}
+                onChange={(e) => patchMap({ structures: e.target.checked })}
+              />
+              {t('site.mapStructures')}
+            </label>
+            <label className="switch" style={{ paddingBottom: 8 }}>
+              <input
+                type="checkbox"
+                checked={cfg.map.loadAhead}
+                onChange={(e) => patchMap({ loadAhead: e.target.checked })}
+              />
+              {t('site.mapLoadAhead')}
+            </label>
           </div>
           <p className="hint">{t('site.mapHint')}</p>
+          <p className="hint">{t('site.mapLoadHint')}</p>
 
           {/* What a STRANGER may read on a player's profile (#107). A player
               always sees their own — the toggles are about publishing, and an

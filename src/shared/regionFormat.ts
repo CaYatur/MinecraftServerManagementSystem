@@ -320,6 +320,66 @@ export function blockColour(rawName: string): Rgb {
  * renderer converged on — a step up is lighter, a step down darker, level
  * ground untouched.
  */
+/**
+ * Structure kinds worth showing, grouped so a filter has a handful of choices
+ * rather than the forty names Minecraft actually uses (#131).
+ *
+ * The raw ids are namespaced and version-dependent (`minecraft:village_plains`,
+ * `minecraft:pillager_outpost`, …), so grouping happens here and the UI filters
+ * on the group.
+ */
+export type StructureKind = 'village' | 'dungeon' | 'temple' | 'fortress' | 'mine' | 'other'
+
+export const STRUCTURE_KINDS: StructureKind[] = [
+  'village',
+  'dungeon',
+  'temple',
+  'fortress',
+  'mine',
+  'other'
+]
+
+export function structureKind(rawId: string): StructureKind {
+  const id = String(rawId || '').replace(/^minecraft:/, '').toLowerCase()
+  if (id.startsWith('village')) return 'village'
+  if (id.includes('mineshaft')) return 'mine'
+  if (id.includes('fortress') || id.includes('bastion') || id.includes('stronghold')) return 'fortress'
+  if (
+    id.includes('temple') ||
+    id.includes('pyramid') ||
+    id.includes('igloo') ||
+    id.includes('hut') ||
+    id.includes('jungle_pyramid') ||
+    id.includes('desert_pyramid')
+  ) {
+    return 'temple'
+  }
+  if (
+    id.includes('monument') ||
+    id.includes('mansion') ||
+    id.includes('outpost') ||
+    id.includes('trial_chambers') ||
+    id.includes('ancient_city') ||
+    id.includes('ruined_portal') ||
+    id.includes('shipwreck') ||
+    id.includes('ocean_ruin') ||
+    id.includes('buried_treasure')
+  ) {
+    return 'dungeon'
+  }
+  return 'other'
+}
+
+/** One structure, as the map draws it. */
+export interface StructureMark {
+  kind: StructureKind
+  /** The raw id, so a tooltip can name the actual thing. */
+  id: string
+  /** Block coordinates of the structure's start. */
+  x: number
+  z: number
+}
+
 export function shade(colour: Rgb, dh: number): Rgb {
   const f = dh > 0 ? 1.12 : dh < 0 ? 0.86 : 1
   const clamp = (v: number): number => Math.max(0, Math.min(255, Math.round(v * f)))

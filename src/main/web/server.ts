@@ -738,7 +738,14 @@ async function handlePublic(
     if (!cfg || !cfg.world) return sendJson(res, 404, { error: 'not-found' })
     const q = new URL(req.url ?? '/', 'http://localhost').searchParams
     const dim = normalizeDimension(q.get('dim') ?? 'overworld')
-    return sendJson(res, 200, tilesFor(cfg.serverId, dim, parseWanted(q.get('c'))))
+    // Structures only when the operator published them, whatever the caller
+    // asks for: where every village and dungeon is turns a public site into a
+    // treasure map of a private world.
+    return sendJson(
+      res,
+      200,
+      tilesFor(cfg.serverId, dim, parseWanted(q.get('c')), { marks: cfg.structures })
+    )
   }
 
   const sid = site.siteServerId()
@@ -972,7 +979,15 @@ async function handlePanel(req: IncomingMessage, res: ServerResponse): Promise<v
   }
 
   // ---- /api/servers/:id/... ----
-  const m = path.match(/^\/api\/servers\/([^/]+)(?:\/(\w+))?$/)
+  //
+  // One optional NESTED segment. `\w` does not match a slash, so the previous
+  // shape silently refused every two-part sub-route: `/map/tiles` matched
+  // nothing and fell through to the 404 at the bottom of this function, which
+  // is why the world rendered in the desktop app (IPC) and nowhere on the web.
+  //
+  // Still `\w`-only per segment, so a sub-route cannot express `..` or anything
+  // else that would mean something to a path.
+  const m = path.match(/^\/api\/servers\/([^/]+)(?:\/(\w+(?:\/\w+)?))?$/)
   if (m) {
     const id = decodeURIComponent(m[1])
     const sub = m[2]
@@ -1228,7 +1243,15 @@ async function handlePanel(req: IncomingMessage, res: ServerResponse): Promise<v
     if (sub === 'map/tiles' && method === 'GET') {
       if (!gate('view')) return
       const dim = normalizeDimension(url.searchParams.get('dim') ?? 'overworld')
-      return sendJson(res, 200, tilesFor(id, dim, parseWanted(url.searchParams.get('c'))))
+      // An operator may ask for structures on their own map without a setting —
+      // they can already read the world folder. The public feed cannot.
+      return sendJson(
+        res,
+        200,
+        tilesFor(id, dim, parseWanted(url.searchParams.get('c')), {
+          marks: url.searchParams.get('marks') === '1'
+        })
+      )
     }
     if (sub === 'map' && method === 'GET') {
       if (!gate('view')) return
