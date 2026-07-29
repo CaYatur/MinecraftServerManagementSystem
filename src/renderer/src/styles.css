@@ -1578,3 +1578,8 @@ textarea.input:focus {
   word-break: break-word;
   color: var(--text-dim);
 }
+
+/* Live map canvas (#128): grab/grabbing come from :active, because a React ref
+   does not re-render and a style bound to one never updates. */
+.mp-canvas { cursor: grab; }
+.mp-canvas:active { cursor: grabbing; }

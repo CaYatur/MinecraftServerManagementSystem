@@ -64,6 +64,9 @@ function headFor(
 ): HTMLImageElement | null {
   const hit = cache.get(name)
   if (hit !== undefined) return hit || null
+  // Marked before the load starts, not after: setting it afterwards would
+  // overwrite a handler that had already resolved.
+  cache.set(name, false)
   const img = new Image()
   img.crossOrigin = 'anonymous'
   img.onload = () => {
@@ -72,8 +75,23 @@ function headFor(
   }
   img.onerror = () => cache.set(name, false)
   img.src = avatarUrl(name, 32)
-  cache.set(name, false)
   return null
+}
+
+/**
+ * Panning a big world would otherwise hold every chunk ever looked at.
+ *
+ * Each tile is small, but "small times unbounded" is still unbounded, and this
+ * runs for as long as the app is open. Dropping the ones no longer near the
+ * view costs a re-fetch that is already cached in the main process.
+ */
+function trimTiles(
+  tiles: Map<string, HTMLCanvasElement | null>,
+  keep: { cx: number; cz: number }[]
+): void {
+  if (tiles.size <= 2048) return
+  const wanted = new Set(keep.map((c) => c.cx + ',' + c.cz))
+  for (const k of tiles.keys()) if (!wanted.has(k)) tiles.delete(k)
 }
 
 export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
@@ -182,6 +200,7 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
       .filter((c: { cx: number; cz: number }) => !tiles.current.has(c.cx + ',' + c.cz))
       .slice(0, 64)
     if (!want.length) return
+    trimTiles(tiles.current, visibleChunks())
     tilesPending.current = true
     window.msms
       .mapTiles(serverId, dim, want)
@@ -397,7 +416,10 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
       >
         <canvas
           ref={canvasRef}
-          style={{ width: '100%', height: '100%', display: 'block', cursor: drag.current ? 'grabbing' : 'grab' }}
+          /* `grabbing` via :active in CSS, not from the drag ref — a ref does
+             not re-render, so a style bound to it never changes. */
+          className="mp-canvas"
+          style={{ width: '100%', height: '100%', display: 'block' }}
           onMouseDown={(e) => {
             drag.current = { x: e.clientX, y: e.clientY }
             e.preventDefault()
