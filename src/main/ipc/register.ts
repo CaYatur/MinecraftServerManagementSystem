@@ -302,6 +302,7 @@ export function registerIpc(): void {
   H(IPC.bridgeInstall, (_e, id: string) =>
     bridgeInstall.installBridge(id, { by: 'desktop', source: 'panel' })
   )
+  H(IPC.mapCacheClear, () => worldTiles.clearTileCache())
   H(
     IPC.mapTiles,
     (_e, id: string, dim: string, chunks: { cx: number; cz: number }[], marks?: boolean) =>

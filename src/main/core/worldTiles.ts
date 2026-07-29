@@ -12,9 +12,22 @@
  * parse a region synchronously — that is the amplification closed in #107, and
  * a region is three orders of magnitude more work than a player file.
  */
-import { existsSync, readFileSync, statSync } from 'node:fs'
-import { inflateSync, gunzipSync } from 'node:zlib'
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync
+} from 'node:fs'
+import { createHash } from 'node:crypto'
+import { inflateSync, gunzipSync, gzipSync } from 'node:zlib'
 import { join } from 'node:path'
+import { cacheDir } from '../paths'
+import { decodeRegionTiles, encodeRegionTiles, normalizeMapPerf } from '@shared/tileCache'
+import type { MapPerfConfig } from '@shared/tileCache'
 import * as nbt from 'prismarine-nbt'
 import { getServer } from './serverRegistry'
 import { readProperties } from './serverFiles'
@@ -58,11 +71,126 @@ interface RegionEntry {
 }
 
 const regions = new Map<string, RegionEntry>()
-/** A region is a few MB parsed; this is the ceiling on what is kept resident. */
-const MAX_REGIONS = 12
+
+/**
+ * The tuning for the server whose region is being read.
+ *
+ * Looked up per call rather than captured: an operator changing the setting
+ * should not have to restart to see it take effect, and these are cheap reads
+ * off the in-memory config.
+ */
+function perfFor(serverId: string): MapPerfConfig {
+  return normalizeMapPerf(getServer(serverId)?.map)
+}
 
 export function _resetWorldTiles(): void {
   regions.clear()
+}
+
+// ---- the on-disk cache (#133) ----
+//
+// #119 kept parsed regions in memory only, so every restart re-parsed the
+// world: 180ms per region just to decompress and parse the NBT, before any
+// surface extraction. The encoded form of the same region gunzips in about a
+// millisecond.
+
+function cacheDirFor(): string {
+  return ensureDir(join(cacheDir(), 'worldtiles'))
+}
+
+function ensureDir(p: string): string {
+  mkdirSync(p, { recursive: true })
+  return p
+}
+
+/**
+ * A stable filename for a region path.
+ *
+ * Hashed rather than sanitised: a region path contains drive letters, colons
+ * and separators, and every scheme for flattening those into a filename either
+ * collides or produces something unreadable. The version is in the CONTENT, not
+ * the name, so a stale file is refused on read and then overwritten rather than
+ * accumulating one file per version.
+ */
+function cacheFileFor(path: string): string {
+  return join(cacheDirFor(), createHash('sha1').update(path).digest('hex') + '.tiles')
+}
+
+function readCachedRegion(path: string, mtimeMs: number): RegionEntry | null {
+  try {
+    const f = cacheFileFor(path)
+    if (!existsSync(f)) return null
+    const decoded = decodeRegionTiles(gunzipSync(readFileSync(f)))
+    // The mtime says the world has not changed; the version inside the file
+    // says we still draw it the same way. Both have to hold.
+    if (!decoded || decoded.mtimeMs !== mtimeMs) return null
+    return { at: Date.now(), mtimeMs, tiles: new Map(decoded.tiles) }
+  } catch {
+    // A corrupt or half-written cache is not an error, it is a cache miss.
+    return null
+  }
+}
+
+function writeCachedRegion(path: string, entry: RegionEntry): void {
+  try {
+    const usable = new Map<number, ChunkTile>()
+    for (const [slot, tile] of entry.tiles) if (tile) usable.set(slot, tile)
+    const buf = gzipSync(encodeRegionTiles({ mtimeMs: entry.mtimeMs, tiles: usable }), { level: 6 })
+    const f = cacheFileFor(path)
+    // Through a temp file: a reader hitting a half-written cache would decode
+    // garbage, and "garbage" here means a wrong map rather than an error.
+    writeFileSync(f + '.tmp', buf)
+    renameSync(f + '.tmp', f)
+  } catch {
+    /* a cache that cannot be written still leaves a working map */
+  }
+}
+
+/**
+ * Keep the cache under its ceiling, oldest first.
+ *
+ * Swept after a write rather than on a timer: the only moment it can grow is
+ * the moment something was added, and a timer would be one more thing running
+ * in a process that already has enough of them.
+ */
+function sweepCache(limitMB: number): void {
+  try {
+    const dir = cacheDirFor()
+    const files = readdirSync(dir)
+      .filter((n) => n.endsWith('.tiles'))
+      .map((n) => {
+        const p = join(dir, n)
+        const s = statSync(p)
+        return { p, size: s.size, at: s.mtimeMs }
+      })
+    let total = files.reduce((a, f) => a + f.size, 0)
+    const limit = limitMB * 1024 * 1024
+    if (total <= limit) return
+    for (const f of files.sort((a, b) => a.at - b.at)) {
+      if (total <= limit) break
+      rmSync(f.p, { force: true })
+      total -= f.size
+    }
+  } catch {
+    /* sweeping is housekeeping; failing at it must not fail a map */
+  }
+}
+
+/** Drop every cached region for one server, or all of them. */
+export function clearTileCache(): number {
+  let n = 0
+  try {
+    const dir = cacheDirFor()
+    for (const name of readdirSync(dir)) {
+      if (!name.endsWith('.tiles')) continue
+      rmSync(join(dir, name), { force: true })
+      n++
+    }
+  } catch {
+    /* nothing to clear */
+  }
+  regions.clear()
+  return n
 }
 
 /** Matches the private copies in players.ts and backups.ts. */
@@ -248,8 +376,9 @@ const REGION_PARSE_GAP_MS = 250
 let lastParseAt = 0
 
 /** Whether a parse is allowed to start right now. */
-export function parseBudgetReady(now = Date.now()): boolean {
-  return now - lastParseAt >= REGION_PARSE_GAP_MS
+export function parseBudgetReady(serverId?: string, now = Date.now()): boolean {
+  const gap = serverId ? perfFor(serverId).parseGapMs : REGION_PARSE_GAP_MS
+  return now - lastParseAt >= gap
 }
 
 /**
@@ -258,7 +387,7 @@ export function parseBudgetReady(now = Date.now()): boolean {
  * Synchronous and slow by design — the callers are expected to keep this off
  * any request path, and to respect `parseBudgetReady`.
  */
-function loadRegion(path: string): RegionEntry | null {
+function loadRegion(path: string, perf: MapPerfConfig): RegionEntry | null {
   if (!existsSync(path)) return null
   let mtimeMs = 0
   try {
@@ -270,6 +399,17 @@ function loadRegion(path: string): RegionEntry | null {
   if (hit && hit.mtimeMs === mtimeMs) {
     hit.at = Date.now()
     return hit
+  }
+
+  // Disk before work. A region the server has not rewritten is the same region,
+  // and re-parsing it is the cost this whole cache exists to avoid.
+  if (perf.cache) {
+    const cached = readCachedRegion(path, mtimeMs)
+    if (cached) {
+      regions.set(path, cached)
+      trimMemory(perf.memoryRegions)
+      return cached
+    }
   }
 
   lastParseAt = Date.now()
@@ -301,12 +441,21 @@ function loadRegion(path: string): RegionEntry | null {
 
   const entry: RegionEntry = { at: Date.now(), mtimeMs, tiles }
   regions.set(path, entry)
-  if (regions.size > MAX_REGIONS) {
-    const oldest = [...regions.entries()].sort((a, b) => a[1].at - b[1].at)[0]
-    if (oldest) regions.delete(oldest[0])
+  trimMemory(perf.memoryRegions)
+  if (perf.cache) {
+    writeCachedRegion(path, entry)
+    sweepCache(perf.cacheLimitMB)
   }
   log.info(`World tiles: parsed ${tiles.size} chunks from ${path.split(/[\\/]/).pop()}`)
   return entry
+}
+
+function trimMemory(keep: number): void {
+  while (regions.size > keep) {
+    const oldest = [...regions.entries()].sort((a, b) => a[1].at - b[1].at)[0]
+    if (!oldest) break
+    regions.delete(oldest[0])
+  }
 }
 
 const SECTOR_HEADER = 8192
@@ -389,7 +538,7 @@ async function drain(): Promise<void> {
     while (queue.length) {
       // Yielding between chunks is not enough on its own: the first chunk of an
       // unseen region parses the whole file. Wait for the parse budget.
-      if (!parseBudgetReady()) {
+      if (!parseBudgetReady(queue[0]?.serverId)) {
         await new Promise((r) => setTimeout(r, 60))
         continue
       }
@@ -431,7 +580,7 @@ export function chunkTile(
 ): ChunkTile | null {
   const path = regionPath(serverId, dim, regionOf(chunkX), regionOf(chunkZ))
   if (!path) return null
-  const region = loadRegion(path)
+  const region = loadRegion(path, perfFor(serverId))
   if (!region) return null
   return region.tiles.get(chunkSlot(localChunk(chunkX), localChunk(chunkZ))) ?? null
 }

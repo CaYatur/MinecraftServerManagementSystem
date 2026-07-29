@@ -80,6 +80,14 @@ import * as modsMod from './core/mods'
 import * as bridgeInstallMod from './core/bridgeInstall'
 import * as worldTilesMod from './core/worldTiles'
 import {
+  decodeRegionTiles,
+  encodeRegionTiles,
+  normalizeMapPerf,
+  MAP_PERF_DEFAULTS,
+  TILE_CACHE_VERSION
+} from '@shared/tileCache'
+import type { CachedRegion, CachedTile } from '@shared/tileCache'
+import {
   bridgeNeed,
   bridgeVersionOf,
   compareBridgeVersions,
@@ -1145,7 +1153,97 @@ export async function runModUpdateSmoke(): Promise<void> {
         }
       }
 
-      console.log('MODUPDATE-SMOKE: region decoding OK (1.16 packing split, real NBT chunk renders, foliage seen through)')
+      // ---- the on-disk tile cache (#133) ----
+      //
+      // A decoder that mis-reads its own file produces a plausible map rather
+      // than an error, and then serves it until somebody deletes the cache by
+      // hand. So the codec round-trips, and every way it can be handed
+      // nonsense answers null.
+      {
+        const mk = (n: number): CachedTile => ({
+          colour: Array.from({ length: 256 }, (_, i) => (i % 7 === 0 ? -1 : (i * 977 + n) & 0xffffff)),
+          height: Array.from({ length: 256 }, (_, i) => ((i * 13 + n) % 384) - 64)
+        })
+        const region: CachedRegion = {
+          mtimeMs: 1_700_000_000_123,
+          tiles: new Map([
+            [0, mk(1)],
+            [511, { ...mk(2), marks: [{ kind: 'village', id: 'village_plains', x: 8, z: -24 }] }],
+            [1023, { ...mk(3), marks: [
+              { kind: 'dungeon', id: 'ancient_city', x: -1_000_000, z: 2_000_000 },
+              { kind: 'mine', id: 'mineshaft', x: 0, z: 0 }
+            ] }]
+          ])
+        }
+        const back = decodeRegionTiles(encodeRegionTiles(region))
+        if (!back) return fail('a freshly encoded region did not decode')
+        if (back.mtimeMs !== region.mtimeMs) return fail('the mtime did not survive the round trip')
+        if (back.tiles.size !== 3) return fail('a chunk was lost: ' + back.tiles.size)
+        for (const [slot, want] of region.tiles) {
+          const got = back.tiles.get(slot)
+          if (!got) return fail('chunk ' + slot + ' vanished')
+          for (let i = 0; i < 256; i++) {
+            // Transparent columns are the ones that matter: encoded as black
+            // they would paint the void over every ungenerated gap.
+            if (got.colour[i] !== want.colour[i]) {
+              return fail('colour ' + i + ' of chunk ' + slot + ': ' + got.colour[i] + ' vs ' + want.colour[i])
+            }
+            // Heights run -64..319, which does not fit a byte.
+            if (got.height[i] !== want.height[i]) {
+              return fail('height ' + i + ' of chunk ' + slot + ': ' + got.height[i] + ' vs ' + want.height[i])
+            }
+          }
+          if ((got.marks ?? []).length !== (want.marks ?? []).length) {
+            return fail('marks lost on chunk ' + slot)
+          }
+          for (let mi = 0; mi < (want.marks ?? []).length; mi++) {
+            const a = (want.marks ?? [])[mi]
+            const b = (got.marks ?? [])[mi]
+            if (a.kind !== b.kind || a.id !== b.id || a.x !== b.x || a.z !== b.z) {
+              return fail('mark ' + mi + ' of chunk ' + slot + ' changed: ' + JSON.stringify(b))
+            }
+          }
+        }
+
+        // A cache written by an older renderer must be REFUSED, not decoded.
+        // Keying on the world's mtime alone says "the world has not changed",
+        // which is true and beside the point when what changed is how we draw
+        // it — every existing cache would serve the old colours forever.
+        const stale = encodeRegionTiles(region)
+        new DataView(stale.buffer).setUint16(4, TILE_CACHE_VERSION - 1)
+        if (decodeRegionTiles(stale)) return fail('a cache from an older format version was accepted')
+
+        // Nonsense of every shape is a miss, never a throw and never half a map.
+        const good = encodeRegionTiles(region)
+        const wrongMagic = good.slice()
+        wrongMagic[0] ^= 0xff
+        if (decodeRegionTiles(wrongMagic)) return fail('a file with the wrong magic was accepted')
+        if (decodeRegionTiles(new Uint8Array(0))) return fail('an empty buffer was accepted')
+        if (decodeRegionTiles(new Uint8Array(8))) return fail('a runt buffer was accepted')
+        for (const cut of [17, 200, good.length - 1]) {
+          if (decodeRegionTiles(good.slice(0, cut))) {
+            return fail('a buffer truncated to ' + cut + ' bytes was accepted')
+          }
+        }
+        // A count that claims more chunks than the bytes hold.
+        const lying = good.slice()
+        new DataView(lying.buffer).setUint16(14, 900)
+        if (decodeRegionTiles(lying)) return fail('a chunk count past the end of the buffer was accepted')
+
+        // The tuning is clamped: every one of these is a way to hang the
+        // process, and they arrive from a config file an operator can edit.
+        const wild = normalizeMapPerf({ memoryRegions: 1e9, parseGapMs: -5, cacheLimitMB: -1 })
+        if (wild.memoryRegions > 64) return fail('memoryRegions was not clamped: ' + wild.memoryRegions)
+        if (wild.parseGapMs < 0) return fail('a negative parse gap survived')
+        if (wild.cacheLimitMB < 0) return fail('a negative cache limit survived')
+        if (normalizeMapPerf({}).cache !== true) return fail('caching must default to on')
+        if (normalizeMapPerf({ cache: false }).cache !== false) return fail('caching cannot be turned off')
+        if (normalizeMapPerf(null).memoryRegions !== MAP_PERF_DEFAULTS.memoryRegions) {
+          return fail('an absent config did not fall back to the defaults')
+        }
+      }
+
+      console.log('MODUPDATE-SMOKE: region decoding OK (1.16 packing split, real NBT chunk renders, foliage seen through, cache round-trips)')
     }
 
     // ---- the Bridge plugin installer (#103) ----

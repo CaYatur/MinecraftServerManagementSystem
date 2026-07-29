@@ -126,6 +126,17 @@ export default {
       'No live positions yet — this server has no MSMS-Bridge plugin. Positions arrive over the server console, so installing it opens no extra port.',
     heads: 'Heads',
     goTo: 'Centre the map here',
+    performance: 'Performance',
+    perfCache: 'Cache parsed tiles on disk',
+    perfCacheHint:
+      'A region costs a few hundred milliseconds to parse and about a millisecond to read back. With this on, a region is parsed once and re-parsed only when the server rewrites it.',
+    perfMemory: 'Regions in memory',
+    perfGap: 'Delay between parses (ms)',
+    perfLimit: 'Cache limit (MB)',
+    perfClear: 'Clear cache',
+    perfCleared: 'Cleared {{n}} cached regions.',
+    perfGapHint:
+      'The delay keeps the app responsive while regions are read — lower is faster and leaves less room for everything else running in the same process.',
     structures: 'Structures',
     allStructures: 'All structures',
     structure_village: 'Villages',

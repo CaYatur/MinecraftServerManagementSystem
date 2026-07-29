@@ -128,6 +128,17 @@ const tr: typeof en = {
       'Henüz canlı konum yok — bu sunucuda MSMS-Bridge eklentisi yok. Konumlar sunucu konsolu üzerinden geldiği için kurmak ek bir port açmaz.',
     heads: 'Kafalar',
     goTo: 'Haritayı buraya ortala',
+    performance: 'Performans',
+    perfCache: 'Çözümlenmiş parçaları diskte önbelleğe al',
+    perfCacheHint:
+      'Bir bölgeyi çözümlemek birkaç yüz milisaniye, geri okumak yaklaşık bir milisaniye sürer. Bu açıkken bir bölge bir kez çözümlenir ve yalnızca sunucu onu yeniden yazdığında tekrar çözümlenir.',
+    perfMemory: 'Bellekteki bölge sayısı',
+    perfGap: 'Çözümlemeler arası bekleme (ms)',
+    perfLimit: 'Önbellek sınırı (MB)',
+    perfClear: 'Önbelleği temizle',
+    perfCleared: '{{n}} önbellek bölgesi temizlendi.',
+    perfGapHint:
+      'Bekleme, bölgeler okunurken uygulamanın yanıt verir kalmasını sağlar — düşürmek daha hızlıdır ama aynı süreçte çalışan her şeye daha az yer bırakır.',
     structures: 'Yapılar',
     allStructures: 'Tüm yapılar',
     structure_village: 'Köyler',

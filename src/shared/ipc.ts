@@ -135,6 +135,7 @@ export const IPC = {
   bridgeStatus: 'bridge:status',
   bridgeInstall: 'bridge:install',
   mapTiles: 'map:tiles',
+  mapCacheClear: 'map:cache-clear',
 
   javaList: 'java:list',
   javaResolve: 'java:resolve',
@@ -352,6 +353,8 @@ export interface MsmsApi {
     tiles: Record<string, { c: number[]; h: number[]; m?: StructureMark[] }>
     pending: number
   }>
+  /** Drop every cached region. Returns how many files went. */
+  clearMapCache(): Promise<number>
 
   listJava(refresh?: boolean): Promise<JavaInstall[]>
   /** The Java that will actually launch, given a per-server override ('' = auto). */
