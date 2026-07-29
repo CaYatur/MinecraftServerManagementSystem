@@ -28,9 +28,9 @@ import {
   parseLocationTable,
   regionOf,
   unpackIndices,
+  seeThrough,
   CHUNK_AXIS,
-  INVISIBLE,
-  WATERY
+  INVISIBLE
 } from '@shared/regionFormat'
 
 /** A chunk's surface: 256 columns, row-major (x fastest). */
@@ -94,6 +94,25 @@ function tag(v: any): any {
 }
 
 /**
+ * Unwrap an NBT *list*, which prismarine-nbt wraps twice.
+ *
+ * A list arrives as `{type:'list', value:{type:'compound', value:[...]}}` — the
+ * outer wrapper says "list", the inner one says what the elements are. One
+ * `tag()` leaves you holding the inner descriptor object, not the array.
+ *
+ * This is not a nicety. Reading `sections` happened to work because the code
+ * unwrapped it twice by accident, while `palette` was unwrapped once — so
+ * `Array.isArray(palette)` was false for every section of every chunk, every
+ * section was skipped, and the world renderer produced nothing at all. The
+ * smoke tested the bit decoding and never a real chunk, so nothing caught it.
+ */
+function listOf(v: any): any[] {
+  const once = tag(v)
+  const twice = tag(once)
+  return Array.isArray(twice) ? twice : Array.isArray(once) ? once : []
+}
+
+/**
  * The topmost visible block of every column in one chunk.
  *
  * Sections are walked from the highest down, and within a section from y=15
@@ -101,14 +120,14 @@ function tag(v: any): any {
  * but air the whole way — under an unlit sky, or a chunk that is only partly
  * generated — is left transparent rather than drawn as the void.
  */
-function tileFromChunk(chunk: any): ChunkTile | null {
+export function tileFromChunk(chunk: any): ChunkTile | null {
   const v = tag(chunk)
   if (!v) return null
   const dataVersion = tag(v.DataVersion)
   const packing = packingFor(typeof dataVersion === 'number' ? dataVersion : undefined)
   // 1.18+ uses `sections`; 1.13-1.17 used `Level.Sections`.
-  const sections = tag(tag(v.sections)) ?? tag(tag(tag(v.Level)?.Sections))
-  if (!Array.isArray(sections)) return null
+  const sections = listOf(v.sections).length ? listOf(v.sections) : listOf(tag(v.Level)?.Sections)
+  if (!sections.length) return null
 
   const withY = sections
     .map((s: any) => ({ s: tag(s), y: Number(tag(tag(s)?.Y)) }))
@@ -122,13 +141,16 @@ function tileFromChunk(chunk: any): ChunkTile | null {
   for (const { s, y: sectionY } of withY) {
     if (remaining === 0) break
     const states = tag(s.block_states) ?? tag(s.BlockStates)
-    const paletteRaw = tag(tag(states)?.palette) ?? tag(s.Palette)
-    if (!Array.isArray(paletteRaw) || !paletteRaw.length) continue
+    // A list, so unwrapped twice. See `listOf`.
+    const paletteRaw = listOf(states?.palette).length ? listOf(states?.palette) : listOf(s.Palette)
+    if (!paletteRaw.length) continue
     const names: string[] = paletteRaw.map((p: any) => String(tag(tag(p)?.Name) ?? ''))
     // A section whose palette is one entry has no data array at all — it is
     // 4096 of that block, which is how a solid stone or all-air section is
     // stored. Reading `data` there would skip the section entirely.
-    const longs = toLongs(tag(tag(states)?.data) ?? tag(s.BlockStates))
+    // `data` is a longArray, which is wrapped once — unlike the palette beside
+    // it, which is a list and wrapped twice.
+    const longs = toLongs(tag(states?.data) ?? tag(s.BlockStates))
     const bits = bitsPerIndex(names.length)
     const indices =
       names.length === 1 || !longs.length
@@ -142,7 +164,10 @@ function tileFromChunk(chunk: any): ChunkTile | null {
           if (colour[col] >= 0) continue
           const name = names[indices[y * 256 + z * CHUNK_AXIS + x]] ?? ''
           const short = name.replace(/^minecraft:/, '')
-          if (!short || INVISIBLE.has(short)) continue
+          // Air, and the plants a map looks through — see `seeThrough`. Without
+          // it the surface is whatever is standing ON the ground rather than
+          // the ground, which is how a bamboo jungle rendered as a maroon smear.
+          if (!short || INVISIBLE.has(short) || seeThrough(short)) continue
           const c = blockColour(short)
           colour[col] = (c.r << 16) | (c.g << 8) | c.b
           height[col] = sectionY * CHUNK_AXIS + y

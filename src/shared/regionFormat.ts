@@ -146,6 +146,55 @@ export function unpackIndices(
  */
 export const INVISIBLE = new Set(['air', 'cave_air', 'void_air'])
 
+/**
+ * Blocks a map looks THROUGH to the ground below.
+ *
+ * Not cosmetic. The topmost block of a column is very often the plant standing
+ * on it, and colouring the column by the plant is what turned a bamboo jungle
+ * into a maroon smear and every meadow into blue-grey on a real world: the
+ * three most common surface blocks after grass were `short_grass`, `vine` and
+ * `fern`, none of which is what you see when you look down at that terrain.
+ *
+ * Leaves are deliberately NOT here — a forest canopy is exactly what you see
+ * from above, and it is already green.
+ */
+export const SEE_THROUGH = new Set([
+  'short_grass', 'grass', 'tall_grass', 'fern', 'large_fern', 'dead_bush',
+  'vine', 'glow_lichen', 'bamboo', 'bamboo_sapling', 'sugar_cane', 'cactus_flower',
+  'poppy', 'dandelion', 'blue_orchid', 'allium', 'azure_bluet', 'oxeye_daisy',
+  'cornflower', 'lily_of_the_valley', 'wither_rose', 'torchflower', 'pink_petals',
+  'sunflower', 'lilac', 'rose_bush', 'peony', 'sweet_berry_bush',
+  'brown_mushroom', 'red_mushroom', 'crimson_fungus', 'warped_fungus',
+  'cave_vines', 'cave_vines_plant', 'twisting_vines', 'twisting_vines_plant',
+  'weeping_vines', 'weeping_vines_plant', 'hanging_roots', 'spore_blossom',
+  'seagrass', 'tall_seagrass', 'kelp', 'kelp_plant', 'sea_pickle',
+  'torch', 'wall_torch', 'soul_torch', 'soul_wall_torch', 'lantern', 'snow',
+  'rail', 'powered_rail', 'detector_rail', 'activator_rail', 'ladder',
+  'melon_stem', 'pumpkin_stem', 'wheat', 'carrots', 'potatoes', 'beetroots',
+  'nether_wrt', 'cocoa', 'lily_pad', 'moss_carpet', 'fire', 'soul_fire',
+  'crimson_roots', 'warped_roots', 'nether_sprouts', 'big_dripleaf', 'small_dripleaf'
+])
+
+/**
+ * A block that decorates rather than covers. Suffix families, so a new flower
+ * or sapling in a future version is skipped without a release.
+ */
+export function seeThrough(name: string): boolean {
+  if (SEE_THROUGH.has(name)) return true
+  return (
+    name.endsWith('_tulip') ||
+    name.endsWith('_sapling') ||
+    name.endsWith('_carpet') ||
+    name.endsWith('_banner') ||
+    name.endsWith('_sign') ||
+    name.endsWith('_button') ||
+    name.endsWith('_pressure_plate') ||
+    name.endsWith('_candle') ||
+    name.endsWith('_coral_fan') ||
+    name.endsWith('_coral_wall_fan')
+  )
+}
+
 export interface Rgb {
   r: number
   g: number
@@ -163,18 +212,22 @@ export interface Rgb {
  * from the name so an unknown block is consistent rather than invisible.
  */
 const COLOURS: Record<string, Rgb> = {
-  grass_block: { r: 106, g: 152, b: 73 },
-  dirt: { r: 134, g: 96, b: 67 },
-  coarse_dirt: { r: 119, g: 85, b: 59 },
-  podzol: { r: 89, g: 58, b: 26 },
-  stone: { r: 122, g: 122, b: 122 },
+  // The common ones are Minecraft's own map colours rather than eyeballed
+  // values — that is the palette the game shows on a map item, so it is the
+  // one a player recognises. Mine were darker and redder, which turned a
+  // jungle's podzol floor into a maroon smear next to the green canopy.
+  grass_block: { r: 127, g: 178, b: 56 },
+  dirt: { r: 151, g: 109, b: 77 },
+  coarse_dirt: { r: 151, g: 109, b: 77 },
+  podzol: { r: 129, g: 86, b: 49 },
+  stone: { r: 112, g: 112, b: 112 },
   andesite: { r: 136, g: 136, b: 136 },
   diorite: { r: 188, g: 188, b: 188 },
   granite: { r: 149, g: 103, b: 86 },
   deepslate: { r: 78, g: 78, b: 84 },
   cobblestone: { r: 127, g: 127, b: 127 },
   gravel: { r: 136, g: 126, b: 126 },
-  sand: { r: 219, g: 207, b: 163 },
+  sand: { r: 247, g: 233, b: 163 },
   red_sand: { r: 190, g: 102, b: 33 },
   sandstone: { r: 216, g: 203, b: 155 },
   water: { r: 63, g: 118, b: 228 },
@@ -184,13 +237,14 @@ const COLOURS: Record<string, Rgb> = {
   ice: { r: 165, g: 194, b: 245 },
   packed_ice: { r: 141, g: 180, b: 245 },
   blue_ice: { r: 116, g: 167, b: 253 },
-  oak_leaves: { r: 60, g: 122, b: 40 },
-  birch_leaves: { r: 128, g: 167, b: 85 },
-  spruce_leaves: { r: 50, g: 89, b: 50 },
-  jungle_leaves: { r: 61, g: 130, b: 32 },
-  acacia_leaves: { r: 108, g: 145, b: 46 },
-  dark_oak_leaves: { r: 48, g: 100, b: 32 },
-  azalea_leaves: { r: 92, g: 140, b: 56 },
+  // Canopy: darker than the grass under it, so a forest reads as a forest.
+  oak_leaves: { r: 46, g: 110, b: 30 },
+  birch_leaves: { r: 110, g: 150, b: 66 },
+  spruce_leaves: { r: 42, g: 80, b: 45 },
+  jungle_leaves: { r: 48, g: 116, b: 26 },
+  acacia_leaves: { r: 98, g: 134, b: 40 },
+  dark_oak_leaves: { r: 38, g: 88, b: 26 },
+  azalea_leaves: { r: 82, g: 128, b: 48 },
   oak_log: { r: 102, g: 81, b: 50 },
   spruce_log: { r: 58, g: 40, b: 22 },
   birch_log: { r: 216, g: 214, b: 207 },
@@ -205,7 +259,34 @@ const COLOURS: Record<string, Rgb> = {
   mud: { r: 60, g: 55, b: 60 },
   farmland: { r: 110, g: 78, b: 52 },
   grass_path: { r: 148, g: 121, b: 65 },
-  dirt_path: { r: 148, g: 121, b: 65 }
+  dirt_path: { r: 148, g: 121, b: 65 },
+  // Seen from above on a real world often enough to be worth naming, rather
+  // than left to the hash fallback — which is stable but arbitrary, and an
+  // arbitrary colour on a common block is what makes a map look wrong.
+  mycelium: { r: 111, g: 100, b: 105 },
+  rooted_dirt: { r: 144, g: 103, b: 76 },
+  mossy_cobblestone: { r: 106, g: 117, b: 92 },
+  calcite: { r: 223, g: 224, b: 220 },
+  tuff: { r: 108, g: 110, b: 103 },
+  dripstone_block: { r: 145, g: 111, b: 92 },
+  basalt: { r: 73, g: 71, b: 78 },
+  blackstone: { r: 42, g: 35, b: 41 },
+  soul_sand: { r: 81, g: 62, b: 50 },
+  soul_soil: { r: 75, g: 57, b: 46 },
+  magma_block: { r: 142, g: 74, b: 34 },
+  glowstone: { r: 231, g: 187, b: 111 },
+  crimson_nylium: { r: 130, g: 31, b: 31 },
+  warped_nylium: { r: 43, g: 115, b: 112 },
+  bamboo_block: { r: 152, g: 165, b: 63 },
+  pumpkin: { r: 198, g: 118, b: 24 },
+  melon: { r: 111, g: 145, b: 32 },
+  hay_block: { r: 166, g: 137, b: 24 },
+  glass: { r: 200, g: 220, b: 232 },
+  cobweb: { r: 220, g: 224, b: 228 },
+  amethyst_block: { r: 133, g: 97, b: 191 },
+  cactus: { r: 85, g: 127, b: 47 },
+  brick_block: { r: 150, g: 97, b: 83 },
+  bricks: { r: 150, g: 97, b: 83 }
 }
 
 /** Water reads as water on a map, so the renderer needs to know which is which. */
