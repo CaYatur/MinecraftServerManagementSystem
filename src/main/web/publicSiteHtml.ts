@@ -491,6 +491,8 @@ function mapFeedUrl(dim,cell){
 /* This page's api() answers {ok,s,j}; the panel's answers {ok,status,body}. The
    map engine used to read .body unconditionally, so on this page every poll
    threw on undefined and the map never drew (#115). */
+function mapTilesUrl(dim,list){
+ return '/api/public/map/tiles?dim='+encodeURIComponent(dim)+'&c='+encodeURIComponent(list)}
 function mapGet(u){return api(u).then(function(r){return r.ok?r.j:null}).catch(function(){return null})}
 function mapPost(u){return api(u,{}).then(function(r){return r.j||null}).catch(function(){return null})}
 /* No admin server id on the public site: the bridge install affordance is an

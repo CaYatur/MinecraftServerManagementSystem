@@ -2653,6 +2653,50 @@
         }
       }
     },
+    "/api/v1/servers/{id}/map/tiles": {
+      "get": {
+        "operationId": "getServersIdMapTiles",
+        "summary": "Rendered surface colours for the requested chunks.",
+        "description": "Scope `view` on the server.\n\nAsk with `?c=cx,cz;cx,cz` (max 64) and `?dim=`. Answers only with regions already parsed and queues the rest — `pending` says how many are still coming, so a caller polls rather than blocking. A request never parses a region itself.",
+        "tags": [
+          "players"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Server id, as returned by GET /servers.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      }
+    },
     "/api/v1/servers/{id}/player-requests": {
       "get": {
         "operationId": "getServersIdPlayerRequests",
