@@ -112,13 +112,18 @@ function ensureDir(p: string): string {
  * the name, so a stale file is refused on read and then overwritten rather than
  * accumulating one file per version.
  */
-function cacheFileFor(path: string): string {
-  return join(cacheDirFor(), createHash('sha1').update(path).digest('hex') + '.tiles')
+function cacheFileFor(serverId: string, path: string): string {
+  // The server id is a visible PREFIX rather than part of the hash, because
+  // "clear this server's cache" has to be answerable from the filenames alone —
+  // a hash cannot be reversed, so a single hashed key made the clear button
+  // wipe every server's cache while claiming to clear one.
+  const owner = createHash('sha1').update(serverId).digest('hex').slice(0, 12)
+  return join(cacheDirFor(), owner + '-' + createHash('sha1').update(path).digest('hex') + '.tiles')
 }
 
-function readCachedRegion(path: string, mtimeMs: number): RegionEntry | null {
+function readCachedRegion(serverId: string, path: string, mtimeMs: number): RegionEntry | null {
   try {
-    const f = cacheFileFor(path)
+    const f = cacheFileFor(serverId, path)
     if (!existsSync(f)) return null
     const decoded = decodeRegionTiles(gunzipSync(readFileSync(f)))
     // The mtime says the world has not changed; the version inside the file
@@ -131,12 +136,13 @@ function readCachedRegion(path: string, mtimeMs: number): RegionEntry | null {
   }
 }
 
-function writeCachedRegion(path: string, entry: RegionEntry): void {
+function writeCachedRegion(serverId: string, path: string, entry: RegionEntry): void {
   try {
     const usable = new Map<number, ChunkTile>()
     for (const [slot, tile] of entry.tiles) if (tile) usable.set(slot, tile)
     const buf = gzipSync(encodeRegionTiles({ mtimeMs: entry.mtimeMs, tiles: usable }), { level: 6 })
-    const f = cacheFileFor(path)
+    writtenSinceSweep += buf.length
+    const f = cacheFileFor(serverId, path)
     // Through a temp file: a reader hitting a half-written cache would decode
     // garbage, and "garbage" here means a wrong map rather than an error.
     writeFileSync(f + '.tmp', buf)
@@ -153,7 +159,19 @@ function writeCachedRegion(path: string, entry: RegionEntry): void {
  * the moment something was added, and a timer would be one more thing running
  * in a process that already has enough of them.
  */
+/**
+ * Bytes added since the last sweep.
+ *
+ * A sweep stats every file in the directory, and doing that after each region
+ * means a directory scan per parse — a cost inside the thing that exists to
+ * remove cost. Only worth doing once enough has been added to matter.
+ */
+let writtenSinceSweep = 0
+const SWEEP_AFTER_BYTES = 32 * 1024 * 1024
+
 function sweepCache(limitMB: number): void {
+  if (writtenSinceSweep < SWEEP_AFTER_BYTES) return
+  writtenSinceSweep = 0
   try {
     const dir = cacheDirFor()
     const files = readdirSync(dir)
@@ -176,19 +194,22 @@ function sweepCache(limitMB: number): void {
   }
 }
 
-/** Drop every cached region for one server, or all of them. */
-export function clearTileCache(): number {
+/** Drop cached regions for one server, or every server when given nothing. */
+export function clearTileCache(serverId?: string): number {
   let n = 0
   try {
     const dir = cacheDirFor()
+    const prefix = serverId ? createHash('sha1').update(serverId).digest('hex').slice(0, 12) + '-' : ''
     for (const name of readdirSync(dir)) {
-      if (!name.endsWith('.tiles')) continue
+      if (!name.endsWith('.tiles') || !name.startsWith(prefix)) continue
       rmSync(join(dir, name), { force: true })
       n++
     }
   } catch {
     /* nothing to clear */
   }
+  // The memory cache is keyed by region path with no owner, so it goes whole.
+  // Dropping too much of an optimisation is free; keeping a stale entry is not.
   regions.clear()
   return n
 }
@@ -387,7 +408,7 @@ export function parseBudgetReady(serverId?: string, now = Date.now()): boolean {
  * Synchronous and slow by design — the callers are expected to keep this off
  * any request path, and to respect `parseBudgetReady`.
  */
-function loadRegion(path: string, perf: MapPerfConfig): RegionEntry | null {
+function loadRegion(serverId: string, path: string, perf: MapPerfConfig): RegionEntry | null {
   if (!existsSync(path)) return null
   let mtimeMs = 0
   try {
@@ -404,7 +425,7 @@ function loadRegion(path: string, perf: MapPerfConfig): RegionEntry | null {
   // Disk before work. A region the server has not rewritten is the same region,
   // and re-parsing it is the cost this whole cache exists to avoid.
   if (perf.cache) {
-    const cached = readCachedRegion(path, mtimeMs)
+    const cached = readCachedRegion(serverId, path, mtimeMs)
     if (cached) {
       regions.set(path, cached)
       trimMemory(perf.memoryRegions)
@@ -443,7 +464,7 @@ function loadRegion(path: string, perf: MapPerfConfig): RegionEntry | null {
   regions.set(path, entry)
   trimMemory(perf.memoryRegions)
   if (perf.cache) {
-    writeCachedRegion(path, entry)
+    writeCachedRegion(serverId, path, entry)
     sweepCache(perf.cacheLimitMB)
   }
   log.info(`World tiles: parsed ${tiles.size} chunks from ${path.split(/[\\/]/).pop()}`)
@@ -580,7 +601,7 @@ export function chunkTile(
 ): ChunkTile | null {
   const path = regionPath(serverId, dim, regionOf(chunkX), regionOf(chunkZ))
   if (!path) return null
-  const region = loadRegion(path, perfFor(serverId))
+  const region = loadRegion(serverId, path, perfFor(serverId))
   if (!region) return null
   return region.tiles.get(chunkSlot(localChunk(chunkX), localChunk(chunkZ))) ?? null
 }

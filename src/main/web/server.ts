@@ -19,6 +19,7 @@ import * as mods from '../core/mods'
 import * as bridgeInstall from '../core/bridgeInstall'
 import * as rcon from '../core/rcon'
 import * as worldTiles from '../core/worldTiles'
+import { normalizeMapPerf } from '@shared/tileCache'
 import { listJavaInstalls } from '../core/javaScan'
 import { installJava } from '../core/javaProvision'
 import {
@@ -1240,6 +1241,35 @@ async function handlePanel(req: IncomingMessage, res: ServerResponse): Promise<v
     }
     // Live map feed (#26): positions, bounds and a chunk heatmap in one call,
     // so a client redraws from a single response instead of stitching three.
+    // What the map costs on this server (#133). `settings`, because it is a
+    // persisted server setting, not a per-session view preference.
+    if (sub === 'map/perf' && method === 'GET') {
+      if (!gate('settings')) return
+      return sendJson(res, 200, normalizeMapPerf(getServer(id)?.map))
+    }
+    if (sub === 'map/perf' && method === 'POST') {
+      if (!gate('settings')) return
+      const b = (await readBody(req).catch(() => ({}))) as Record<string, unknown>
+      // Clamped on the way IN. A value only fixed when it is read is still a
+      // wrong number sitting in the config file.
+      const next = normalizeMapPerf({ ...normalizeMapPerf(getServer(id)?.map), ...b })
+      registry.updateServer(id, { map: next })
+      audit.record({
+        source: user.apiKey ? 'api' : 'webpanel',
+        action: 'map.perf',
+        actor: user.username,
+        ok: true,
+        ip,
+        serverId: id,
+        detail: JSON.stringify(next)
+      })
+      return sendJson(res, 200, next)
+    }
+    if (sub === 'map/cache' && method === 'DELETE') {
+      if (!gate('settings')) return
+      const removed = worldTiles.clearTileCache(id)
+      return sendJson(res, 200, { ok: true, removed })
+    }
     if (sub === 'map/tiles' && method === 'GET') {
       if (!gate('view')) return
       const dim = normalizeDimension(url.searchParams.get('dim') ?? 'overworld')

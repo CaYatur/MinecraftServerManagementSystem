@@ -340,7 +340,34 @@ h2{margin:8px 0;font-weight:800;letter-spacing:-.4px}
       <div id="dCharts" class="charts"></div>
     </div>
     <div id="panelTimeline" class="hidden"><div class="card tight" id="dEvents"></div></div>
-    <div id="panelMap" class="hidden"><div class="card">${MAP_HTML}</div></div>
+    <div id="panelMap" class="hidden">
+      <div class="card">${MAP_HTML}</div>
+      <!-- The same per-server dials the desktop map has (#133). Hidden without
+           the settings scope: these persist and apply to every surface, so they
+           are not a per-session view preference. -->
+      <div class="card hidden" id="mpPerf">
+        <div class="row"><button class="btn sm" onclick="togglePerf()"><span id="mpPerfCaret">▸</span></button>
+          <b>Map performance</b><div class="spacer"></div><span class="dim" id="mpPerfMsg" style="font-size:12px"></span></div>
+        <div id="mpPerfBody" style="display:none;margin-top:10px">
+          <label class="row" style="gap:8px;margin-bottom:6px">
+            <input type="checkbox" id="mpPerfCache" onchange="savePerf()"/> Cache parsed tiles on disk
+          </label>
+          <div class="dim" style="font-size:12px;margin-bottom:10px">
+            A region costs a few hundred milliseconds to parse and about a millisecond to read back.
+            With this on it is parsed once and re-parsed only when the server rewrites it.
+          </div>
+          <div class="row" style="align-items:flex-end">
+            <div style="min-width:140px"><div class="dim" style="font-size:12px">Regions in memory</div>
+              <input id="mpPerfMem" type="number" min="2" max="64" onchange="savePerf()"/></div>
+            <div style="min-width:170px"><div class="dim" style="font-size:12px">Delay between parses (ms)</div>
+              <input id="mpPerfGap" type="number" min="0" max="5000" step="50" onchange="savePerf()"/></div>
+            <div style="min-width:150px"><div class="dim" style="font-size:12px">Cache limit (MB)</div>
+              <input id="mpPerfLimit" type="number" min="0" max="20000" step="64" onchange="savePerf()"/></div>
+            <button class="btn sm" onclick="clearMapCache()">Clear cache</button>
+          </div>
+        </div>
+      </div>
+    </div>
     <div id="panelStore" class="hidden">
       <div class="row" style="margin-bottom:10px"><b>Store</b><div class="spacer"></div>
         <span id="sfNewRow" class="row hidden" style="gap:6px">
@@ -465,7 +492,7 @@ function showTab(tab){activeTab=tab;
  /* Only poll while the tab is visible: the feed is every two seconds, and a
     background tab quietly hammering it is the kind of cost nobody attributes
     to the page they left open. */
- if(tab==='map')mapStart();else mapStop();
+ if(tab==='map'){mapStart();loadPerf()}else mapStop();
  if(tab==='manage')loadManage();
  if(tab==='stats')loadStats();
  if(tab==='timeline')loadEvents();
@@ -794,6 +821,44 @@ function mapFeedUrl(dim,cell){
  return '/api/servers/'+mapServerId()+'/map?dim='+encodeURIComponent(dim)+'&cell='+encodeURIComponent(cell)}
 /* The map engine does not know how this page wraps a response, and must not:
    the two pages disagree, and it used to assume this one (#115). */
+/* Map performance, per server and persisted (#133). Only for a session that may
+   change settings — these apply to every surface, not just this browser. */
+function togglePerf(){var b=document.getElementById('mpPerfBody');
+ var open=b.style.display!=='none';b.style.display=open?'none':'block';
+ document.getElementById('mpPerfCaret').textContent=open?'▸':'▾'}
+function loadPerf(){
+ var card=document.getElementById('mpPerf');if(!card||!current)return;
+ var may=current.scopes.indexOf('settings')>=0;
+ card.classList.toggle('hidden',!may);
+ if(!may)return;
+ mapGet('/api/servers/'+current.id+'/map/perf').then(function(p){
+  if(!p)return;
+  document.getElementById('mpPerfCache').checked=p.cache!==false;
+  document.getElementById('mpPerfMem').value=p.memoryRegions;
+  document.getElementById('mpPerfGap').value=p.parseGapMs;
+  document.getElementById('mpPerfLimit').value=p.cacheLimitMB})}
+function savePerf(){
+ if(!current)return;
+ var body={cache:document.getElementById('mpPerfCache').checked,
+  memoryRegions:Number(document.getElementById('mpPerfMem').value),
+  parseGapMs:Number(document.getElementById('mpPerfGap').value),
+  cacheLimitMB:Number(document.getElementById('mpPerfLimit').value)};
+ api('/api/servers/'+current.id+'/map/perf',{method:'POST',body:JSON.stringify(body)}).then(function(r){
+  if(!r.ok){document.getElementById('mpPerfMsg').textContent='Could not save';return}
+  /* Show what was STORED, not what was asked for: the server clamps, and a
+     field that keeps displaying a refused number is lying about the setting. */
+  var p=r.body;
+  document.getElementById('mpPerfMem').value=p.memoryRegions;
+  document.getElementById('mpPerfGap').value=p.parseGapMs;
+  document.getElementById('mpPerfLimit').value=p.cacheLimitMB;
+  document.getElementById('mpPerfMsg').textContent='Saved'})}
+function clearMapCache(){
+ if(!current)return;
+ api('/api/servers/'+current.id+'/map/cache',{method:'DELETE'}).then(function(r){
+  document.getElementById('mpPerfMsg').textContent=r.ok
+   ?('Cleared '+((r.body&&r.body.removed)||0)+' cached regions')
+   :'Could not clear';
+  MAP_TILES={};MAP_MARKS={};mapDraw()})}
 function mapTilesUrl(dim,list,marks){
  return '/api/servers/'+mapServerId()+'/map/tiles?dim='+encodeURIComponent(dim)+
   '&c='+encodeURIComponent(list)+(marks?'&marks=1':'')}
