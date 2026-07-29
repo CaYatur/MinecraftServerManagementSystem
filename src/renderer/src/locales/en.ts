@@ -996,6 +996,7 @@ export default {
     }
   },
   common: {
+    add: 'Add',
     save: 'Save',
     cancel: 'Cancel',
     browse: 'Browse…',

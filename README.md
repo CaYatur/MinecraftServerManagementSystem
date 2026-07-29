@@ -20,7 +20,9 @@
   <a href="#-features">Features</a> •
   <a href="#-supported-server-software">Server Software</a> •
   <a href="#-getting-started">Getting Started</a> •
-  <a href="#-web-panel-beta">Web Panel</a> •
+  <a href="#-screenshots">Screenshots</a> •
+  <a href="#-web-panel">Web Panel</a> •
+  <a href="#-the-map-page">Map Page</a> •
   <a href="#-development">Development</a> •
   <a href="#-roadmap">Roadmap</a>
 </p>
@@ -44,11 +46,24 @@ A Turkish project summary is available near the end of this README: [Türkçe Ö
 
 ## 📌 Project Status
 
-**Current package version:** `0.1.0`
+**Current package version:** `0.2.0`
 
-MSMS is under active development. The desktop server-management core is implemented, while some newer modules — especially the **Web Panel** and **Store / Economy** — should be treated as **beta** features.
+MSMS is under active development, and the whole of it now runs: the desktop
+manager, the **admin web panel**, the **public website with its store and
+economy**, and a **third page that is nothing but a fullscreen live map**. The
+web layer and the store are no longer beta — they are covered by the same
+automated gates as the rest of the app.
 
-Before using the project for an important public server, test the workflows you plan to rely on and keep independent backups of your server data.
+What is still young rather than unfinished:
+
+- **MSMS Bridge** — the plugin builds and self-tests, and the app reads it, but
+  it has had far less time in live servers than the desktop core.
+- **Modded worlds** — block colours and item icons come from the vanilla client
+  jar, so a heavily modded world renders its vanilla blocks correctly and falls
+  back to a generated colour for the rest.
+
+Before using MSMS for an important public server, test the workflows you plan to
+rely on and keep independent backups of your server data.
 
 ---
 
@@ -82,6 +97,70 @@ MSMS aims to cover both everyday administration and more advanced server-managem
 - audit/history views
 - remote web-panel access
 - experimental store/economy tooling
+
+---
+
+## 📸 Screenshots
+
+Every picture below is taken by the app of itself against throwaway demo
+servers — `MSMS_SHOTS=<dir>` renders each view offscreen and writes a PNG, so
+they can be retaken after a redesign instead of quietly going stale.
+
+### Dashboard
+
+Live CPU, memory, TPS, players and uptime, with the launch arguments and the
+exact command MSMS will run underneath them.
+
+![Dashboard](docs/screenshots/dashboard.png)
+
+### Creating a server
+
+Server software grouped by what it is *for* — vanilla, plugin servers, modded,
+hybrid, proxy — rather than an alphabetical list of names a newcomer cannot rank.
+
+![Create a server](docs/screenshots/create-server.png)
+
+### `server.properties`
+
+Every setting with an explanation, grouped and searchable, plus raw editing for
+anything MSMS does not know about.
+
+![Server properties](docs/screenshots/properties.png)
+
+### Players and the live map
+
+Moderation, world controls, the NBT inventory viewer, and a live map rendered
+from the server's own region files.
+
+![Players](docs/screenshots/players.png)
+
+### Plugins and mods
+
+Installed jars with enable/disable, plus Modrinth search and one-click install.
+
+![Plugins and mods](docs/screenshots/plugins.png)
+
+### History
+
+CPU, memory, TPS and player count over time, with an analysis pass that says
+what the data means rather than leaving you to read four charts.
+
+![History](docs/screenshots/history.png)
+
+### Store and economy
+
+A server currency, balances, products, crates with published odds, and in-game
+delivery that queues while a player is offline.
+
+![Store](docs/screenshots/store.png)
+
+### Web panel and public website
+
+Two more surfaces, each with its own listener, port and access rules.
+
+![Web panel](docs/screenshots/web-panel.png)
+
+![Public website](docs/screenshots/site.png)
 
 ---
 
@@ -441,7 +520,7 @@ These allow current server state and historical activity to be presented separat
 
 ---
 
-### 🌉 MSMS Bridge (protocol ready, plugin pending)
+### 🌉 MSMS Bridge
 
 TPS read over RCON is an approximation, and the console can never report MSPT or player positions at all. The **MSMS Bridge** closes that gap with an in-server plugin that prints marked telemetry lines to the server's **standard output** — a stream MSMS already reads.
 
@@ -451,7 +530,10 @@ The app side is implemented: protocol v1 parsing, and a freshness rule that fall
 
 The plugin itself lives in [`bridge/`](bridge/README.md) and builds with a JDK and Node alone — `node bridge/build.mjs` — no Maven or Gradle. Its output is verified against the app's own parser without needing a Minecraft server.
 
-⚠️ It has **not yet been run inside a live server**, so treat the first run as a test.
+The app installs it for you from the Players → Live map tab when a server has no
+bridge, and it reports through the plugin logger rather than `System.out` so a
+Paper server does not nag about it. It has had far less time in live servers
+than the desktop core, so treat it as the youngest part of MSMS.
 
 📖 **[Protocol documentation → `docs/bridge-protocol.md`](docs/bridge-protocol.md)** · **[Plugin README → `bridge/README.md`](bridge/README.md)**
 
@@ -526,62 +608,93 @@ npm run dist:portable
 
 ---
 
-## 🌐 Web Panel (Beta)
+## 🌐 Web Panel
 
-MSMS includes an optional web-management layer for browser/mobile access.
+An admin panel in the browser, on its own listener and port. Everything the
+desktop app can do to a server, it can do — console, power, players, files,
+backups, settings, the store, worlds and the live map — subject to the same
+per-server permissions.
 
-Current project design includes:
-
-- bearer-token authentication
-- per-server RBAC concepts
-- mobile-friendly access
-- dedicated web-panel UI
-- separate web server/auth modules
+- **Users, roles and per-server scopes.** Nine scopes (`view`, `console`,
+  `power`, `players`, `files`, `backups`, `settings`, `store`, `worlds`) granted
+  per server, either directly or through a named role.
+- **API keys** for integrations, scoped the same way, with ready-to-paste curl,
+  JavaScript and Python samples built against your own install's address. A key
+  can be **disabled** — reversibly, unlike revoking — or deleted from the list.
+- **A documented REST surface** at `/api/v1`, with an OpenAPI document and a
+  human-readable reference the app serves itself.
+- **Audit log** of every action, with the actor, the source and the IP.
 
 ### Secure defaults
 
-The web panel is:
-
-- **disabled by default**
-- designed to bind to **`127.0.0.1` by default**
-- LAN access is an explicit opt-in
+- **Disabled by default**, and bound to `127.0.0.1` unless LAN access is
+  explicitly switched on.
+- Cross-origin requests are **denied by default**; browser origins are an
+  allowlist you fill in.
+- Keys are stored as salted SHA-256 and shown exactly once, at creation.
 
 ### Important security warning
 
-The built-in web panel does **not** provide HTTPS by itself.
+The built-in panel does **not** provide HTTPS by itself. Do not expose it
+directly to the public Internet. For remote administration, put it behind a
+reverse proxy that terminates TLS, or reach it over a VPN.
 
-Do not expose it directly to the public Internet.
-
-For remote administration, use a properly secured network design with authentication, encryption and access controls appropriate for your environment.
-
-Treat all panel tokens and server credentials as secrets.
+Treat panel tokens and API keys as secrets.
 
 ---
 
-## 🛒 Store / Economy (Beta)
+## 🛒 Store & Economy
 
-MSMS also contains an experimental server store/economy layer.
+A server currency and shop that players use from the public website.
 
-The implemented project direction includes:
-
-- server currency
-- player balances
-- items/products
-- crates
-- animated crate-opening presentation
-- in-game delivery
-
-This part of MSMS is newer than the core server-management features and should be treated as **beta**.
+- **Balances and a ledger** — every change recorded with who made it, why, and
+  the balance it produced.
+- **Products and crates**, with crate odds published to buyers before they buy
+  and the commands behind a reward never sent to a browser.
+- **Stock and per-player limits**, enforced atomically with the balance so a
+  product cannot oversell.
+- **In-game delivery**, queued while a player is offline and released when they
+  return — a purchase is never silently lost because the server was down.
+- **Purchases are audited** like everything else.
 
 ---
 
-## 🌐 Site / CMS Direction
+## 🌍 Public Website
 
-The desktop UI contains a Site section, while the project roadmap has included a broader visual website/CMS direction.
+A player-facing site on its own listener: news, a storefront, player accounts
+linked to Minecraft names, profiles, and a live map.
 
-The long-term goal is to make server administration and player-facing server services more connected, rather than requiring a completely unrelated tool for every task.
+- **Player accounts** verified in game, which works on an offline-mode server
+  too — a code whispered to the player proves they own the name.
+- **Profiles** with per-field publishing controls, so an operator decides what a
+  visitor may see.
+- **Bilingual**, with the site's own language list and default.
+- **Mobile-friendly.**
 
-Features that are not yet fully implemented should not be considered production-ready until they are completed and documented.
+---
+
+## 🗺️ The Map Page
+
+A third listener whose entire design is one fullscreen map.
+
+A separate port rather than a path on the website, and that is the point: it
+lets you hand the map to people who must not reach the shop or the panel, with
+a firewall rule rather than with trust.
+
+- **Access:** open, a shared passphrase, or signed-in players only. The gate
+  refuses the *data*, not just the page.
+- **Eleven settings** for what it may show — terrain, live positions, names,
+  skin heads, chunk areas, structures, heatmap, coordinate rounding, and
+  optionally one pinned world — every one enforced server-side.
+- **Named chunk areas.** Mark a region by chunk, give it a colour, a name and a
+  note; hovering or clicking it shows them. Created by selecting chunks on the
+  map, by typing coordinates, or over the API.
+- **The same map engine** as the panel and the website, so all four surfaces
+  draw the same world.
+
+Terrain is read from the server's own region files. MSMS never *generates*
+world — a map that could grow a world by being panned would be a map that can
+fill a disk.
 
 ---
 
@@ -630,8 +743,15 @@ Features that are not yet fully implemented should not be considered production-
 | Crash analyzer | ✅ |
 | Update checking | ✅ |
 | Portable Windows packaging | ✅ |
-| Web Panel | 🧪 Beta |
-| Store / Economy | 🧪 Beta |
+| Web panel (users, roles, scopes) | ✅ |
+| REST API + OpenAPI + API keys | ✅ |
+| Public website (news, accounts, profiles) | ✅ |
+| Store / economy / crates / delivery | ✅ |
+| Live map on all surfaces | ✅ |
+| Fullscreen map page (own listener) | ✅ |
+| Named chunk areas | ✅ |
+| Item icons + block colours from the client jar | ✅ |
+| MSMS Bridge plugin | ✅ builds, lightly field-tested |
 | Full visual website/CMS builder | 🗺️ Planned / evolving |
 
 ---
@@ -1308,7 +1428,9 @@ No. Spigot's BuildTools workflow is intentionally treated differently from direc
 
 ### Is the Store/Economy system stable?
 
-It should currently be treated as beta.
+Yes — it is covered by the same automated gates as the rest of the app, and
+purchases, delivery and balance changes are all audited. The youngest part of
+MSMS is the Bridge plugin, not the store.
 
 ### Is MSMS affiliated with Mojang or Microsoft?
 
@@ -1360,8 +1482,14 @@ No.
 - Crash Analyzer
 - Güncelleme kontrolü
 - Taşınabilir Windows `.exe` üretimi
-- Web Panel **(beta)**
-- Store / Economy **(beta)**
+- Yönetici **Web Paneli** — kullanıcılar, roller, sunucu bazlı yetkiler
+- **REST API**, OpenAPI dokümanı ve kod örnekli **API anahtarları**
+- Herkese açık **web sitesi** — haberler, oyuncu hesapları, profiller
+- **Mağaza ve ekonomi** — bakiye, ürün, kasa, oyun içi teslimat
+- Dört yüzeyde de çalışan **canlı harita**
+- Kendi portunda **tam ekran harita sayfası**
+- **Adlandırılmış chunk alanları** — renk, ad ve not; arayüzden veya API ile
+- Item görselleri ve harita renkleri **Mojang'ın kendi client jar'ından**
 
 ### Taşınabilir çalışma mantığı
 

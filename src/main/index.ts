@@ -29,6 +29,7 @@ import {
   runBridgeSmoke,
   runAuditSmoke
 } from './smoke'
+import { runShots } from './shots'
 import { registerImageScheme, handleImageProtocol, IMG_SCHEME } from './imgProtocol'
 import { SPLASH_HTML } from './splashHtml'
 
@@ -263,6 +264,17 @@ if (!gotLock) {
       runWebSmoke().catch((e) => {
         // eslint-disable-next-line no-console
         console.log('WEB-SMOKE: FAIL - exception', String(e))
+        app.exit(1)
+      })
+      return
+    }
+
+    // Documentation screenshots, taken by the app of itself. Before the splash
+    // and the main window, because it makes its own.
+    if (process.env['MSMS_SHOTS']) {
+      runShots().catch((e) => {
+        // eslint-disable-next-line no-console
+        console.log('SHOTS: FAIL - exception', String(e))
         app.exit(1)
       })
       return
