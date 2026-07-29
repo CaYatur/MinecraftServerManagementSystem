@@ -4,6 +4,7 @@ import { Map as MapIcon, Flame } from 'lucide-react'
 import { heatmap, mapBounds } from '@shared/livemap'
 import type { LivePlayer } from '@shared/livemap'
 import type { BridgeStatus } from '@shared/bridgeRelease'
+import { BridgeNotice } from './BridgeNotice'
 
 /**
  * The live world map (#26), desktop side.
@@ -29,43 +30,16 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
   const [cell, setCell] = useState(16)
   const [showHeat, setShowHeat] = useState(true)
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  // Bridge install (#103). Checked once rather than on the 2s position poll:
-  // the answer changes when someone installs a jar, not twice a second, and the
-  // check reaches GitHub.
+  // Only to explain an empty canvas. The install itself is `BridgeNotice`,
+  // which renders above the map whether or not there is anyone to draw — this
+  // state does not, which is why it could never be the offer's only home (#118).
   const [bridgeState, setBridgeState] = useState<BridgeStatus | null>(null)
-  const [busy, setBusy] = useState(false)
-  const [installMsg, setInstallMsg] = useState('')
-
-  const refreshBridge = async (): Promise<void> => {
-    try {
-      setBridgeState(await window.msms.bridgeStatus(serverId))
-    } catch {
-      setBridgeState(null)
-    }
-  }
   useEffect(() => {
-    void refreshBridge()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    window.msms
+      .bridgeStatus(serverId)
+      .then(setBridgeState)
+      .catch(() => setBridgeState(null))
   }, [serverId])
-
-  const install = async (): Promise<void> => {
-    setBusy(true)
-    setInstallMsg('')
-    try {
-      const r = await window.msms.installBridge(serverId)
-      // "Installed" is not "working": Bukkit loads plugins at startup, so the
-      // jar does nothing until the server is restarted. Saying so here saves the
-      // operator watching a map that is still empty and concluding it failed.
-      setInstallMsg(
-        r.ok ? t('map.bridgeInstalled', { version: r.version ?? '' }) : t('map.bridgeFailed', { error: r.error ?? '' })
-      )
-      await refreshBridge()
-    } catch (e) {
-      setInstallMsg(t('map.bridgeFailed', { error: String(e) }))
-    } finally {
-      setBusy(false)
-    }
-  }
 
   useEffect(() => {
     let alive = true
@@ -193,24 +167,12 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
 
   return (
     <div>
+      <BridgeNotice serverId={serverId} />
       <div className="row wrap" style={{ gap: 10, alignItems: 'center', marginBottom: 10 }}>
         <span className="badge">
           <span className={`dot ${bridge ? 'running' : 'stopped'}`} />
           {bridge ? t('map.live') : t('map.noBridge')}
         </span>
-        {/* An update is offered where the plugin is running, not in the empty
-            state — an outdated bridge still reports positions, so the map is
-            not empty and the operator would never see the message there. */}
-        {bridgeState?.state === 'outdated' && (
-          <button className="btn sm" disabled={busy} onClick={() => void install()}>
-            {busy
-              ? t('map.installing')
-              : t('map.bridgeOutdated', {
-                  installed: bridgeState.installed ?? '',
-                  latest: bridgeState.latest ?? ''
-                })}
-          </button>
-        )}
         <div className="spacer" style={{ flex: 1 }} />
         <select
           className="select"
@@ -269,24 +231,13 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
             <p className="hint" style={{ maxWidth: 380 }}>
               {bridge ? t('map.emptyDimension') : t('map.needsBridge')}
             </p>
-            {/* The warning sits here, next to the feature it disables, rather
-                than in a global banner — this is where someone finds out the
-                map is empty, and it is the only place the answer helps. */}
-            {!bridge && bridgeState?.state === 'missing' && bridgeState.actionable && (
-              <button className="btn primary" disabled={busy} onClick={() => void install()}>
-                {busy
-                  ? t('map.installing')
-                  : t('map.installBridge', { version: bridgeState.latest ?? '' })}
-              </button>
-            )}
+            {/* The offer itself is BridgeNotice above the map, which renders
+                whether or not there are players to draw. This state only says
+                why the canvas is empty — it cannot be the only home for the
+                install, because it does not render when anyone is online. */}
             {!bridge && bridgeState?.state === 'unsupported' && (
               <p className="hint dim" style={{ maxWidth: 380 }}>
                 {t('map.bridgeUnsupported')}
-              </p>
-            )}
-            {installMsg && (
-              <p className="hint" style={{ maxWidth: 380 }}>
-                {installMsg}
               </p>
             )}
           </div>

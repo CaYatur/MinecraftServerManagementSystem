@@ -1,3 +1,4 @@
+import { BridgeNotice } from '../components/BridgeNotice'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
@@ -169,6 +170,10 @@ export function ModsView(): JSX.Element {
 
   return (
     <div>
+      {/* The Bridge is a plugin, and a missing plugin belongs in the list of
+          plugins — not only in the live map's empty state, which is where it
+          used to be and where a server with players on it never showed it. */}
+      <BridgeNotice serverId={id} />
       <div className="tabs" style={{ border: 'none', padding: 0, marginBottom: 14 }}>
         <button className={`tab ${tab === 'installed' ? 'active' : ''}`} onClick={() => setTab('installed')}>
           {t('mods.installed')} ({list.length})

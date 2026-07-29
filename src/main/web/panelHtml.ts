@@ -254,6 +254,21 @@ h2{margin:8px 0;font-weight:800;letter-spacing:-.4px}
     <div class="row"><button class="btn sm" onclick="showList()">← All servers</button><div class="spacer"></div><span id="dStatus" class="badge"></span></div>
     <h2 id="dName"></h2>
     <div id="dControls" class="row" style="margin-bottom:12px"></div>
+    <!-- Bridge notice (#118). ABOVE the tabs, not among the tab panels: the
+         panels are siblings, so a notice placed between them sits below the
+         console on one tab and at the top on every other — a banner that moves
+         depending on where you are is worse than one that is simply always in
+         the same place. -->
+    <div class="card hidden" id="brNotice" style="margin-bottom:12px">
+      <div class="row" style="align-items:center">
+        <div style="flex:1;min-width:220px">
+          <b id="brTitle"></b>
+          <div class="dim" id="brWhy" style="font-size:12px;margin-top:3px"></div>
+        </div>
+        <button class="btn sm primary" id="brBtn" onclick="brInstall()"></button>
+      </div>
+      <div class="dim" id="brMsg" style="font-size:12px;margin-top:8px"></div>
+    </div>
     <div class="tabs">
       <button class="tab on" id="tabConsole" onclick="showTab('console')">Console</button>
       <button class="tab" id="tabStats" onclick="showTab('stats')">Performance</button>
@@ -439,7 +454,9 @@ function renderDetail(){show('detail');var s=current;document.getElementById('dN
    return '<button class="btn sm'+(a[0]==='start'?' primary':a[0]==='kill'?' danger':'')+'" onclick="power(\\''+a[0]+'\\')">'+a[1]+'</button>'}).join('')}
  document.getElementById('dCmdRow').style.display=has('console')?'flex':'none';
  document.getElementById('tabManageBtn').classList.toggle('hidden',!has('store'));
- document.getElementById('tabAlertsBtn').classList.toggle('hidden',!has('settings'));showTab('console')}
+ document.getElementById('tabAlertsBtn').classList.toggle('hidden',!has('settings'));
+ loadBridgeNotice();
+ showTab('console')}
 function showTab(tab){activeTab=tab;
  [['console','panelConsole','tabConsole'],['stats','panelStats','tabStats'],['timeline','panelTimeline','tabTimeline'],['map','panelMap','tabMap'],['store','panelStore','tabStore'],['alerts','panelAlerts','tabAlertsBtn'],['manage','panelManage','tabManageBtn']]
   .forEach(function(t){document.getElementById(t[1]).classList.toggle('hidden',tab!==t[0]);
@@ -453,6 +470,50 @@ function showTab(tab){activeTab=tab;
  if(tab==='stats')loadStats();
  if(tab==='timeline')loadEvents();
  if(tab==='alerts'){loadAlerts();loadPlayerRequests()}}
+
+/* ---- the bridge plugin, wherever the operator is (#118) ----
+   Fetched once when a server is opened, not once per map visit: an operator who
+   never opens the map tab was never told that half the features are switched
+   off for want of a 6 KB jar. */
+var BR=null,brBusy=false;
+function loadBridgeNotice(){
+ BR=null;
+ /* The result of the LAST install, on the LAST server. Leaving it up while
+    another server's notice renders under it attributes one server's outcome to
+    another. */
+ var m=document.getElementById('brMsg');if(m)m.textContent='';
+ renderBridgeNotice();
+ if(!current||current.scopes.indexOf('files')<0)return;
+ mapGet('/api/servers/'+current.id+'/bridge').then(function(b){BR=b;renderBridgeNotice()})}
+function renderBridgeNotice(){
+ var card=document.getElementById('brNotice');if(!card)return;
+ /* Nothing to say when the type cannot run it, it is current, or there is no
+    jar anywhere to offer — a banner nobody can act on is noise. */
+ var show=!!BR&&(BR.state==='missing'||BR.state==='outdated')&&BR.actionable;
+ card.classList.toggle('hidden',!show);
+ if(!show)return;
+ var outdated=BR.state==='outdated';
+ document.getElementById('brTitle').textContent=outdated
+  ?'MSMS-Bridge update available'
+  :'This server has no MSMS-Bridge plugin';
+ document.getElementById('brWhy').textContent=(outdated
+  ?('Installed '+(BR.installed||'')+', '+(BR.latest||'')+' is available.')
+  :'True TPS, live player positions and the world map all need it. It reports over the server console, so no extra port is opened.')
+  +(BR.offline?' GitHub is unreachable; the copy shipped with the app will be used.':'');
+ document.getElementById('brBtn').textContent=brBusy?'Installing…':('Install '+(BR.latest||''));
+ document.getElementById('brBtn').disabled=brBusy}
+function brInstall(){
+ if(brBusy||!current)return;
+ brBusy=true;renderBridgeNotice();
+ mapPost('/api/servers/'+current.id+'/bridge/install').then(function(b){
+  brBusy=false;
+  /* "Installed" is not "working": Bukkit loads plugins at startup. */
+  var text=(b&&b.ok)
+   ?('Installed '+(b.version||'')+'. Restart the server to load it.')
+   :('Install failed: '+((b&&b.error)||'request failed'));
+  /* loadBridgeNotice clears the message, so it has to be written after. */
+  loadBridgeNotice();
+  document.getElementById('brMsg').textContent=text})}
 
 /* ---- account claims waiting for a human (#105) ---- */
 function loadPlayerRequests(){

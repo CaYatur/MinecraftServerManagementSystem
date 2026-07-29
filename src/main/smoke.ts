@@ -5807,6 +5807,51 @@ export async function runWebSmoke(): Promise<void> {
         if (!/cannot run/.test(unsupported)) return fail('an unsupported server was told nothing')
         mapState.MAP.bridge = null
 
+        // #118: the offer must survive the case the old placement could not
+        // reach — a supported server with no bridge AND players on it. The
+        // empty state does not render then, so an operator on a busy server was
+        // shown nothing at all.
+        {
+          const pctx = panel.ctx as Record<string, (...a: unknown[]) => unknown>
+          const pnl = panel.ctx as { BR: unknown }
+          pnl.BR = { state: 'missing', latest: '1.0.0', actionable: true, source: 'bundled' }
+          pctx['renderBridgeNotice']()
+          if (panel.byId('brNotice').classList.contains('hidden')) {
+            return fail('the panel bridge notice stayed hidden with a jar to offer')
+          }
+          if (!/MSMS-Bridge/.test(panel.byId('brTitle').textContent)) {
+            return fail('the bridge notice does not say what is missing')
+          }
+          // ...and it says what the jar unlocks. "Install MSMS-Bridge" on its
+          // own is not a reason to click anything.
+          if (!/TPS|position|map/i.test(panel.byId('brWhy').textContent)) {
+            return fail('the bridge notice does not say why it matters')
+          }
+          // Nothing to act on = no banner. A permanent one is noise.
+          for (const dead of [
+            { state: 'ok', actionable: false },
+            { state: 'unsupported', actionable: false },
+            { state: 'missing', actionable: false }
+          ]) {
+            pnl.BR = dead
+            pctx['renderBridgeNotice']()
+            if (!panel.byId('brNotice').classList.contains('hidden')) {
+              return fail('the bridge notice showed for ' + JSON.stringify(dead))
+            }
+          }
+          // An install result belongs to the server it happened on. Opening
+          // another server must not leave the last one's outcome sitting under
+          // its notice.
+          panel.byId('brMsg').textContent = 'Installed 1.0.0. Restart the server to load it.'
+          pctx['loadBridgeNotice']()
+          if (panel.byId('brMsg').textContent !== '') {
+            return fail('a previous install message survived a server switch')
+          }
+
+          pnl.BR = null
+          pctx['renderBridgeNotice']()
+        }
+
         // #104: the page carries its own copy of the view transform, because a
         // page pasted together as a string cannot import from @shared. So the
         // two implementations are checked against each other here — that is the
