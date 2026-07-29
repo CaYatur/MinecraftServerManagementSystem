@@ -321,6 +321,7 @@ function mapFetchTiles(){
    for(var rz=z0;rz<=z1;rz++)for(var rx=x0;rx<=x1;rx++)chunks.push({cx:rx,cz:rz})}}
  var want=chunks.filter(function(c){return MAP_TILES[mapTileKey(c.cx,c.cz)]===undefined});
  if(!want.length)return;
+ mapTrimTiles();
  want=want.slice(0,64);
  MAP_TILE_PENDING=true;
  mapGet(mapTilesUrl(MAP.dim,want.map(function(c){return c.cx+','+c.cz}).join(';'),MAP.marksOn)).then(function(d){
@@ -373,6 +374,18 @@ function mapToggleMarks(){
     no villages here". */
  if(MAP.marksOn){MAP_TILES={};MAP_MARKS={}}
  mapFetchTiles();mapDraw()}
+/* Panning a big world would otherwise hold every chunk ever looked at, for as
+   long as the page is open — and since drawing iterates what is held, an
+   unbounded cache is a per-frame cost as well as a memory one. Tiles outside
+   the view are dropped past the cap; re-fetching one is cheap because the main
+   process still has the region. */
+function mapTrimTiles(){
+ var keys=Object.keys(MAP_TILES);
+ if(keys.length<=2048)return;
+ var b=mapChunkBox();if(!b)return;
+ for(var i=0;i<keys.length;i++){
+  var p=keys[i].split(',');var cx=+p[0],cz=+p[1];
+  if(cx<b.x0-8||cx>b.x1+8||cz<b.z0-8||cz>b.z1+8){delete MAP_TILES[keys[i]];delete MAP_MARKS[keys[i]]}}}
 function mapBakeTile(t){
  var cv=document.createElement('canvas');cv.width=16;cv.height=16;
  var g=cv.getContext('2d');var img=g.createImageData(16,16);

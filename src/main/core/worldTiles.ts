@@ -356,6 +356,12 @@ export function tileFromChunk(chunk: any, dim = 'overworld'): ChunkTile | null {
   // gets under it — solid blocks are skipped until an air gap has been seen.
   const rule = scanRuleFor(dim)
   const sawAir = rule.underRoof ? new Array<boolean>(colour.length).fill(false) : null
+  // A column that is solid from the ceiling all the way down — a netherrack
+  // pillar joining floor to roof — never shows an air gap, so the under-roof
+  // rule would skip every block in it and leave a hole. The highest solid block
+  // seen while skipping is kept as the answer for exactly that case.
+  const fallbackColour = sawAir ? new Array<number>(colour.length).fill(-1) : null
+  const fallbackHeight = sawAir ? new Array<number>(colour.length).fill(0) : null
 
   for (const { s, y: sectionY } of withY) {
     if (remaining === 0) break
@@ -396,7 +402,14 @@ export function tileFromChunk(chunk: any, dim = 'overworld'): ChunkTile | null {
             // Under a roof: remember the gap, and skip everything solid until
             // one has been seen. Without this the first hit is the roof itself.
             if (invisible) sawAir[col] = true
-            if (!sawAir[col]) continue
+            if (!sawAir[col]) {
+              if (!invisible && fallbackColour && fallbackColour[col] < 0) {
+                const fc = blockColour(short)
+                fallbackColour[col] = (fc.r << 16) | (fc.g << 8) | fc.b
+                if (fallbackHeight) fallbackHeight[col] = worldY
+              }
+              continue
+            }
           }
           if (invisible) continue
           const c = blockColour(short)
@@ -404,6 +417,17 @@ export function tileFromChunk(chunk: any, dim = 'overworld'): ChunkTile | null {
           height[col] = worldY
           remaining--
         }
+      }
+    }
+  }
+  // Columns the under-roof rule skipped entirely fall back to the highest solid
+  // block, so a floor-to-ceiling pillar is drawn rather than punched out.
+  if (fallbackColour && fallbackHeight) {
+    for (let i = 0; i < colour.length; i++) {
+      if (colour[i] < 0 && fallbackColour[i] >= 0) {
+        colour[i] = fallbackColour[i]
+        height[i] = fallbackHeight[i]
+        remaining--
       }
     }
   }
