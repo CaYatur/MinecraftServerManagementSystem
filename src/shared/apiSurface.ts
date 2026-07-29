@@ -234,6 +234,7 @@ export const API_ROUTES: ApiRoute[] = [
   { method: 'GET', path: '/keys', gate: 'owner', group: 'keys', summary: 'Issued API keys. Secrets are never returned.' },
   { method: 'POST', path: '/keys', gate: 'owner', group: 'keys', summary: 'Issue a key. The secret is shown once and never again.', body: { label: 'What it is for.', scopes: 'Array of scopes.', servers: '`all` or an array of server ids.', expiresInDays: 'Optional lifetime.', canAudit: 'Whether it may read the audit log.' } },
   { method: 'POST', path: '/keys/revoke', gate: 'owner', group: 'keys', summary: 'Revoke a key, keeping the record.', body: { id: 'Key id.' } },
+  { method: 'POST', path: '/keys/disabled', gate: 'owner', group: 'keys', summary: 'Switch a key off or back on. Unlike revoking, this is reversible.', body: { id: 'Key id.', disabled: 'true to switch off, false to switch back on.' }, notes: 'A revoked key cannot be switched back on; that answer is 409.' },
   { method: 'DELETE', path: '/keys', gate: 'owner', group: 'keys', summary: 'Delete a key record outright.', params: [{ name: 'id', in: 'query', required: true, description: 'Key id.' }] },
 
   // ---- audit ----

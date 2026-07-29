@@ -136,6 +136,7 @@ export const IPC = {
   bridgeInstall: 'bridge:install',
   mapTiles: 'map:tiles',
   mapCacheClear: 'map:cache-clear',
+  apiKeyDisabled: 'apikey:disabled',
 
   javaList: 'java:list',
   javaResolve: 'java:resolve',
@@ -357,6 +358,9 @@ export interface MsmsApi {
   }>
   /** Drop every cached region. Returns how many files went. */
   clearMapCache(): Promise<number>
+
+  /** Switch a key off, reversibly. Revoke is the permanent one. */
+  setApiKeyDisabled(id: string, disabled: boolean): Promise<ApiKeyView>
 
   listJava(refresh?: boolean): Promise<JavaInstall[]>
   /** The Java that will actually launch, given a per-server override ('' = auto). */

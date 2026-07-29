@@ -22,6 +22,16 @@ export interface ApiKeyView {
   /** Epoch ms; absent = never expires. */
   expiresAt?: number
   revoked?: boolean
+  /**
+   * Switched off, reversibly.
+   *
+   * Distinct from `revoked` on purpose. Revoking is permanent and is what you
+   * do to a key you believe has leaked; this is what you do to an integration
+   * you are debugging or pausing, and it can be undone. Collapsing the two
+   * would mean the only way to silence a key for an hour is to destroy it and
+   * re-issue — so the safe action and the routine one would share a button.
+   */
+  disabled?: boolean
   /** Account-level: read the global audit log. Mirrors the user flag. */
   canAudit?: boolean
 }
@@ -29,8 +39,15 @@ export interface ApiKeyView {
 export const KEY_PREFIX = 'msms_'
 
 /** Pure: is this key usable right now? */
-export function isKeyUsable(key: Pick<ApiKeyView, 'revoked' | 'expiresAt'>, now: number): boolean {
+export function isKeyUsable(
+  key: Pick<ApiKeyView, 'revoked' | 'expiresAt' | 'disabled'>,
+  now: number
+): boolean {
   if (key.revoked) return false
+  // Checked here rather than at the call sites: this function is the single
+  // answer to "may this key be used", and a switch honoured in some places and
+  // not others is worse than no switch.
+  if (key.disabled) return false
   if (key.expiresAt !== undefined && key.expiresAt <= now) return false
   return true
 }
