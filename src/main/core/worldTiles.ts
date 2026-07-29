@@ -505,6 +505,49 @@ export function parseBudgetReady(serverId?: string, now = Date.now()): boolean {
  * Synchronous and slow by design — the callers are expected to keep this off
  * any request path, and to respect `parseBudgetReady`.
  */
+/**
+ * One chunk out of a region file, into `tiles`.
+ *
+ * Pulled out of the parse loop so the same work can be done in one pass or in
+ * slices with the event loop running in between — see `SLICE_SLOTS`.
+ */
+function parseSlot(
+  file: Buffer,
+  table: ReturnType<typeof parseLocationTable>,
+  slot: number,
+  tiles: Map<number, ChunkTile | null>,
+  dim: string
+): void {
+  const loc = table[slot]
+  if (!loc || !loc.offset || loc.offset + 5 > file.length) return
+  const length = file.readUInt32BE(loc.offset)
+  const kind = file[loc.offset + 4]
+  const end = loc.offset + 5 + Math.max(0, length - 1)
+  if (length <= 0 || end > file.length) return
+  const raw = decompress(file.subarray(loc.offset + 5, end), kind)
+  if (!raw) return
+  try {
+    tiles.set(slot, tileFromChunk(nbt.parseUncompressed(raw), dim))
+  } catch {
+    /* one unreadable chunk must not lose the region */
+  }
+}
+
+/**
+ * How many of a region's 1024 chunks to parse before letting the event loop
+ * run.
+ *
+ * A region takes about 180 ms to parse and the main process serves every IPC
+ * call, so parsing one in a single pass freezes the whole app for that long —
+ * the console stops reading, stats stop arriving, and the interface stutters
+ * while the map loads. Slicing does not make the work shorter; it makes it
+ * interruptible, which is the part that was hurting.
+ *
+ * 32 puts the longest uninterrupted block around 6 ms — under a frame — at the
+ * cost of 32 extra event-loop turns per region, which is nothing.
+ */
+const SLICE_SLOTS = 32
+
 function loadRegion(
   serverId: string,
   path: string,
@@ -561,21 +604,7 @@ function loadRegion(
 
   const table = parseLocationTable(file.subarray(0, 4096))
   const tiles = new Map<number, ChunkTile | null>()
-  for (let slot = 0; slot < table.length; slot++) {
-    const loc = table[slot]
-    if (!loc.offset || loc.offset + 5 > file.length) continue
-    const length = file.readUInt32BE(loc.offset)
-    const kind = file[loc.offset + 4]
-    const end = loc.offset + 5 + Math.max(0, length - 1)
-    if (length <= 0 || end > file.length) continue
-    const raw = decompress(file.subarray(loc.offset + 5, end), kind)
-    if (!raw) continue
-    try {
-      tiles.set(slot, tileFromChunk(nbt.parseUncompressed(raw), dim))
-    } catch {
-      /* one unreadable chunk must not lose the region */
-    }
-  }
+  for (let slot = 0; slot < table.length; slot++) parseSlot(file, table, slot, tiles, dim)
 
   const entry: RegionEntry = { at: Date.now(), mtimeMs, tiles }
   regions.set(path, entry)
@@ -586,6 +615,104 @@ function loadRegion(
   }
   log.info(`World tiles: parsed ${tiles.size} chunks from ${path.split(/[\\/]/).pop()}`)
   return entry
+}
+
+/**
+ * The same parse, in slices, with the event loop running in between.
+ *
+ * Only the queue calls this — a request path must never parse at all. The
+ * synchronous `loadRegion` stays for callers that cannot await, and the two
+ * produce the same entry: the smoke parses one region both ways and compares
+ * every chunk.
+ */
+async function loadRegionSliced(
+  serverId: string,
+  path: string,
+  dim: string,
+  perf: MapPerfConfig
+): Promise<RegionEntry | null> {
+  if (!existsSync(path)) return null
+  let mtimeMs = 0
+  try {
+    mtimeMs = statSync(path).mtimeMs
+  } catch {
+    return null
+  }
+  const hit = regions.get(path)
+  if (hit && hit.mtimeMs === mtimeMs) {
+    hit.at = Date.now()
+    return hit
+  }
+  if (perf.cache) {
+    const cached = readCachedRegion(serverId, path, mtimeMs)
+    if (cached) {
+      regions.set(path, cached)
+      trimMemory(perf.memoryRegions)
+      return cached
+    }
+  }
+
+  lastParseAt = Date.now()
+  const giveUp = (): RegionEntry => {
+    const empty: RegionEntry = { at: Date.now(), mtimeMs, tiles: new Map() }
+    regions.set(path, empty)
+    return empty
+  }
+  let file: Buffer
+  try {
+    file = readFileSync(path)
+  } catch {
+    return giveUp()
+  }
+  if (file.length < SECTOR_HEADER) return giveUp()
+
+  const table = parseLocationTable(file.subarray(0, 4096))
+  const tiles = new Map<number, ChunkTile | null>()
+  let longest = 0
+  for (let from = 0; from < table.length; from += SLICE_SLOTS) {
+    const t0 = Date.now()
+    const to = Math.min(table.length, from + SLICE_SLOTS)
+    for (let slot = from; slot < to; slot++) parseSlot(file, table, slot, tiles, dim)
+    longest = Math.max(longest, Date.now() - t0)
+    // `setImmediate`, not a timer: this yields to the event loop once and comes
+    // straight back, so IPC and the console reader get their turn without the
+    // parse taking noticeably longer overall.
+    await new Promise((r) => setImmediate(r))
+  }
+  // The number that matters is the longest block, not the total: the total is
+  // work that has to happen either way, the block is what the interface feels.
+  lastSliceMs = longest
+
+  const entry: RegionEntry = { at: Date.now(), mtimeMs, tiles }
+  regions.set(path, entry)
+  trimMemory(perf.memoryRegions)
+  if (perf.cache) {
+    writeCachedRegion(serverId, path, entry)
+    sweepCache(perf.cacheLimitMB)
+  }
+  log.info(
+    `World tiles: parsed ${tiles.size} chunks from ${path.split(/[\/]/).pop()} ` +
+      `(longest uninterrupted slice ${longest} ms)`
+  )
+  return entry
+}
+
+/** Longest uninterrupted parse block of the last sliced parse. Read by the smoke. */
+let lastSliceMs = 0
+export function lastParseSliceMs(): number {
+  return lastSliceMs
+}
+
+/** The queue's own tile lookup: parses in slices rather than in one block. */
+export async function chunkTileSliced(
+  serverId: string,
+  dim: string,
+  chunkX: number,
+  chunkZ: number
+): Promise<void> {
+  const path = regionPath(serverId, dim, regionOf(chunkX), regionOf(chunkZ))
+  if (!path) return
+  await loadRegionSliced(serverId, path, dim, perfFor(serverId))
 }
 
 function trimMemory(keep: number): void {
@@ -692,7 +819,10 @@ async function drain(): Promise<void> {
       // the very next call was about to do anyway.
       const before = lastParseAt
       try {
-        chunkTile(job.serverId, job.dim, job.cx, job.cz)
+        // Sliced: a region takes ~180 ms and this thread answers every IPC
+        // call, so parsing one in a single block froze the interface for that
+        // long. Same work, interruptible.
+        await chunkTileSliced(job.serverId, job.dim, job.cx, job.cz)
       } catch {
         /* one bad region must not stop the queue */
       }

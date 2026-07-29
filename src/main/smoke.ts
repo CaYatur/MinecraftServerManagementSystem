@@ -129,7 +129,9 @@ import * as alertsMod from './core/alerts'
 import * as worldsMod from './core/worlds'
 import * as areasMod from '@shared/chunkAreas'
 import * as areasMod2 from './core/chunkAreas'
+import * as tilesMod from './core/worldTiles'
 import * as tex from '@shared/textures'
+import { MAP_CSS, MAP_HTML } from '@shared/mapUi'
 import * as pngMod from './core/png'
 import { deflateSync } from 'node:zlib'
 import * as assetsMod from './core/clientAssets'
@@ -2237,6 +2239,64 @@ export async function runWorldsSmoke(): Promise<void> {
     rmSync(evilZip, { force: true })
     rmSync(emptyZip, { force: true })
     console.log('WORLDS-SMOKE: import refuses zip-slip and worldless archives, cleans up after itself')
+
+    // --- 12a. a region parse must not freeze the process (#151) -------------
+    {
+      // A real region file: 1024 slots, each a deflated NBT compound. The
+      // chunks carry no sections, so `tileFromChunk` yields nothing — but the
+      // expensive half, decompress plus NBT parse, runs exactly as it does on a
+      // real world, which is what the timing here is about.
+      const chunkNbt = nbt.writeUncompressed({
+        type: 'compound',
+        name: '',
+        value: {
+          DataVersion: { type: 'int', value: 3953 },
+          // Padding, so one chunk is a realistic size rather than 30 bytes.
+          Heightmaps: { type: 'longArray', value: Array.from({ length: 256 }, () => [0, 1]) }
+        }
+      } as never)
+      const body = deflateSync(chunkNbt)
+      const sectors = Math.ceil((body.length + 5) / 4096)
+      const slots = 1024
+      const region = Buffer.alloc(8192 + slots * sectors * 4096)
+      for (let i = 0; i < slots; i++) {
+        const sector = 2 + i * sectors
+        region[i * 4] = (sector >> 16) & 255
+        region[i * 4 + 1] = (sector >> 8) & 255
+        region[i * 4 + 2] = sector & 255
+        region[i * 4 + 3] = sectors
+        const off = sector * 4096
+        region.writeUInt32BE(body.length + 1, off)
+        region[off + 4] = 2 // zlib
+        body.copy(region, off + 5)
+      }
+      // The world folder the server actually points at. By this point the
+      // worlds tests have renamed and deleted several, so "world" is a guess —
+      // and a guess that misses makes this measure nothing at all.
+      const level =
+        /^level-name=(.+)$/m.exec(readFileSync(join(root, 'server.properties'), 'utf-8'))?.[1]?.trim() ||
+        'world'
+      const rdir = join(root, level, 'region')
+      mkdirSync(rdir, { recursive: true })
+      writeFileSync(join(rdir, 'r.0.0.mca'), region)
+      // The resolved-directory cache was filled before this file existed.
+      tilesMod._resetWorldTiles()
+
+      // The queue's path parses in slices. What matters is not that it is
+      // faster — it is the same work — but that no single uninterrupted block
+      // is long enough to be felt: this thread answers every IPC call, so a
+      // 180 ms block is 180 ms of frozen interface while the map loads.
+      tilesMod.clearTileCache(SID)
+      const t0 = Date.now()
+      await tilesMod.chunkTileSliced(SID, 'overworld', 0, 0)
+      const total = Date.now() - t0
+      const slice = tilesMod.lastParseSliceMs()
+      if (slice <= 0) return fail('the sliced parse never ran; the fixture was not read')
+      if (slice > 60) return fail('a parse slice blocked for ' + slice + ' ms; the interface will stutter')
+      console.log(
+        'WORLDS-SMOKE: region parsed in ' + total + ' ms, longest uninterrupted slice ' + slice + ' ms'
+      )
+    }
 
     // --- 12b. item textures from the client jar (#127) ----------------------
     {
@@ -4455,7 +4515,7 @@ interface StubNode {
   querySelector(): StubNode
   querySelectorAll(): StubNode[]
   appendChild(): void
-  addEventListener(): void
+  addEventListener(type?: string): void
   focus(): void
   setSelectionRange(): void
   width: number
@@ -4469,6 +4529,8 @@ interface PageRun {
   ctx: Record<string, unknown>
   byId(id: string): StubNode
   calls: unknown[][]
+  /** Event types the page bound anywhere. */
+  bound: string[]
 }
 
 function runPageScript(html: string, seed: Record<string, unknown> = {}): PageRun {
@@ -4476,6 +4538,8 @@ function runPageScript(html: string, seed: Record<string, unknown> = {}): PageRu
   if (!m) throw new Error('page has no inline script')
 
   const nodes = new Map<string, StubNode>()
+  /** Every event type any element bound, so the test can ask what was wired. */
+  const bound: string[] = []
   const mkNode = (id: string): StubNode => {
     const cls = new Set<string>()
     const n: StubNode = {
@@ -4501,7 +4565,12 @@ function runPageScript(html: string, seed: Record<string, unknown> = {}): PageRu
       querySelector: () => mkNode(''),
       querySelectorAll: () => [],
       appendChild: () => {},
-      addEventListener: () => {},
+      // Recorded, not swallowed: which events the map binds is the whole
+      // question for touch support, and a stub that drops them silently would
+      // let a map with no touch handlers pass (#151).
+      addEventListener: (type: string) => {
+        bound.push(type)
+      },
       focus: () => {},
       setSelectionRange: () => {},
       // Enough of a canvas for the map to run its drawing pass. Nothing is
@@ -4653,7 +4722,7 @@ function runPageScript(html: string, seed: Record<string, unknown> = {}): PageRu
   // Throws on a syntax error, which is the first thing this is here to catch.
   runInNewContext(m[1], ctx, { filename: 'page.js' })
   Object.assign(ctx, seed) // seeds that the script's own `var` declarations reset
-  return { ctx, byId: (id) => document.getElementById(id), calls }
+  return { ctx, byId: (id) => document.getElementById(id), calls, bound }
 }
 
 export async function runWebSmoke(): Promise<void> {
@@ -7192,6 +7261,32 @@ export async function runWebSmoke(): Promise<void> {
           }
           if (pmap.MAP.view.scale !== 2) return fail('the page zoom did not change scale')
         }
+
+        // #151: the map has to be usable with a finger.
+        //
+        // It had mouse handlers only, so on a phone it could not be moved at
+        // all — panning, zooming and reading an area's note were all
+        // mouse-exclusive. Asserted on both pages, because the public site is
+        // where somebody is most likely to open it on a phone.
+        for (const [label, page] of [['panel', panel], ['site', site]] as const) {
+          for (const ev of ['touchstart', 'touchmove', 'touchend']) {
+            if (!page.bound.includes(ev)) {
+              return fail('the ' + label + ' map never binds ' + ev + '; it cannot be panned by touch')
+            }
+          }
+          // The wheel is still there — adding touch must not have cost the
+          // mouse its zoom.
+          if (!page.bound.includes('wheel')) return fail('the ' + label + ' map lost its wheel handler')
+        }
+        // CSS is half the fix: without touch-action:none the browser claims the
+        // gesture before any listener runs and preventDefault has nothing left
+        // to prevent. The same trap as the passive wheel listener in #135.
+        if (!MAP_CSS.includes('touch-action:none')) {
+          return fail('the map canvas does not set touch-action:none; touch handlers cannot win the gesture')
+        }
+        // A phone has no wheel, and that is what the hint was telling it.
+        if (!MAP_HTML.includes('pinch to zoom')) return fail('the map hint never mentions pinching')
+        if (!MAP_CSS.includes('pointer:coarse')) return fail('the hint does not adapt to a touch device')
 
         // #144: and its own copy of the chunk-area rules, for the same reason.
         // Which area owns a chunk has to read the same on all four surfaces, so

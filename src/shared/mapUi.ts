@@ -35,6 +35,9 @@ export const MAP_CSS = `
   text-align:center;padding:20px;font-size:13px;pointer-events:none}
 .mp-empty>*{pointer-events:auto}
 .mp-empty .mp-note{font-size:12.5px;opacity:.65;max-width:380px}
+/* Without this the browser takes the gesture as a page scroll before the touch
+   listeners run, and preventDefault has nothing left to prevent. */
+.mp-canvas-wrap canvas{touch-action:none}
 .mp-canvas-wrap canvas{cursor:grab}
 .mp-canvas-wrap canvas:active{cursor:grabbing}
 .mp-cursor{position:absolute;left:10px;bottom:10px;padding:4px 9px;border-radius:8px;
@@ -53,6 +56,11 @@ export const MAP_CSS = `
 .mp-ik{display:inline-flex;align-items:center;gap:5px}
 .mp-legend{display:flex;flex-wrap:wrap;gap:10px;font-size:12px;opacity:.75}
 .mp-legend .mp-hint{margin-left:auto;opacity:.6}
+/* A phone has no wheel and a mouse has no pinch. Saying both would be noise;
+   saying the wrong one is worse, and "wheel to zoom" is what a phone was being
+   told. */
+.mp-hint-touch{display:none}
+@media(hover:none),(pointer:coarse){.mp-hint-mouse{display:none}.mp-hint-touch{display:inline}}
 .mp-legend b{font-weight:800;opacity:1}
 .mp-list{display:flex;flex-wrap:wrap;gap:6px}
 .mp-chip{padding:4px 9px;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;
@@ -60,10 +68,23 @@ export const MAP_CSS = `
   border:1px solid var(--line,var(--border,rgba(255,255,255,.14)));background:var(--elev,rgba(255,255,255,.05))}
 .mp-chip:hover{border-color:var(--accent,#dc2727)}
 .mp-chip span{opacity:.6;font-weight:600;margin-left:5px}
+/* At phone width the bar wrapped to three rows and pushed the map off the
+   screen. One row that scrolls sideways keeps the map the biggest thing on the
+   page, which is the point of the map. */
+@media(max-width:640px){
+  .mp-bar{flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;
+    scrollbar-width:none;padding-bottom:2px}
+  .mp-bar::-webkit-scrollbar{display:none}
+  .mp-bar>*{flex:0 0 auto}
+  .mp-canvas-wrap{aspect-ratio:1/1}
+  .mp-legend{font-size:11.5px;gap:8px}
+  .mp-legend .mp-hint{margin-left:0;flex-basis:100%}
+  .mp-iconkey{gap:8px;font-size:11.5px}
+  .mp-list{max-height:88px;overflow-y:auto}}
 /* The area tooltip. Bottom-right, opposite the ungenerated note and clear of the
    coordinate readout, so a claimed chunk at the edge of the world can still show
    both. Clickable, because on a phone the pin is the only way to read it. */
-.mp-areatip{position:absolute;right:10px;bottom:10px;max-width:250px;padding:8px 11px;border-radius:10px;
+.mp-areatip{position:absolute;left:0;top:0;max-width:250px;padding:8px 11px;border-radius:10px;
   font-size:12.5px;line-height:1.4;background:rgba(0,0,0,.78);color:#fff;
   border:1px solid rgba(255,255,255,.16)}
 .mp-areatip.hidden{display:none}
@@ -120,7 +141,7 @@ export const MAP_HTML = `
   <div class="mp-legend">
     <span id="mpBounds"></span>
     <span id="mpCount"></span>
-    <span class="mp-hint">Drag to pan · wheel to zoom</span>
+    <span class="mp-hint"><span class="mp-hint-mouse">Drag to pan · wheel to zoom</span><span class="mp-hint-touch">Drag to pan · pinch to zoom</span></span>
   </div>
   <div id="mpList" class="mp-list"></div>
 </div>`
@@ -152,7 +173,7 @@ var MAP={data:null,heat:false,timer:null,dim:'overworld',bridge:null,busy:false,
     people and terrain rather than dots on a grid, and an operator should not
     have to find two toggles to get the obvious thing. The public feed can still
     refuse heads, and the public world is a separate operator decision. */
- view:null,vp:{width:640,height:400},fitFor:null,drag:null,cursor:null,headsOn:true,world:true,
+ view:null,vp:{width:640,height:400},fitFor:null,drag:null,cursor:null,tipAt:null,headsOn:true,world:true,
  /* Structures off, and a per-kind filter. Read-ahead follows the host: the
     panel offers it as a control, the public map takes the operator's setting. */
  marksOn:false,markFilter:null,loadAhead:false,
@@ -296,7 +317,11 @@ function mapBindNav(){
   if(!MAP.view)return;
   var r=cv.getBoundingClientRect();
   var inside=e.clientX>=r.left&&e.clientX<=r.right&&e.clientY>=r.top&&e.clientY<=r.bottom;
-  MAP.cursor=inside?mapS2W(mapLocalPoint(e,cv)):null;mapCursorText();mapAreaTip()});
+  MAP.cursor=inside?mapS2W(mapLocalPoint(e,cv)):null;
+  /* Where to put the tooltip, in CANVAS pixels. MAP.cursor is world
+     coordinates and cannot place anything on screen. */
+  MAP.tipAt=inside?mapLocalPoint(e,cv):null;
+  mapCursorText();mapAreaTip()});
  /* A click, not a drag: a pan that happens to end inside an area must not pin
     it. Distance rather than a flag, because a click always carries a mousedown
     and the two are only told apart by how far the pointer moved. */
@@ -305,7 +330,9 @@ function mapBindNav(){
   if(!MAP.view)return;
   var d0=MAP._down;
   if(d0&&(Math.abs(e.clientX-d0.x)>4||Math.abs(e.clientY-d0.y)>4))return;
-  var pt=mapS2W(mapLocalPoint(e,cv));
+  var local=mapLocalPoint(e,cv);
+  MAP.tipAt=local;
+  var pt=mapS2W(local);
   var c=mapChunkOf(pt.x,pt.z);
   /* Picking, when the host has an editor open, takes the click: adding a chunk
      and pinning the area under it at the same time would fight each other. */
@@ -318,7 +345,52 @@ function mapBindNav(){
   if(!MAP.view)return;
   e.preventDefault();
   mapZoomAt(mapLocalPoint(e,cv),e.deltaY<0?1.15:1/1.15)},{passive:false});
- cv.addEventListener('mouseleave',function(){MAP.cursor=null;mapCursorText();mapAreaTip()})}
+ cv.addEventListener('mouseleave',function(){MAP.cursor=null;MAP.tipAt=null;mapCursorText();mapAreaTip()});
+ /* ---- touch ----
+    The map had mouse handlers only, so on a phone it could not be moved at all.
+    Two things are needed and only one of them is JavaScript: without
+    touch-action:none in the CSS the browser claims the gesture as a page scroll
+    BEFORE the listener runs, and preventDefault then does nothing — the same
+    trap as the passive wheel listener above.
+    One finger pans; two pinch, which is the only zoom a phone has. */
+ var tPan=null,tPinch=null;
+ var tDist=function(t){var dx=t[0].clientX-t[1].clientX,dy=t[0].clientY-t[1].clientY;
+  return Math.sqrt(dx*dx+dy*dy)};
+ var tMid=function(t){var r=cv.getBoundingClientRect();
+  return {x:(t[0].clientX+t[1].clientX)/2-r.left,y:(t[0].clientY+t[1].clientY)/2-r.top}};
+ cv.addEventListener('touchstart',function(e){
+  if(!MAP.view)return;
+  if(e.touches.length===1){
+   tPan={x:e.touches[0].clientX,y:e.touches[0].clientY};tPinch=null;
+   /* A tap is a click with a finger, and it has to be told from a drag the same
+      way — by how far it moved. */
+   MAP._down={x:e.touches[0].clientX,y:e.touches[0].clientY}}
+  else if(e.touches.length===2){tPan=null;tPinch={d:tDist(e.touches),at:tMid(e.touches)}}
+  e.preventDefault()},{passive:false});
+ cv.addEventListener('touchmove',function(e){
+  if(!MAP.view)return;
+  if(e.touches.length===1&&tPan){
+   mapPanBy(e.touches[0].clientX-tPan.x,e.touches[0].clientY-tPan.y);
+   tPan={x:e.touches[0].clientX,y:e.touches[0].clientY}}
+  else if(e.touches.length===2&&tPinch){
+   var d=tDist(e.touches);
+   if(tPinch.d>0){var at=tMid(e.touches);mapZoomAt(at,d/tPinch.d);tPinch={d:d,at:at}}}
+  e.preventDefault()},{passive:false});
+ cv.addEventListener('touchend',function(e){
+  /* A finger that lifted without travelling is a tap: show the area under it.
+     There is no hover on a phone, so this is the ONLY way to read a note. */
+  if(!e.touches.length&&tPan&&MAP._down&&MAP.view){
+   var t=e.changedTouches&&e.changedTouches[0];
+   if(t&&Math.abs(t.clientX-MAP._down.x)<=6&&Math.abs(t.clientY-MAP._down.y)<=6){
+    var r=cv.getBoundingClientRect();
+    var local={x:t.clientX-r.left,y:t.clientY-r.top};
+    var w=mapS2W(local),c=mapChunkOf(w.x,w.z);
+    if(typeof mapAreaPicking==='function'&&mapAreaPicking()){
+     if(typeof mapAreaPickChunk==='function')mapAreaPickChunk(c.cx,c.cz)}
+    else if(MAP.areasOn){MAP.tipAt=local;mapPinArea(mapAreaAt(MAP_AREAS,c.cx,c.cz,MAP.dim))}}}
+  if(!e.touches.length){tPan=null;tPinch=null}
+  else if(e.touches.length===1){tPinch=null;tPan={x:e.touches[0].clientX,y:e.touches[0].clientY}}},
+  {passive:false})}
 function mapCursorText(){
  var el=document.getElementById('mpCursor');if(!el)return;
  el.textContent=MAP.cursor?('X '+Math.round(MAP.cursor.x)+'  Z '+Math.round(MAP.cursor.z)):''}
@@ -430,7 +502,25 @@ function mapAreaTip(){
  el.classList.remove('hidden');
  el.innerHTML='<b style="color:'+mapEsc(col)+'">'+mapEsc(a.name)+'</b>'+
   (a.note?'<div>'+mapEsc(a.note)+'</div>':'')+
-  (MAP_AREA_PIN?'<button class="mp-x" onclick="mapPinArea(null)">close</button>':'')}
+  (MAP_AREA_PIN?'<button class="mp-x" onclick="mapPinArea(null)">close</button>':'');
+ /* At the pointer, not in a corner. A note pinned to the bottom-right of a
+    fullscreen map is nowhere near the area it describes, and on a phone it sat
+    under the thumb that opened it.
+    Clamped to the canvas: anchored near an edge it would otherwise hang off
+    the side, which is how a tooltip becomes unreadable exactly where the map
+    is most likely to be clicked. */
+ var at=MAP.tipAt;var wrap=el.parentNode;
+ if(!at||!wrap){el.style.left='';el.style.top='';el.style.right='10px';el.style.bottom='10px';return}
+ el.style.right='';el.style.bottom='';
+ var bw=wrap.clientWidth||MAP.vp.width,bh=wrap.clientHeight||MAP.vp.height;
+ var tw=el.offsetWidth||220,th=el.offsetHeight||60;
+ /* Above-right of the point by default, flipped when there is no room. */
+ var x=at.x+14,y=at.y-th-12;
+ if(x+tw>bw-6)x=at.x-tw-14;
+ if(x<6)x=6;
+ if(y<6)y=at.y+16;
+ if(y+th>bh-6)y=Math.max(6,bh-th-6);
+ el.style.left=Math.round(x)+'px';el.style.top=Math.round(y)+'px'}
 function mapPinArea(a){MAP_AREA_PIN=a;mapAreaTip();mapDraw()}
 function mapToggleAreas(){MAP.areasOn=!MAP.areasOn;
  var b=document.getElementById('mpAreasBtn');
