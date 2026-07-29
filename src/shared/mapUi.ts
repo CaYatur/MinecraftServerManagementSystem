@@ -48,6 +48,9 @@ export const MAP_CSS = `
   border:1px dashed color-mix(in srgb,var(--accent,#dc2727) 45%,transparent);
   background:color-mix(in srgb,var(--accent,#dc2727) 10%,rgba(0,0,0,.55));color:#fff}
 .mp-ungen.hidden{display:none}
+.mp-iconkey{display:flex;flex-wrap:wrap;gap:12px;font-size:12px;opacity:.8;margin-top:2px}
+.mp-iconkey.hidden{display:none}
+.mp-ik{display:inline-flex;align-items:center;gap:5px}
 .mp-legend{display:flex;flex-wrap:wrap;gap:10px;font-size:12px;opacity:.75}
 .mp-legend .mp-hint{margin-left:auto;opacity:.6}
 .mp-legend b{font-weight:800;opacity:1}
@@ -100,6 +103,7 @@ export const MAP_HTML = `
     <div id="mpUngen" class="mp-ungen hidden"></div>
     <div id="mpCursor" class="mp-cursor"></div>
   </div>
+  <div id="mpIconKey" class="mp-iconkey hidden"></div>
   <div class="mp-legend">
     <span id="mpBounds"></span>
     <span id="mpCount"></span>
@@ -138,7 +142,11 @@ var MAP={data:null,heat:false,timer:null,dim:'overworld',bridge:null,busy:false,
  view:null,vp:{width:640,height:400},fitFor:null,drag:null,cursor:null,headsOn:true,world:true,
  /* Structures off, and a per-kind filter. Read-ahead follows the host: the
     panel offers it as a control, the public map takes the operator's setting. */
- marksOn:false,markFilter:null,loadAhead:false};
+ marksOn:false,markFilter:null,loadAhead:false,
+ /* Explicit rather than left undefined: the fetch guard reads it, and relying
+    on undefined not being false for the default is a coincidence, not a
+    decision. */
+ loadOnPan:true};
 /* The bridge warning and its install button (#103).
    Deliberately here, in the empty map, and nowhere else: this is where an
    operator finds out positions are missing, so it is the only place the answer
@@ -203,6 +211,10 @@ function mapRefresh(){
      world's terrain under another world's players. */
   if(MAP.dim!==d.dimension){MAP_TILES={};MAP_MARKS={}}
   MAP.data=d;MAP.dim=d.dimension;
+  /* The server's own budget, when the feed carries one. A public visitor has no
+     control over it and should not be able to spend more than the operator
+     allowed. */
+  if(typeof d.loadOnPan==='boolean')MAP.loadOnPan=d.loadOnPan;
   var dot=document.getElementById('mpDot'),state=document.getElementById('mpState');
   dot.className='mp-dot'+(d.bridge?' on':'');
   state.textContent=d.bridge?'Bridge live':'Bridge not connected';
@@ -543,6 +555,17 @@ function mapDraw(){
  /* Only meaningful when the map will not fetch by itself. */
  var lb=document.getElementById('mpLoadBtn');
  if(lb)lb.classList.toggle('hidden',MAP.loadOnPan!==false);
+ /* A glyph nobody can name is decoration. The key is only worth the space when
+    the markers are actually on. */
+ var ik=document.getElementById('mpIconKey');
+ if(ik){
+  ik.classList.toggle('hidden',!MAP.marksOn);
+  if(MAP.marksOn&&!ik.childNodes.length){
+   var html='';
+   for(var kk in MAP_ICONS){
+    var ii=MAP_ICONS[kk];
+    html+='<span class="mp-ik">'+mapIconSvg(kk,14)+mapEsc(ii.label)+'</span>'}
+   ik.innerHTML=html}}
  var g=cv.getContext('2d');g.clearRect(0,0,w,h);
  var sx=w/MAP.vp.width,sy=h/MAP.vp.height;
  /* The world first: everything else is drawn on top of it. */

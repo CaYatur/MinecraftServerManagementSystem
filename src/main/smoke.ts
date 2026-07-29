@@ -6219,6 +6219,18 @@ export async function runWebSmoke(): Promise<void> {
             return fail('the ' + label + ' page avatarUrl disagrees for ' + JSON.stringify(n))
           }
         }
+        // The map legend's glyph builder, embedded the same way. It reads the
+        // icon table through a name the page has to define under exactly that
+        // identifier — get it wrong and the legend throws in the browser with
+        // nothing wrong in the source (#116, again).
+        if (typeof pctx['mapIconSvg'] !== 'function') {
+          return fail('the ' + label + ' page has no embedded mapIconSvg')
+        }
+        for (const k of ['village', 'mine', 'not-a-kind']) {
+          if (pctx['mapIconSvg'](k, 14) !== iconSvg(k, 14)) {
+            return fail('the ' + label + ' page mapIconSvg disagrees for ' + k)
+          }
+        }
         // Only the site embeds the item helpers; the panel has no inventory.
         if (typeof pctx['itemIconUrl'] === 'function') {
           for (const idv of ['minecraft:water_bucket', '../evil', '']) {

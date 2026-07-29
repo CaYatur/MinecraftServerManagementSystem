@@ -3,7 +3,7 @@
 import { CRATE_CSS, CRATE_JS, CRATE_MODAL_HTML } from '@shared/crateUi'
 import { STORE_CSS, STORE_JS, STORE_MODAL_HTML, CRATE_ICON_SVG } from '@shared/storeUi'
 import { avatarUrl } from '@shared/profile'
-import { STRUCTURE_ICONS } from '@shared/mapIcons'
+import { iconSvg, STRUCTURE_ICONS } from '@shared/mapIcons'
 import { MAP_CSS, MAP_HTML, MAP_JS } from '@shared/mapUi'
 export function getPanelHtml(): string {
   return `<!doctype html><html lang="en"><head>
@@ -892,8 +892,12 @@ function mapPost(u){return api(u,{method:'POST'}).then(function(r){
 var avatarUrl=${avatarUrl.toString()};
 /* The structure glyphs, shared with the desktop so a village is the same shape
    in all three surfaces (#136). Self-contained, like every embedded helper. */
-var MAP_ICONS=${JSON.stringify(STRUCTURE_ICONS)};
-function mapIconFor(kind){return MAP_ICONS[kind]||MAP_ICONS.other}
+/* Named exactly as the shared module names it: iconSvg is embedded by
+   stringifying it and reads the table through this identifier. */
+var STRUCTURE_ICONS=${JSON.stringify(STRUCTURE_ICONS)};
+var MAP_ICONS=STRUCTURE_ICONS;
+function mapIconFor(kind){return STRUCTURE_ICONS[kind]||STRUCTURE_ICONS.other}
+var mapIconSvg=${iconSvg.toString()};
 function mapAvatarUrl(name){return avatarUrl(name,32)}
 var CRATE_ICON_SVG=${JSON.stringify(CRATE_ICON_SVG)};
 

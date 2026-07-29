@@ -71,9 +71,18 @@ export function iconFor(kind: string): MapIcon {
   return STRUCTURE_ICONS[kind] ?? STRUCTURE_ICONS.other
 }
 
-/** The same glyph as standalone SVG, for a legend or a list. */
+/**
+ * The same glyph as standalone SVG, for a legend or a list.
+ *
+ * Deliberately does NOT call `iconFor`, and reads the table through a name the
+ * pages also define. Both web pages embed this by stringifying it, and a
+ * stringified function that calls another only works while the bundler leaves
+ * the callee's name alone — the failure is a `ReferenceError` in the page with
+ * nothing wrong in the source it was compiled from (#116).
+ */
 export function iconSvg(kind: string, size = 16): string {
-  const ic = iconFor(kind)
+  const table = STRUCTURE_ICONS
+  const ic = table[kind] ?? table.other
   return (
     '<svg viewBox="0 0 24 24" width="' + size + '" height="' + size + '" aria-hidden="true">' +
     '<path d="' + ic.path + '" fill="' + ic.colour + '"/></svg>'
