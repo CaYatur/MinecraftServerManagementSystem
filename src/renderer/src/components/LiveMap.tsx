@@ -277,15 +277,22 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
       .mapTiles(serverId, dim, want, marks)
       .then((r) => {
         tilesPending.current = false
+        // The empty list is "read, and nothing there" — as opposed to "not read
+        // yet". Marking null only when the whole response had nothing pending
+        // meant a genuinely empty chunk was re-requested on every draw (#136).
+        const known = new Set(r.empty ?? [])
         for (const w of want) {
           const k = w.cx + ',' + w.cz
           const t = r.tiles[k]
           if (t) {
             tiles.current.set(k, bakeTile(t))
             if (t.m) markStore.current.set(k, t.m)
-          } else if (!r.pending) tiles.current.set(k, null)
+          } else if (known.has(k) || !r.pending) tiles.current.set(k, null)
         }
         setTick2((n) => n + 1)
+        // Ask again while anything is still coming, rather than waiting for the
+        // 2-second position poll — that wait is why a view filled in bands.
+        if (r.pending > 0) window.setTimeout(() => setTick2((n) => n + 1), 180)
       })
       .catch(() => {
         tilesPending.current = false

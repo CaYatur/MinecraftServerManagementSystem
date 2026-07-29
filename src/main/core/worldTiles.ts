@@ -536,13 +536,28 @@ function loadRegion(
   }
 
   lastParseAt = Date.now()
+  /**
+   * A region that cannot be read is remembered as EMPTY rather than as "not
+   * read yet".
+   *
+   * Returning null leaves `peekChunkTile` answering `undefined` forever, so the
+   * client keeps asking, the queue keeps re-running it, and the chunk never
+   * resolves — one unreadable region file is a permanent polling loop. An empty
+   * entry is honest (there is nothing to draw) and terminates.
+   */
+  const giveUp = (): RegionEntry => {
+    const empty: RegionEntry = { at: Date.now(), mtimeMs, tiles: new Map() }
+    regions.set(path, empty)
+    return empty
+  }
+
   let file: Buffer
   try {
     file = readFileSync(path)
   } catch {
-    return null
+    return giveUp()
   }
-  if (file.length < SECTOR_HEADER) return null
+  if (file.length < SECTOR_HEADER) return giveUp()
 
   const table = parseLocationTable(file.subarray(0, 4096))
   const tiles = new Map<number, ChunkTile | null>()
@@ -629,12 +644,19 @@ export function requestTiles(
   dim: string,
   want: { cx: number; cz: number }[],
   opts: { marks?: boolean } = {}
-): { tiles: Record<string, { c: number[]; h: number[]; m?: StructureMark[] }>; pending: number } {
+): {
+  tiles: Record<string, { c: number[]; h: number[]; m?: StructureMark[] }>
+  /** Chunks read and found to hold nothing — as opposed to not read yet. */
+  empty: string[]
+  pending: number
+} {
   const tiles: Record<string, { c: number[]; h: number[]; m?: StructureMark[] }> = {}
+  const empty: string[] = []
   const missing: { cx: number; cz: number }[] = []
   for (const w of want) {
     const t = peekChunkTile(serverId, dim, w.cx, w.cz)
     if (t === undefined) missing.push(w)
+    else if (!t) empty.push(w.cx + ',' + w.cz)
     // Structures are omitted unless asked for. They are a spoiler, and a
     // payload that carries them "in case" is one the public feed could leak.
     else if (t) {
@@ -652,27 +674,35 @@ export function requestTiles(
     }
   }
   if (missing.length && !working) void drain()
-  return { tiles, pending: missing.length }
+  return { tiles, empty, pending: missing.length }
 }
 
 async function drain(): Promise<void> {
   working = true
   try {
     while (queue.length) {
-      // Yielding between chunks is not enough on its own: the first chunk of an
-      // unseen region parses the whole file. Wait for the parse budget.
-      if (!parseBudgetReady(queue[0]?.serverId)) {
-        await new Promise((r) => setTimeout(r, 60))
-        continue
-      }
       const job = queue.shift()
       if (!job) break
+      // The budget is a brake on PARSING, and applying it to every job throttled
+      // the cache hits too — which after #134 is almost every read, and is why
+      // loading felt no quicker with the cache than without it (#136).
+      //
+      // Measured rather than predicted: run the job, then look at whether it
+      // parsed. Predicting meant re-stat'ing the region file to guess at work
+      // the very next call was about to do anyway.
+      const before = lastParseAt
       try {
         chunkTile(job.serverId, job.dim, job.cx, job.cz)
       } catch {
         /* one bad region must not stop the queue */
       }
-      await new Promise((r) => setImmediate(r))
+      if (lastParseAt !== before) {
+        // It really parsed. Stand back for the configured gap so the console
+        // reader and everything else on this thread get a turn.
+        await new Promise((r) => setTimeout(r, perfFor(job.serverId).parseGapMs))
+      } else {
+        await new Promise((r) => setImmediate(r))
+      }
     }
   } finally {
     working = false
