@@ -11,7 +11,7 @@
  *   node bridge/build.mjs --selftest build, then verify the wire format
  */
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, existsSync, writeFileSync, copyFileSync, rmSync, readdirSync } from 'node:fs'
+import { mkdirSync, existsSync, writeFileSync, copyFileSync, rmSync, readdirSync, readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -83,7 +83,13 @@ async function build({ selftest }) {
   }
 
   for (const f of readdirSync(RES)) copyFileSync(join(RES, f), join(CLASSES, f))
-  const jar = join(OUT, 'MSMS-Bridge-1.0.0.jar')
+  // The version comes from plugin.yml, never from a literal here. The app finds
+  // the jar by parsing its filename and the smoke asserts that the shipped jar
+  // matches what plugin.yml declares — two places to change is one place to
+  // forget, and the failure is a plugin that reports a version it is not.
+  const declared = /^version:\s*(.+)$/m.exec(readFileSync(join(RES, 'plugin.yml'), 'utf8'))
+  if (!declared) throw new Error('plugin.yml has no version')
+  const jar = join(OUT, `MSMS-Bridge-${declared[1].trim()}.jar`)
   run('jar', ['--create', '--file', jar, '-C', CLASSES, '.'])
   console.log(`\nbuilt ${jar}`)
   console.log('Drop it in your server\'s plugins/ folder and restart.')
