@@ -141,6 +141,9 @@ main{min-height:52vh;flex:1 0 auto}
 .pcoords span{font-size:11px}
 .pcoords b{font-size:15px;font-variant-numeric:tabular-nums}
 .phid{margin-top:20px;font-size:13px}
+.ihead{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
+.ihead h3{margin-right:auto}
+.imeta{display:flex;align-items:center;gap:10px;font-size:12.5px}
 /* An inventory should look like one: square slots, the picture at item size,
    pixelated, with the name underneath as the fallback when there is none. */
 .inv{display:grid;grid-template-columns:repeat(auto-fill,minmax(84px,1fr));gap:8px;margin-bottom:8px}
@@ -544,6 +547,37 @@ function invHtml(items){
  if(!items||!items.length)return '<p class="muted">'+esc(T('profile.empty'))+'</p>';
  return '<div class="inv">'+items.map(itemHtml).join('')+'</div>'}
 function profDate(ms){return ms?new Date(ms).toLocaleDateString():'—'}
+/* How old this actually is, and a way to ask for something newer (#117).
+   Minecraft writes a player's file on a world save or a disconnect, so an
+   inventory can be minutes behind — which reads as a bug unless the page says
+   so. Only the owner gets the button: the refresh asks the server to flush the
+   whole world, which is a real cost, and one visitor should not be able to
+   spend it on everybody's behalf. */
+function invMeta(p){
+ var mine=ptoken&&pname&&p.mcName&&pname.toLowerCase()===p.mcName.toLowerCase();
+ return '<div class="imeta">'+
+  (p.dataAt?'<span class="muted">'+esc(T('profile.asOf').replace('{when}',new Date(p.dataAt).toLocaleTimeString()))+'</span>':'')+
+  (mine?'<button class="btn sm" id="invRefreshBtn" onclick="refreshInventory()">'+esc(T('profile.refresh'))+'</button>':'')+
+  '</div>'}
+var invBusy=false;
+function refreshInventory(){
+ if(invBusy)return;
+ invBusy=true;
+ var b=document.getElementById('invRefreshBtn');
+ if(b){b.disabled=true;b.textContent=T('profile.refreshing')}
+ api('/api/public/profile/refresh',{},ptoken).then(function(r){
+  invBusy=false;
+  if(r.s===401){staleSession();return}
+  if(r.s===429){
+   /* Say which limit and for how long. "Try again later" is not an answer when
+      the caller can be told exactly. */
+   if(b){b.disabled=false;b.textContent=T('profile.refresh')}
+   var el=document.getElementById('profBox');
+   var note=document.createElement('p');note.className='muted';
+   note.textContent=T('profile.refreshLimited').replace('{n}',(r.j&&r.j.retryAfter)||60);
+   if(el)el.appendChild(note);
+   return}
+  loadProfile('')})}
 function statBar(cls,value,max,label,text){
  var pct=Math.max(0,Math.min(100,(value/max)*100));
  return '<div class="pbar"><div class="pbl"><span>'+esc(label)+'</span><b>'+esc(text)+'</b></div>'+
@@ -577,7 +611,7 @@ function profileHtml(p){
    return '<div><span class="muted">'+ax+'</span><b>'+esc(String(Math.round(v)))+'</b></div>'}).join('')+
   (p.location.dimension?'<div><span class="muted">'+esc(T('profile.dimension'))+'</span><b>'+
     esc(String(p.location.dimension).replace(/^minecraft:/,''))+'</b></div>':'')+'</div>';
- if(p.inventory)h+='<h3>'+esc(T('profile.inventory'))+'</h3>'+invHtml(p.inventory);
+ if(p.inventory)h+='<div class="ihead"><h3>'+esc(T('profile.inventory'))+'</h3>'+invMeta(p)+'</div>'+invHtml(p.inventory);
  if(p.enderChest)h+='<h3>'+esc(T('profile.enderChest'))+'</h3>'+invHtml(p.enderChest);
  /* Say what is missing and why. A profile that simply stops after the dates
     reads as broken; "the server has not published this" reads as a choice. */
