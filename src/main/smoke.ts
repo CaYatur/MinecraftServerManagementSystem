@@ -78,6 +78,7 @@ import * as backupsMod from './core/backups'
 import * as schedulerMod from './core/scheduler'
 import * as modsMod from './core/mods'
 import * as bridgeInstallMod from './core/bridgeInstall'
+import * as worldTilesMod from './core/worldTiles'
 import {
   bridgeNeed,
   bridgeVersionOf,
@@ -1054,7 +1055,97 @@ export async function runModUpdateSmoke(): Promise<void> {
       if (shade({ r: 100, g: 100, b: 100 }, 3).r <= flat.r) return fail('a step up is not lighter')
       if (shade({ r: 100, g: 100, b: 100 }, -3).r >= flat.r) return fail('a step down is not darker')
 
-      console.log('MODUPDATE-SMOKE: region decoding OK (1.16 packing split, negative longs and coords, stable colours)')
+      // A real chunk, built as real NBT and read back by the real function.
+      //
+      // The bit decoding above was tested and the CHUNK READER was not, and
+      // that is exactly where the bug was: prismarine-nbt wraps a list twice
+      // (`{type:'list', value:{type:'compound', value:[...]}}`) and the palette
+      // was unwrapped once. `Array.isArray` was false for every section of
+      // every chunk, every section was skipped, and the world renderer produced
+      // nothing at all — on a real world, silently, with every pure test green.
+      {
+        const section = (y: number, names: string[], data?: bigint[]): unknown => ({
+          Y: { type: 'byte', value: y },
+          block_states: {
+            type: 'compound',
+            value: {
+              palette: {
+                type: 'list',
+                value: {
+                  type: 'compound',
+                  value: names.map((n) => ({ Name: { type: 'string', value: n } }))
+                }
+              },
+              ...(data
+                ? { data: { type: 'longArray', value: data.map((b) => [Number(b >> 32n), Number(b & 0xffffffffn)]) } }
+                : {})
+            }
+          }
+        })
+        const chunkNbt = {
+          type: 'compound',
+          name: '',
+          value: {
+            DataVersion: { type: 'int', value: 4435 },
+            sections: {
+              type: 'list',
+              value: {
+                type: 'compound',
+                // Air above, solid stone below: the reader must walk down past
+                // the air and stop on the stone.
+                value: [section(5, ['minecraft:air']), section(4, ['minecraft:stone'])]
+              }
+            }
+          }
+        }
+        const tile = worldTilesMod.tileFromChunk(chunkNbt)
+        if (!tile) return fail('a valid chunk produced no tile — the reader found no sections')
+        if (tile.colour.length !== 256) return fail('a tile is not 16x16')
+        const stone = blockColour('stone')
+        const want = (stone.r << 16) | (stone.g << 8) | stone.b
+        if (tile.colour.some((c) => c !== want)) return fail('a solid stone chunk did not render as stone')
+        // Height is the top of the stone section: Y=4 means blocks 64..79, and
+        // the surface is the highest of them.
+        if (tile.height.some((h) => h !== 4 * 16 + 15)) {
+          return fail('the surface height is wrong: ' + tile.height[0])
+        }
+        // Foliage is looked THROUGH: the grass standing on the ground is not
+        // the ground, and colouring by it turned a bamboo jungle maroon.
+        const planted = worldTilesMod.tileFromChunk({
+          type: 'compound',
+          name: '',
+          value: {
+            DataVersion: { type: 'int', value: 4435 },
+            sections: {
+              type: 'list',
+              value: {
+                type: 'compound',
+                value: [section(5, ['minecraft:short_grass']), section(4, ['minecraft:grass_block'])]
+              }
+            }
+          }
+        })
+        const grass = blockColour('grass_block')
+        if (!planted) return fail('a planted chunk produced no tile')
+        if (planted.colour[0] !== ((grass.r << 16) | (grass.g << 8) | grass.b)) {
+          return fail('the map coloured a column by the plant standing on it, not the ground')
+        }
+        // An all-air chunk is not a tile at all.
+        if (
+          worldTilesMod.tileFromChunk({
+            type: 'compound',
+            name: '',
+            value: {
+              DataVersion: { type: 'int', value: 4435 },
+              sections: { type: 'list', value: { type: 'compound', value: [section(5, ['minecraft:air'])] } }
+            }
+          })
+        ) {
+          return fail('an all-air chunk produced a tile')
+        }
+      }
+
+      console.log('MODUPDATE-SMOKE: region decoding OK (1.16 packing split, real NBT chunk renders, foliage seen through)')
     }
 
     // ---- the Bridge plugin installer (#103) ----
