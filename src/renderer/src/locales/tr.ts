@@ -126,6 +126,9 @@ const tr: typeof en = {
     emptyDimension: 'Şu anda bu boyutta kimse yok.',
     needsBridge:
       'Henüz canlı konum yok — bu sunucuda MSMS-Bridge eklentisi yok. Konumlar sunucu konsolu üzerinden geldiği için kurmak ek bir port açmaz.',
+    heads: 'Kafalar',
+    world: 'Dünya',
+    resetView: 'Görünümü sıfırla',
     installBridge: 'MSMS-Bridge {{version}} kur',
     installing: 'Kuruluyor…',
     bridgeInstalled: '{{version}} kuruldu. Yüklenmesi için sunucuyu yeniden başlat.',

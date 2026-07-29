@@ -65,8 +65,8 @@ export const MAP_HTML = `
       <option value="128">128 blocks</option>
     </select>
     <button onclick="mapToggleHeat()" id="mpHeatBtn">Heatmap: on</button>
-    <button onclick="mapToggleHeads()" id="mpHeadsBtn">Heads: off</button>
-    <button onclick="mapToggleWorld()" id="mpWorldBtn">World: off</button>
+    <button onclick="mapToggleHeads()" id="mpHeadsBtn">Heads: on</button>
+    <button onclick="mapToggleWorld()" id="mpWorldBtn">World: on</button>
     <button onclick="mapResetView()" title="Fit the view to everyone online">Reset view</button>
   </div>
   <div class="mp-canvas-wrap">
@@ -103,7 +103,11 @@ export const MAP_HTML = `
  */
 export const MAP_JS = `
 var MAP={data:null,heat:true,timer:null,dim:'overworld',bridge:null,busy:false,msg:'',
- view:null,vp:{width:640,height:400},fitFor:null,drag:null,cursor:null,headsOn:false,world:false};
+ /* Heads and the world ON by default (#128): they are what make this a map of
+    people and terrain rather than dots on a grid, and an operator should not
+    have to find two toggles to get the obvious thing. The public feed can still
+    refuse heads, and the public world is a separate operator decision. */
+ view:null,vp:{width:640,height:400},fitFor:null,drag:null,cursor:null,headsOn:true,world:true};
 /* The bridge warning and its install button (#103).
    Deliberately here, in the empty map, and nowhere else: this is where an
    operator finds out positions are missing, so it is the only place the answer
@@ -307,6 +311,10 @@ function mapHead(name){
  /* Keyed by NAME since #116: the uuid MSMS holds is the offline-mode one on a
     cracked server, which no skin service has ever seen. */
  if(!name)return null;
+ /* A head is decoration. If this environment has no Image at all, fall back to
+    the dot rather than taking the whole draw down with it — the markers, the
+    grid and the terrain are the map, and none of them needs an avatar. */
+ if(typeof Image!=='function')return null;
  var hit=MAP_HEADS[name];
  if(hit!==undefined)return hit;
  MAP_HEADS[name]=null;
