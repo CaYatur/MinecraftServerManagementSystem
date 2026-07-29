@@ -284,7 +284,7 @@ function mapBakeTile(t){
   img.data[o+2]=Math.max(0,Math.min(255,Math.round((c&255)*f)));
   img.data[o+3]=255}
  g.putImageData(img,0,0);return cv}
-function mapDrawTiles(g,w,h,dpr){
+function mapDrawTiles(g,w,h){
  if(!MAP.world)return;
  var chunks=mapVisibleChunks();
  if(!chunks.length)return;
@@ -342,7 +342,7 @@ function mapDraw(){
  var g=cv.getContext('2d');g.clearRect(0,0,w,h);
  var sx=w/MAP.vp.width,sy=h/MAP.vp.height;
  /* The world first: everything else is drawn on top of it. */
- mapDrawTiles(g,w,h,dpr);
+ mapDrawTiles(g,w,h);
  mapFetchTiles();
  var px=function(x){return mapW2S({x:x,z:0}).x*sx};
  var pz=function(z){return mapW2S({x:0,z:z}).y*sy};

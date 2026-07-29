@@ -102,6 +102,14 @@ async function drainTiles(): Promise<void> {
   tileWorking = true
   try {
     while (tileQueue.length) {
+      // Yielding between chunks is not enough on its own: the first chunk of an
+      // unseen region parses the whole file in one go, so back-to-back regions
+      // would hold the main thread for seconds. Wait for the parse budget
+      // instead of spinning through the queue.
+      if (!worldTiles.parseBudgetReady()) {
+        await new Promise((r) => setTimeout(r, 60))
+        continue
+      }
       const job = tileQueue.shift()
       if (!job) break
       try {
@@ -109,8 +117,8 @@ async function drainTiles(): Promise<void> {
       } catch {
         /* one bad region must not stop the queue */
       }
-      // Yield between chunks: this is the main process, and the console feed,
-      // the metrics timer and every other request share it.
+      // ...and still yield between chunks, for the ones that hit a region the
+      // previous job already parsed.
       await new Promise((r) => setImmediate(r))
     }
   } finally {

@@ -168,10 +168,31 @@ function decompress(buf: Buffer, kind: number): Buffer | null {
 }
 
 /**
+ * The smallest gap between two region parses.
+ *
+ * The queue that feeds this yields between CHUNKS, which sounded like enough
+ * and is not: the first chunk of an unseen region parses the whole file — up to
+ * 1024 chunks of NBT — in one uninterrupted go. A visitor panning across an
+ * explored world queues chunks from dozens of regions, and back-to-back parses
+ * would hold the main thread for seconds at a time, which is the same thread
+ * the console reader, the metrics timer and every other request live on.
+ *
+ * One region every quarter second still fills a viewport in a few seconds and
+ * leaves the process responsive between them.
+ */
+const REGION_PARSE_GAP_MS = 250
+let lastParseAt = 0
+
+/** Whether a parse is allowed to start right now. */
+export function parseBudgetReady(now = Date.now()): boolean {
+  return now - lastParseAt >= REGION_PARSE_GAP_MS
+}
+
+/**
  * Parse one region file, or return the cached parse.
  *
  * Synchronous and slow by design — the callers are expected to keep this off
- * any request path.
+ * any request path, and to respect `parseBudgetReady`.
  */
 function loadRegion(path: string): RegionEntry | null {
   if (!existsSync(path)) return null
@@ -187,6 +208,7 @@ function loadRegion(path: string): RegionEntry | null {
     return hit
   }
 
+  lastParseAt = Date.now()
   let file: Buffer
   try {
     file = readFileSync(path)
@@ -269,9 +291,3 @@ export function chunkTile(
   return region.tiles.get(chunkSlot(localChunk(chunkX), localChunk(chunkZ))) ?? null
 }
 
-/** Whether this server has a world worth asking for at all. */
-export function hasWorld(serverId: string, dim: string): boolean {
-  const p = regionPath(serverId, dim, 0, 0)
-  if (!p) return false
-  return existsSync(p.replace(/r\.0\.0\.mca$/, ''))
-}
