@@ -1001,6 +1001,7 @@ const tr: typeof en = {
     }
   },
   common: {
+    add: 'Ekle',
     save: 'Kaydet',
     cancel: 'İptal',
     browse: 'Gözat…',
