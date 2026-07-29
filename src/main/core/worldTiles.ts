@@ -494,6 +494,28 @@ const REGION_PARSE_GAP_MS = 250
 let lastParseAt = 0
 
 /** Whether a parse is allowed to start right now. */
+/**
+ * Whether serving this chunk means parsing a region, rather than reading one
+ * that is already in memory or on disk.
+ *
+ * Only a real parse needs the brake. Asking the question costs two stats; not
+ * asking it cost a 250ms wait on work that takes one millisecond.
+ */
+function willParse(serverId: string, dim: string, cx: number, cz: number): boolean {
+  const path = regionPath(serverId, dim, regionOf(cx), regionOf(cz))
+  if (!path || !existsSync(path)) return false
+  let mtimeMs = 0
+  try {
+    mtimeMs = statSync(path).mtimeMs
+  } catch {
+    return false
+  }
+  if (regions.get(path)?.mtimeMs === mtimeMs) return false
+  if (!perfFor(serverId).cache) return true
+  const f = cacheFileFor(serverId, path)
+  return !existsSync(f)
+}
+
 export function parseBudgetReady(serverId?: string, now = Date.now()): boolean {
   const gap = serverId ? perfFor(serverId).parseGapMs : REGION_PARSE_GAP_MS
   return now - lastParseAt >= gap
@@ -629,12 +651,19 @@ export function requestTiles(
   dim: string,
   want: { cx: number; cz: number }[],
   opts: { marks?: boolean } = {}
-): { tiles: Record<string, { c: number[]; h: number[]; m?: StructureMark[] }>; pending: number } {
+): {
+  tiles: Record<string, { c: number[]; h: number[]; m?: StructureMark[] }>
+  /** Chunks read and found to hold nothing — as opposed to not read yet. */
+  empty: string[]
+  pending: number
+} {
   const tiles: Record<string, { c: number[]; h: number[]; m?: StructureMark[] }> = {}
+  const empty: string[] = []
   const missing: { cx: number; cz: number }[] = []
   for (const w of want) {
     const t = peekChunkTile(serverId, dim, w.cx, w.cz)
     if (t === undefined) missing.push(w)
+    else if (!t) empty.push(w.cx + ',' + w.cz)
     // Structures are omitted unless asked for. They are a spoiler, and a
     // payload that carries them "in case" is one the public feed could leak.
     else if (t) {
@@ -652,21 +681,25 @@ export function requestTiles(
     }
   }
   if (missing.length && !working) void drain()
-  return { tiles, pending: missing.length }
+  return { tiles, empty, pending: missing.length }
 }
 
 async function drain(): Promise<void> {
   working = true
   try {
     while (queue.length) {
-      // Yielding between chunks is not enough on its own: the first chunk of an
-      // unseen region parses the whole file. Wait for the parse budget.
-      if (!parseBudgetReady(queue[0]?.serverId)) {
-        await new Promise((r) => setTimeout(r, 60))
-        continue
-      }
       const job = queue.shift()
       if (!job) break
+      // The budget is a brake on PARSING, and it was being applied to every job
+      // — including the ones that will hit the disk cache and cost about a
+      // millisecond. After #134 most reads are cache hits, so the brake had
+      // ended up throttling almost exclusively the fast path, which is what
+      // made loading feel no quicker with the cache than without it (#136).
+      if (willParse(job.serverId, job.dim, job.cx, job.cz) && !parseBudgetReady(job.serverId)) {
+        queue.unshift(job)
+        await new Promise((r) => setTimeout(r, 40))
+        continue
+      }
       try {
         chunkTile(job.serverId, job.dim, job.cx, job.cz)
       } catch {

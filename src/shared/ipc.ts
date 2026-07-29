@@ -351,6 +351,8 @@ export interface MsmsApi {
     marks?: boolean
   ): Promise<{
     tiles: Record<string, { c: number[]; h: number[]; m?: StructureMark[] }>
+    /** Chunks read and found to hold nothing, as opposed to not read yet. */
+    empty: string[]
     pending: number
   }>
   /** Drop every cached region. Returns how many files went. */

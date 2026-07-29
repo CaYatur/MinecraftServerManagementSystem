@@ -41,6 +41,13 @@ export const MAP_CSS = `
   font-size:12px;font-variant-numeric:tabular-nums;pointer-events:none;
   background:rgba(0,0,0,.55);color:#fff}
 .mp-cursor:empty{display:none}
+/* Said in words as well as drawn, so "nobody has been here" is not left to a
+   faint hatch nobody reads as deliberate (#136). */
+.mp-ungen{position:absolute;right:10px;top:10px;max-width:230px;padding:7px 11px;border-radius:10px;
+  font-size:12px;line-height:1.35;pointer-events:none;
+  border:1px dashed color-mix(in srgb,var(--accent,#dc2727) 45%,transparent);
+  background:color-mix(in srgb,var(--accent,#dc2727) 10%,rgba(0,0,0,.55));color:#fff}
+.mp-ungen.hidden{display:none}
 .mp-legend{display:flex;flex-wrap:wrap;gap:10px;font-size:12px;opacity:.75}
 .mp-legend .mp-hint{margin-left:auto;opacity:.6}
 .mp-legend b{font-weight:800;opacity:1}
@@ -89,6 +96,7 @@ export const MAP_HTML = `
   <div class="mp-canvas-wrap">
     <canvas id="mpCanvas"></canvas>
     <div id="mpEmpty" class="mp-empty"></div>
+    <div id="mpUngen" class="mp-ungen hidden"></div>
     <div id="mpCursor" class="mp-cursor"></div>
   </div>
   <div class="mp-legend">
@@ -327,15 +335,24 @@ function mapFetchTiles(){
  mapGet(mapTilesUrl(MAP.dim,want.map(function(c){return c.cx+','+c.cz}).join(';'),MAP.marksOn)).then(function(d){
   MAP_TILE_PENDING=false;
   if(!d||!d.tiles)return;
+  /* The empty list is the server saying "I have read that region and there is
+     nothing in that chunk". Marking a chunk null only when the WHOLE response had
+     nothing pending was the bug: on a busy viewport something is always
+     pending, so genuinely empty chunks were never marked and were re-requested
+     on every single draw, forever (#136). */
+  var known={};
+  for(var e=0;e<(d.empty||[]).length;e++)known[d.empty[e]]=1;
   for(var i=0;i<want.length;i++){
    var k=mapTileKey(want[i].cx,want[i].cz);
    var t=d.tiles[k];
-   /* null, not undefined, for a chunk the server has parsed and found empty —
-      otherwise it is re-requested forever. A pending one is left unset so the
-      next poll asks again. */
    if(t){MAP_TILES[k]=mapBakeTile(t);if(t.m)MAP_MARKS[k]=t.m}
-   else if(!d.pending)MAP_TILES[k]=null}
-  mapDraw()})}
+   else if(known[k]||!d.pending)MAP_TILES[k]=null}
+  mapDraw();
+  /* Ask again straight away while anything is still coming. Waiting for the
+     2-second position poll is why a viewport filled in visible bands over ten
+     seconds instead of arriving at once. */
+  if(d.pending>0){clearTimeout(MAP_TILE_SOON);MAP_TILE_SOON=setTimeout(mapFetchTiles,180)}})}
+var MAP_TILE_SOON=null;
 /* Structure markers. Off by default: they are a spoiler for the players and
    clutter for everyone else. The server decides whether they arrive at all —
    the public feed sends none unless an operator published them. */
@@ -401,6 +418,44 @@ function mapBakeTile(t){
   img.data[o+2]=Math.max(0,Math.min(255,Math.round((c&255)*f)));
   img.data[o+3]=255}
  g.putImageData(img,0,0);return cv}
+/* Area nobody has ever been to.
+   Drawn as a deliberate, themed hatch rather than left black, because black is
+   indistinguishable from "still loading" and from "broken" — an operator was
+   waiting for a load that was never coming (#136). */
+function mapDrawUngenerated(g,w,h,dpr){
+ if(!MAP.world||!MAP.view)return;
+ var b=mapChunkBox();if(!b)return;
+ if((b.x1-b.x0+1)*(b.z1-b.z0+1)>4096)return;
+ var sx=w/MAP.vp.width,sy=h/MAP.vp.height;
+ var size=16*MAP.view.scale;
+ /* Too small to read as anything but noise; leave it plain. */
+ if(size*sx<3)return;
+ var accent=mapAccent();var ungen=0;
+ for(var cz=b.z0;cz<=b.z1;cz++)for(var cx=b.x0;cx<=b.x1;cx++){
+  if(MAP_TILES[mapTileKey(cx,cz)]!==null)continue;
+  var p=mapW2S({x:cx*16,z:cz*16});
+  var x=p.x*sx,y=p.y*sy,d=size*sx,dh2=size*sy;
+  g.fillStyle='rgba('+accent+',0.055)';
+  g.fillRect(x,y,d+1,dh2+1);ungen++}
+ mapUngenNote(ungen,(b.x1-b.x0+1)*(b.z1-b.z0+1))}
+/* How much of the view is area nobody has generated, said in words. A hatch on
+   its own is just a colour; the sentence is what stops someone waiting. */
+function mapUngenNote(ungen,total){
+ var el=document.getElementById('mpUngen');if(!el)return;
+ var pending=0;
+ for(var k in MAP_TILES)if(MAP_TILES[k]===undefined)pending++;
+ var show=total>0&&ungen/total>0.15;
+ el.classList.toggle('hidden',!show);
+ if(show)el.textContent='Shaded area has never been generated — no player has been there, so there is nothing to draw.'}
+/* The site accent as an "r,g,b" triple, so the hatch belongs to the theme
+   rather than being a hardcoded red. */
+function mapAccent(){
+ try{
+  var v=getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
+  var m=/^#([0-9a-f]{6})$/i.exec(v);
+  if(m){var n=parseInt(m[1],16);return ((n>>16)&255)+','+((n>>8)&255)+','+(n&255)}
+ }catch(e){}
+ return '220,39,39'}
 function mapDrawTiles(g,w,h){
  if(!MAP.world)return;
  var chunks=mapDrawableChunks();
@@ -471,6 +526,7 @@ function mapDraw(){
  var g=cv.getContext('2d');g.clearRect(0,0,w,h);
  var sx=w/MAP.vp.width,sy=h/MAP.vp.height;
  /* The world first: everything else is drawn on top of it. */
+ mapDrawUngenerated(g,w,h,dpr);
  mapDrawTiles(g,w,h);
  mapFetchTiles();
  var px=function(x){return mapW2S({x:x,z:0}).x*sx};
