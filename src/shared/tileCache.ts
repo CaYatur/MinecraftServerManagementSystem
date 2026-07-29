@@ -26,7 +26,7 @@ import { STRUCTURE_KINDS } from './regionFormat'
  * map with the old colours has no way to connect it to an update they
  * installed. Changing any of those things and NOT bumping this is the bug.
  */
-export const TILE_CACHE_VERSION = 3
+export const TILE_CACHE_VERSION = 4
 
 const MAGIC = 0x4d53544c // 'MSTL'
 const COLUMNS = 256

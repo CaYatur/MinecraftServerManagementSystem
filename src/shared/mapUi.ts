@@ -26,8 +26,14 @@ export const MAP_CSS = `
    Turning pointer events off was right when it was one line of text over a
    canvas and is exactly wrong now — it would swallow every click on the install
    button while leaving it looking enabled. */
+/* The overlay covers the whole canvas, so it must be transparent to the mouse
+   and only its CHILDREN clickable. Making the whole thing clickable — which is
+   what #103 did so the install button would work — handed every mousedown,
+   mousemove and wheel on the map to an invisible box: no panning, no zooming,
+   and a wheel that fell through and scrolled the page (#135). */
 .mp-empty{position:absolute;inset:0;display:grid;place-content:center;justify-items:center;gap:9px;
-  text-align:center;padding:20px;font-size:13px}
+  text-align:center;padding:20px;font-size:13px;pointer-events:none}
+.mp-empty>*{pointer-events:auto}
 .mp-empty .mp-note{font-size:12.5px;opacity:.65;max-width:380px}
 .mp-canvas-wrap canvas{cursor:grab}
 .mp-canvas-wrap canvas:active{cursor:grabbing}
@@ -263,17 +269,40 @@ function mapCursorText(){
    that stutters; a chunk only changes when the server rewrites its region. */
 var MAP_TILES={},MAP_TILE_PENDING=false;
 function mapTileKey(cx,cz){return cx+','+cz}
-function mapVisibleChunks(){
- if(!MAP.view)return [];
+/* The viewport in chunk coordinates. */
+function mapChunkBox(){
+ if(!MAP.view)return null;
  var tl=mapS2W({x:0,y:0}),br=mapS2W({x:MAP.vp.width,y:MAP.vp.height});
+ return {x0:Math.floor(tl.x/16),x1:Math.floor(br.x/16),
+  z0:Math.floor(tl.z/16),z1:Math.floor(br.z/16)}}
+/**
+ * Chunks to REQUEST. Capped, because zoomed out a viewport covers tens of
+ * thousands and asking for them is pointless as well as expensive — at that
+ * scale a chunk is a fraction of a pixel.
+ */
+function mapVisibleChunks(){
+ var b=mapChunkBox();if(!b)return [];
+ if((b.x1-b.x0+1)*(b.z1-b.z0+1)>4096)return [];
  var out=[];
- var x0=Math.floor(tl.x/16),x1=Math.floor(br.x/16);
- var z0=Math.floor(tl.z/16),z1=Math.floor(br.z/16);
- /* Capped: zoomed all the way out a viewport covers tens of thousands of
-    chunks, and asking for them would be pointless as well as expensive — at
-    that scale a chunk is a fraction of a pixel. */
- if((x1-x0+1)*(z1-z0+1)>4096)return [];
- for(var z=z0;z<=z1;z++)for(var x=x0;x<=x1;x++)out.push({cx:x,cz:z});
+ for(var z=b.z0;z<=b.z1;z++)for(var x=b.x0;x<=b.x1;x++)out.push({cx:x,cz:z});
+ return out}
+/**
+ * Tiles to DRAW: everything already held that falls in view.
+ *
+ * A different question from what to request, and conflating the two is why the
+ * terrain vanished when zoomed out (#135) — the request cap correctly refused
+ * to ask for a million chunks and took the drawing down with it. Iterating what
+ * is HELD rather than what is visible also costs the size of the cache instead
+ * of the size of the viewport, so it stays cheap however far out you go.
+ */
+function mapDrawableChunks(){
+ var b=mapChunkBox();if(!b)return [];
+ var out=[];
+ for(var k in MAP_TILES){
+  if(!MAP_TILES[k])continue;
+  var p=k.split(',');var cx=+p[0],cz=+p[1];
+  if(cx<b.x0-1||cx>b.x1+1||cz<b.z0-1||cz>b.z1+1)continue;
+  out.push({cx:cx,cz:cz})}
  return out}
 var MAP_MARKS={};
 function mapFetchTiles(){
@@ -315,7 +344,7 @@ function mapDrawMarks(g,w,h,dpr){
  if(!MAP.marksOn)return;
  var sx=w/MAP.vp.width,sy=h/MAP.vp.height;
  g.textAlign='center';g.textBaseline='middle';g.font='bold '+(10*dpr)+'px Inter,system-ui,sans-serif';
- var chunks=mapVisibleChunks();
+ var chunks=mapDrawableChunks();
  for(var i=0;i<chunks.length;i++){
   var list=MAP_MARKS[mapTileKey(chunks[i].cx,chunks[i].cz)];
   if(!list)continue;
@@ -361,7 +390,7 @@ function mapBakeTile(t){
  g.putImageData(img,0,0);return cv}
 function mapDrawTiles(g,w,h){
  if(!MAP.world)return;
- var chunks=mapVisibleChunks();
+ var chunks=mapDrawableChunks();
  if(!chunks.length)return;
  var sx=w/MAP.vp.width,sy=h/MAP.vp.height;
  var size=16*MAP.view.scale;

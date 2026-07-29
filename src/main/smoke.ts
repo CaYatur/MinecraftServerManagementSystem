@@ -1138,6 +1138,43 @@ export async function runModUpdateSmoke(): Promise<void> {
         if (planted.colour[0] !== ((grass.r << 16) | (grass.g << 8) | grass.b)) {
           return fail('the map coloured a column by the plant standing on it, not the ground')
         }
+        // The nether has a bedrock roof, so a top-down scan finds bedrock in
+        // every column and paints the whole dimension one flat grey. A nether
+        // map has to get UNDER the roof: skip solid blocks until an air gap has
+        // been seen, then take the first thing below it (#135).
+        const netherish = {
+          type: 'compound',
+          name: '',
+          value: {
+            DataVersion: { type: 'int', value: 4435 },
+            sections: {
+              type: 'list',
+              value: {
+                type: 'compound',
+                value: [
+                  section(8, ['minecraft:bedrock']), // the roof, at y=128..143
+                  section(7, ['minecraft:air']), // the gap a player flies through
+                  section(6, ['minecraft:netherrack']) // the floor they stand on
+                ]
+              }
+            }
+          }
+        }
+        const roof = worldTilesMod.tileFromChunk(netherish, 'overworld')
+        const floor = worldTilesMod.tileFromChunk(netherish, 'nether')
+        const bedrock = blockColour('bedrock')
+        const netherrack = blockColour('netherrack')
+        if (!roof || !floor) return fail('a nether-shaped chunk produced no tile')
+        // Read as an overworld it finds the roof — which is the bug.
+        if (roof.colour[0] !== ((bedrock.r << 16) | (bedrock.g << 8) | bedrock.b)) {
+          return fail('the overworld rule should have stopped at the bedrock roof')
+        }
+        // Read as the nether it finds the floor.
+        if (floor.colour[0] !== ((netherrack.r << 16) | (netherrack.g << 8) | netherrack.b)) {
+          return fail('the nether rule did not get under the roof')
+        }
+        if (floor.height[0] >= 128) return fail('the nether surface is above the roof: ' + floor.height[0])
+
         // An all-air chunk is not a tile at all.
         if (
           worldTilesMod.tileFromChunk({

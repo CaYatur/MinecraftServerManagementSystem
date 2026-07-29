@@ -223,19 +223,45 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
   const tilesPending = useRef(false)
   const [tick2, setTick2] = useState(0)
 
-  const visibleChunks = useCallback((): { cx: number; cz: number }[] => {
-    if (!view) return []
+  const chunkBox = useCallback((): { x0: number; x1: number; z0: number; z1: number } | null => {
+    if (!view) return null
     const tl = screenToWorld({ x: 0, y: 0 }, view, vp)
     const br = screenToWorld({ x: vp.width, y: vp.height }, view, vp)
-    const x0 = Math.floor(tl.x / 16)
-    const x1 = Math.floor(br.x / 16)
-    const z0 = Math.floor(tl.z / 16)
-    const z1 = Math.floor(br.z / 16)
-    if ((x1 - x0 + 1) * (z1 - z0 + 1) > 4096) return []
-    const out: { cx: number; cz: number }[] = []
-    for (let z = z0; z <= z1; z++) for (let x = x0; x <= x1; x++) out.push({ cx: x, cz: z })
-    return out
+    return {
+      x0: Math.floor(tl.x / 16),
+      x1: Math.floor(br.x / 16),
+      z0: Math.floor(tl.z / 16),
+      z1: Math.floor(br.z / 16)
+    }
   }, [view, vp])
+
+  /** What to REQUEST. Capped: zoomed out this is millions of chunks. */
+  const visibleChunks = useCallback((): { cx: number; cz: number }[] => {
+    const b = chunkBox()
+    if (!b) return []
+    if ((b.x1 - b.x0 + 1) * (b.z1 - b.z0 + 1) > 4096) return []
+    const out: { cx: number; cz: number }[] = []
+    for (let z = b.z0; z <= b.z1; z++) for (let x = b.x0; x <= b.x1; x++) out.push({ cx: x, cz: z })
+    return out
+  }, [chunkBox])
+
+  /**
+   * What to DRAW: everything already held that falls in view. A different
+   * question from what to request — conflating them is why the terrain vanished
+   * when zoomed out (#135).
+   */
+  const drawableChunks = useCallback((): { cx: number; cz: number }[] => {
+    const b = chunkBox()
+    if (!b) return []
+    const out: { cx: number; cz: number }[] = []
+    for (const k of tiles.current.keys()) {
+      if (!tiles.current.get(k)) continue
+      const [cx, cz] = k.split(',').map(Number)
+      if (cx < b.x0 - 1 || cx > b.x1 + 1 || cz < b.z0 - 1 || cz > b.z1 + 1) continue
+      out.push({ cx, cz })
+    }
+    return out
+  }, [chunkBox])
 
   // Ask for what is on screen and not yet held. The main process owns the queue
   // and the parse budget, shared with the web surfaces.
@@ -318,7 +344,7 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
     // The world first; everything else sits on top of it.
     if (world) {
       g.imageSmoothingEnabled = false
-      for (const c of visibleChunks()) {
+      for (const c of drawableChunks()) {
         const t = tiles.current.get(c.cx + ',' + c.cz)
         if (!t) continue
         const p = worldToScreen({ x: c.cx * 16, z: c.cz * 16 }, v, size)
@@ -376,7 +402,7 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
       g.textAlign = 'center'
       g.textBaseline = 'middle'
       g.font = `bold ${10 * dpr}px Inter, system-ui, sans-serif`
-      for (const c of visibleChunks()) {
+      for (const c of drawableChunks()) {
         for (const mk of markStore.current.get(c.cx + ',' + c.cz) ?? []) {
           if (markKind && mk.kind !== markKind) continue
           const st = MARK_STYLE[mk.kind] ?? MARK_STYLE.other
@@ -420,12 +446,39 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
       g.fillStyle = 'rgba(255,255,255,.92)'
       g.fillText(p.name, x, y - (head ? 12 : 7) * dpr)
     }
-  }, [shown, bounds, heat, cell, showHeat, view, vp, dim, heads, world, marks, markKind, tick2, visibleChunks])
+  }, [shown, bounds, heat, cell, showHeat, view, vp, dim, heads, world, marks, markKind, tick2, drawableChunks])
 
   const localPoint = (e: React.MouseEvent): { x: number; y: number } => {
     const r = (e.target as HTMLCanvasElement).getBoundingClientRect()
     return { x: e.clientX - r.left, y: e.clientY - r.top }
   }
+
+  /**
+   * Wheel-to-zoom, bound by hand rather than through `onWheel`.
+   *
+   * React registers wheel listeners as PASSIVE, so `preventDefault` inside an
+   * `onWheel` handler does nothing and the page scrolls behind the map (#135).
+   * The only way to stop that is a listener registered with `passive: false`.
+   */
+  const viewRef = useRef<MapView | null>(null)
+  viewRef.current = view
+  const vpRef = useRef(vp)
+  vpRef.current = vp
+  useEffect(() => {
+    const cv = canvasRef.current
+    if (!cv) return
+    const onWheel = (e: WheelEvent): void => {
+      const v = viewRef.current
+      if (!v) return
+      e.preventDefault()
+      const r = cv.getBoundingClientRect()
+      setView(
+        zoomAt(v, vpRef.current, { x: e.clientX - r.left, y: e.clientY - r.top }, e.deltaY < 0 ? 1.15 : 1 / 1.15)
+      )
+    }
+    cv.addEventListener('wheel', onWheel, { passive: false })
+    return () => cv.removeEventListener('wheel', onWheel)
+  }, [])
 
   return (
     <div>
@@ -600,10 +653,6 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
               return
             }
             setCursor(screenToWorld(localPoint(e), view, vp))
-          }}
-          onWheel={(e) => {
-            if (!view) return
-            setView(zoomAt(view, vp, localPoint(e), e.deltaY < 0 ? 1.15 : 1 / 1.15))
           }}
         />
         {cursor && (
