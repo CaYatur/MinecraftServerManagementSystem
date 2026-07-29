@@ -75,6 +75,12 @@ export interface FullProfile {
   lastSeen?: number
   playtimeHours?: number
   online?: boolean
+  /**
+   * When the player's `.dat` was last written — which is when everything below
+   * was true. Minecraft writes it on a world save or a disconnect, so the
+   * inventory can be minutes old and nothing else on the page would say so.
+   */
+  dataAt?: number
   inventory?: { slot: number; id: string; count: number }[]
   enderChest?: { slot: number; id: string; count: number }[]
   stats?: { health?: number; food?: number; xpLevel?: number }
@@ -90,6 +96,8 @@ export interface PublicProfile {
   firstSeen?: number
   lastSeen?: number
   playtimeHours?: number
+  /** When the underlying player file was written. See `FullProfile.dataAt`. */
+  dataAt?: number
   inventory?: { slot: number; id: string; count: number }[]
   enderChest?: { slot: number; id: string; count: number }[]
   stats?: { health?: number; food?: number; xpLevel?: number }
@@ -126,6 +134,11 @@ export function redactProfile(
   }
   if (allow('playtime') && typeof full.playtimeHours === 'number') {
     out.playtimeHours = full.playtimeHours
+  }
+  // Carried whenever anything read FROM that file is carried, so the page can
+  // always say how old what it is showing is.
+  if (full.dataAt && (canSee('inventory', viewer, pub) || canSee('stats', viewer, pub))) {
+    out.dataAt = full.dataAt
   }
   if (allow('inventory') && full.inventory) out.inventory = full.inventory
   if (allow('enderChest') && full.enderChest) out.enderChest = full.enderChest

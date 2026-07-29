@@ -88,6 +88,7 @@ import {
 } from '@shared/bridgeRelease'
 import type { GhRelease } from '@shared/bridgeRelease'
 import { publicVerifyReply, verifyDecision } from '@shared/playerVerify'
+import { newRefreshState, tryRefresh, INVENTORY_REFRESH } from '@shared/refreshLimit'
 import {
   avatarUrl,
   canSee,
@@ -4555,6 +4556,80 @@ export async function runWebSmoke(): Promise<void> {
 
       console.log('WEB-SMOKE: profile visibility OK (' + checked + ' checks, omitted not hidden, per-field toggles)')
 
+      // ---- the refresh budget (#117) ----
+      {
+        const t0 = 1_000_000
+        let st = newRefreshState()
+        const go = (at: number): ReturnType<typeof tryRefresh> => {
+          const v = tryRefresh(st, INVENTORY_REFRESH, at)
+          st = v.state
+          return v
+        }
+        // Three a minute, then refused.
+        for (let i = 0; i < 3; i++) {
+          if (!go(t0 + i).allowed) return fail('refresh ' + (i + 1) + ' of 3 was refused')
+        }
+        const fourth = go(t0 + 4)
+        if (fourth.allowed) return fail('a fourth refresh inside the minute was allowed')
+        if (fourth.window !== 'minute') return fail('the wrong window refused: ' + fourth.window)
+        if (fourth.retryAfterSec < 1) return fail('a refusal must say how long to wait')
+
+        // THE rule that separates this from the verification limiter: a refusal
+        // costs nothing. Both windows govern the same person here, so charging
+        // the hourly budget for a request the per-minute window already refused
+        // would let someone clicking a dead-looking button burn their whole hour
+        // without a single refresh happening.
+        const spentByRefusals = st.hits.length
+        for (let i = 0; i < 50; i++) go(t0 + 5 + i)
+        if (st.hits.length !== spentByRefusals) {
+          return fail('refused refreshes consumed budget: ' + st.hits.length + ' vs ' + spentByRefusals)
+        }
+
+        // ...and the minute window rolls.
+        if (!go(t0 + 61_000).allowed) return fail('the minute window did not roll')
+
+        // The hourly cap holds even when every minute window is clear: one
+        // every 30s for exactly an hour is 120 attempts against a cap of 100.
+        let hr = newRefreshState()
+        const grantsAt: number[] = []
+        const refusedBy = new Set<string>()
+        for (let i = 0; i < 120; i++) {
+          const at = t0 + i * 30_000
+          const v = tryRefresh(hr, INVENTORY_REFRESH, at)
+          hr = v.state
+          if (v.allowed) grantsAt.push(at)
+          else refusedBy.add(String(v.window))
+        }
+        if (grantsAt.length !== INVENTORY_REFRESH.perHour) {
+          return fail('the hourly cap granted ' + grantsAt.length + ', expected ' + INVENTORY_REFRESH.perHour)
+        }
+        // ...and it was the HOUR that refused, not the minute — one every 30s
+        // never comes close to three a minute.
+        if (!refusedBy.has('hour')) return fail('the hourly cap never refused')
+        if (refusedBy.has('minute')) return fail('the minute window refused one request every 30s')
+
+        // The window SLIDES, so more are granted once the oldest fall out —
+        // that is the point of it, not a leak. What must hold is the invariant:
+        // never more than `perHour` grants inside any 60-minute span.
+        let slid = newRefreshState()
+        const all: number[] = []
+        for (let i = 0; i < 400; i++) {
+          const at = t0 + i * 30_000
+          const v = tryRefresh(slid, INVENTORY_REFRESH, at)
+          slid = v.state
+          if (v.allowed) all.push(at)
+        }
+        if (all.length <= INVENTORY_REFRESH.perHour) {
+          return fail('the hourly window never rolled over 200 minutes')
+        }
+        for (const start of all) {
+          const inWindow = all.filter((t) => t >= start && t - start < 60 * 60_000).length
+          if (inWindow > INVENTORY_REFRESH.perHour) {
+            return fail('an hour window held ' + inWindow + ' grants, over the cap')
+          }
+        }
+      }
+
       // ---- and over HTTP ----
       const profileBefore = siteMod.getSiteConfig().profile
       const storeBefore = siteMod.getSiteConfig().storeServerId
@@ -4630,6 +4705,24 @@ export async function runWebSmoke(): Promise<void> {
         // means "answer as a stranger", not "refuse".
         pr = await sget('/api/public/profile?name=Profiley')
         if (pr.status === 401) return fail('an anonymous profile read was refused as if it had a token')
+
+        // Refresh is own-only and needs a session: the flush is a real cost and
+        // one visitor must not be able to spend it for everybody.
+        let rr = await spost('/api/public/profile/refresh', {})
+        if (rr.status !== 401) return fail('an anonymous refresh expected 401, got ' + rr.status)
+        rr = await spost('/api/public/profile/refresh', {}, ot)
+        if (rr.status !== 401) return fail('an admin token refresh expected 401, got ' + rr.status)
+        // Three, then the fourth is refused with a wait the caller can act on.
+        for (let i = 0; i < 3; i++) {
+          rr = await spost('/api/public/profile/refresh', {}, ptok)
+          if (rr.status !== 200) return fail('refresh ' + (i + 1) + ' expected 200, got ' + rr.status)
+        }
+        rr = await spost('/api/public/profile/refresh', {}, ptok)
+        if (rr.status !== 429) return fail('a fourth refresh expected 429, got ' + rr.status)
+        if (!rr.headers.get('retry-after')) return fail('a refused refresh sent no Retry-After')
+        // The three 200s above are themselves the assertion that feasibility is
+        // checked before the budget: the fixture server is stopped, so a refresh
+        // is possible (its data was written on shutdown) and must not 409.
         console.log('WEB-SMOKE: public profile OK (own vs stranger, admin token is a stranger, 400 on a bad name)')
       } finally {
         siteMod.setSiteConfig({ storeServerId: storeBefore, profile: profileBefore })

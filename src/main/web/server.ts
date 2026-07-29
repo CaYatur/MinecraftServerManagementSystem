@@ -17,6 +17,7 @@ import * as worldsMod from '../core/worlds'
 import * as backupsMod from '../core/backups'
 import * as mods from '../core/mods'
 import * as bridgeInstall from '../core/bridgeInstall'
+import * as rcon from '../core/rcon'
 import { listJavaInstalls } from '../core/javaScan'
 import { installJava } from '../core/javaProvision'
 import {
@@ -35,6 +36,13 @@ import { bridgeFresh, bridgePlayers } from '@shared/bridge'
 import { heatmap, livePlayers, mapBounds, normalizeDimension, redactPlayers } from '@shared/livemap'
 import { redactProfile } from '@shared/profile'
 import type { ProfileViewer } from '@shared/profile'
+import {
+  newRefreshState,
+  tryRefresh,
+  FLUSH_REUSE_MS,
+  INVENTORY_REFRESH
+} from '@shared/refreshLimit'
+import type { RefreshState } from '@shared/refreshLimit'
 
 /** Same shape the rest of the app validates a Minecraft name with. */
 const MC_NAME_RE = /^[A-Za-z0-9_]{3,16}$/
@@ -65,6 +73,76 @@ async function cachedRoster(serverId: string): Promise<PlayerInfo[]> {
 
 export function _resetRosterCache(): void {
   rosterCache.clear()
+  refreshState.clear()
+  lastFlush.clear()
+}
+
+// ---- asking the server to write the inventory down (#117) ----
+//
+// Everything MSMS knows about an inventory comes from `playerdata/<uuid>.dat`,
+// and Minecraft writes that when the world saves or the player disconnects. So
+// the numbers are not wrong, they are OLD — up to the autosave interval, which
+// is five minutes by default. A refresh button that only re-read the same file
+// would be theatre; it has to ask the server to flush first.
+const refreshState = new Map<string, RefreshState>()
+const lastFlush = new Map<string, number>()
+
+/**
+ * Flush the world, then drop the cached roster so the next read is fresh.
+ *
+ * The flush is per-world, so concurrent refreshes share one: `FLUSH_REUSE_MS`
+ * is what stops ten players with three-a-minute each becoming thirty saves a
+ * minute on one world.
+ */
+async function flushAndInvalidate(serverId: string): Promise<boolean> {
+  const now = Date.now()
+  const last = lastFlush.get(serverId) ?? 0
+  if (now - last < FLUSH_REUSE_MS) {
+    rosterCache.delete(serverId)
+    return true
+  }
+  if (!processManager.isRunning(serverId)) {
+    // Nothing to flush: a stopped server wrote its player data on shutdown, so
+    // what is on disk is already current. Re-reading it is the whole refresh.
+    rosterCache.delete(serverId)
+    return true
+  }
+  if (!rcon.isConnected(serverId)) return false
+  lastFlush.set(serverId, now)
+  await rcon.tryCommand(serverId, 'save-all')
+  // The write is not instantaneous and the command returns before it lands.
+  await new Promise((r) => setTimeout(r, 600))
+  rosterCache.delete(serverId)
+  return true
+}
+
+/**
+ * Whether a refresh could do anything at all, checked BEFORE spending budget.
+ *
+ * A stopped server already wrote its player data on shutdown, so re-reading is
+ * the whole refresh. A running one needs a channel to ask for the save. Without
+ * this check the budget is spent first and the flush fails afterwards, so a
+ * player on a server with no RCON burns three a minute on requests that do
+ * nothing — the "a refusal costs nothing" rule the limiter is built around,
+ * broken one layer above it.
+ */
+function canRefresh(serverId: string): boolean {
+  return !processManager.isRunning(serverId) || rcon.isConnected(serverId)
+}
+
+/** One budget per actor, whoever they are: a player name or a panel username. */
+function spendRefresh(actor: string): ReturnType<typeof tryRefresh> {
+  const v = tryRefresh(refreshState.get(actor) ?? newRefreshState(), INVENTORY_REFRESH, Date.now())
+  refreshState.set(actor, v.state)
+  // Anyone with no live hits is indistinguishable from someone who has never
+  // asked, so dropping them is free — and this map is keyed by a name a
+  // stranger chooses, which is not something to grow without bound.
+  if (refreshState.size > 512) {
+    for (const [k, s] of refreshState) {
+      if (!s.hits.length) refreshState.delete(k)
+    }
+  }
+  return v
 }
 import * as metrics from '../core/metrics'
 import * as events from '../core/events'
@@ -561,6 +639,29 @@ async function handlePublic(
   // @shared/profile because it is the whole security of the feature. Fields are
   // OMITTED, never sent-and-hidden: a page can be read with the network tab
   // open, and "we shipped it but did not draw it" is not a privacy setting.
+  // Refresh MY inventory (#117). Own only: the flush is a real cost, and one
+  // visitor should not be able to spend it on behalf of everyone on the server.
+  if (sub === 'profile/refresh' && method === 'POST') {
+    const tok0 = bearer(req)
+    const who = playerAuth.resolvePlayerSession(tok0)
+    if (!who) return sendJson(res, 401, { error: tok0 ? 'session-expired' : 'login-required' })
+    const rsid = site.siteServerId()
+    if (!rsid || !getServer(rsid)) return sendJson(res, 404, { error: 'not-found' })
+    // Before the budget, not after.
+    if (!canRefresh(rsid)) return sendJson(res, 409, { error: 'server-unreachable' })
+    const verdict = spendRefresh('player:' + who.mcName.toLowerCase())
+    if (!verdict.allowed) {
+      res.setHeader('Retry-After', String(verdict.retryAfterSec))
+      return sendJson(res, 429, {
+        error: 'rate-limited',
+        window: verdict.window,
+        retryAfter: verdict.retryAfterSec
+      })
+    }
+    const ok = await flushAndInvalidate(rsid)
+    return sendJson(res, 200, { ok, flushed: ok })
+  }
+
   if (sub === 'profile' && method === 'GET') {
     const psid = site.siteServerId()
     const q = new URL(req.url ?? '/', 'http://localhost').searchParams
@@ -604,6 +705,10 @@ async function handlePublic(
           ...(p ? { online: p.online } : {}),
           ...(playerAuth.registeredAt(asked) ? { registeredAt: playerAuth.registeredAt(asked) } : {}),
           ...(p?.lastSeen ? { lastSeen: p.lastSeen } : {}),
+          // When the inventory was actually written. Without it a player who
+          // just picked something up sees an old number with nothing to explain
+          // it, which reads as a bug rather than as a save interval (#117).
+          ...(p?.lastSeen ? { dataAt: p.lastSeen } : {}),
           ...(typeof p?.playtimeHours === 'number' ? { playtimeHours: p.playtimeHours } : {}),
           ...(p?.inventory ? { inventory: p.inventory } : {}),
           ...(p?.enderChest ? { enderChest: p.enderChest } : {}),
