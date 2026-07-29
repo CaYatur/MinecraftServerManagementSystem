@@ -76,19 +76,40 @@ export function WebPanelView(): JSX.Element {
   const [newSecret, setNewSecret] = useState<{ label: string; secret: string } | null>(null)
   const [originsText, setOriginsText] = useState('')
 
+  /**
+   * Four independent things, loaded independently.
+   *
+   * This used to be one sequential chain with the API keys awaited LAST, and
+   * every caller invoked it as `void refresh()` — so anything that threw before
+   * the last line left the key list empty and said nothing at all. "I created a
+   * key and it is not listed" was that: not a problem with keys, a problem with
+   * being fourth in a queue that could stop.
+   *
+   * `allSettled`, so one failure cannot blank the other three, and a failure is
+   * reported rather than swallowed.
+   */
   const refresh = async (): Promise<void> => {
-    const st = await window.msms.getWebStatus()
-    setStatus(st)
-    setEnabled(st.panel.enabled)
-    setPort(st.panel.port)
-    setSiteEnabled(st.site.enabled)
-    setSitePort(st.site.port)
-    setBindLan(st.bindLan)
-    setMapPage(st.mapPage ?? MAP_PAGE_DEFAULTS)
-    setOriginsText((st.apiOrigins ?? []).join('\n'))
-    setUsers(await window.msms.listWebUsers())
-    setRoles(await window.msms.listRoles())
-    setKeys(await window.msms.listApiKeys())
+    const [st, us, rs, ks] = await Promise.allSettled([
+      window.msms.getWebStatus(),
+      window.msms.listWebUsers(),
+      window.msms.listRoles(),
+      window.msms.listApiKeys()
+    ])
+    if (st.status === 'fulfilled') {
+      setStatus(st.value)
+      setEnabled(st.value.panel.enabled)
+      setPort(st.value.panel.port)
+      setSiteEnabled(st.value.site.enabled)
+      setSitePort(st.value.site.port)
+      setBindLan(st.value.bindLan)
+      setMapPage(st.value.mapPage ?? MAP_PAGE_DEFAULTS)
+      setOriginsText((st.value.apiOrigins ?? []).join('\n'))
+    }
+    if (us.status === 'fulfilled') setUsers(us.value)
+    if (rs.status === 'fulfilled') setRoles(rs.value)
+    if (ks.status === 'fulfilled') setKeys(ks.value)
+    const failed = [st, us, rs, ks].find((r) => r.status === 'rejected')
+    if (failed && failed.status === 'rejected') toast('error', String(failed.reason))
   }
 
   const createKey = async (): Promise<void> => {

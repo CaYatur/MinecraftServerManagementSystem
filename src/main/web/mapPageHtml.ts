@@ -2,6 +2,8 @@ import { MAP_CSS, MAP_HTML, MAP_JS } from '@shared/mapUi'
 import { mapPagePublic } from '@shared/mapPage'
 import type { MapPageConfig } from '@shared/mapPage'
 import { avatarUrl } from '@shared/profile'
+import { iconSvg, STRUCTURE_ICONS } from '@shared/mapIcons'
+import type { SiteTheme } from '@shared/web'
 
 /**
  * The map page (#146).
@@ -21,8 +23,18 @@ const esc = (s: string): string =>
     c === '&' ? '&amp;' : c === '<' ? '&lt;' : c === '>' ? '&gt;' : c === '"' ? '&quot;' : '&#39;'
   )
 
-export function getMapPageHtml(cfg: MapPageConfig): string {
+export function getMapPageHtml(cfg: MapPageConfig, theme?: SiteTheme): string {
   const pub = mapPagePublic(cfg)
+  // The operator already chose colours for their website; a map page in a
+  // different red would look like somebody else's site. Falls back to the same
+  // defaults the site uses when nothing is configured.
+  const t: Partial<SiteTheme> = theme ?? {}
+  const hex = (v: unknown, d: string): string =>
+    typeof v === 'string' && /^#[0-9a-fA-F]{6}$/.test(v) ? v : d
+  const accent = hex(t.accent, '#dc2727')
+  const bg = hex(t.bg, '#0b0b10')
+  const card = hex(t.card, '#16151b')
+  const text = hex(t.text, '#e7e9ee')
   return `<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8"/>
@@ -32,10 +44,15 @@ export function getMapPageHtml(cfg: MapPageConfig): string {
 <meta name="robots" content="noindex,nofollow"/>
 <title>${esc(pub.title)}</title>
 <style>
-:root{--bg:#08080c;--elev:rgba(255,255,255,.06);--line:rgba(255,255,255,.14);--accent:#dc2727}
+:root{--accent:${accent};--bg:${bg};--card:${card};--text:${text};
+  --dim:color-mix(in srgb,var(--text) 55%,transparent);
+  --line:color-mix(in srgb,var(--text) 12%,transparent);
+  --elev:color-mix(in srgb,var(--card) 88%,#fff 6%);
+  --glow:color-mix(in srgb,var(--accent) 55%,transparent);
+  --panel:color-mix(in srgb,var(--card) 82%,transparent)}
 *{box-sizing:border-box}
-html,body{margin:0;padding:0;height:100%;overflow:hidden;background:var(--bg);color:#f4f4f6;
-  font-family:Inter,system-ui,-apple-system,Segoe UI,sans-serif}
+html,body{margin:0;padding:0;height:100%;overflow:hidden;background:var(--bg);color:var(--text);
+  font-family:'Inter','Segoe UI',system-ui,-apple-system,sans-serif;-webkit-font-smoothing:antialiased}
 ${MAP_CSS}
 /* The whole point of this page: the map IS the page. The shared markup lays a
    canvas out in a column with a legend under it, so the wrapper is restyled
@@ -44,14 +61,21 @@ ${MAP_CSS}
 .mp-canvas-wrap{position:absolute;inset:0;border:0;border-radius:0;aspect-ratio:auto}
 .mp-bar{position:absolute;left:12px;right:12px;top:12px;z-index:3;
   padding:8px 10px;border-radius:12px;backdrop-filter:blur(9px);
-  background:rgba(10,10,14,.72);border:1px solid var(--line)}
+  background:var(--panel);border:1px solid var(--line);
+  box-shadow:0 10px 30px color-mix(in srgb,var(--bg) 70%,transparent)}
 .mp-legend{position:absolute;left:12px;bottom:12px;z-index:3;margin:0;
-  padding:6px 10px;border-radius:10px;background:rgba(10,10,14,.72);border:1px solid var(--line)}
+  padding:6px 10px;border-radius:10px;background:var(--panel);border:1px solid var(--line)}
 .mp-list{position:absolute;right:12px;bottom:12px;z-index:3;max-width:44vw;justify-content:flex-end}
-.mp-iconkey{position:absolute;left:12px;bottom:52px;z-index:3;margin:0;
-  padding:6px 10px;border-radius:10px;background:rgba(10,10,14,.72)}
+/* Bottom-left is a STACK, not three things at the same coordinates. The legend,
+   the structure key and the cursor readout were all pinned near the corner and
+   drew on top of each other — the coordinates ended up unreadable behind the
+   bounds line. Each sits above the one below it, at offsets measured from their
+   real heights, because every one of them wraps at some width. */
+.mp-iconkey{position:absolute;left:12px;bottom:calc(var(--mp-legend-h, 30px) + 20px);z-index:3;margin:0;
+  padding:6px 10px;border-radius:10px;background:var(--panel);border:1px solid var(--line)}
+.mp-cursor{bottom:calc(var(--mp-legend-h, 30px) + var(--mp-key-h, 0px) + 20px);left:12px;z-index:3;
+  background:var(--panel);border:1px solid var(--line)}
 .mp-areatip{z-index:4}
-#mpCursor{z-index:3}
 /* The bar floats OVER the canvas on this page only, so the "nothing generated
    here" note at top:10px was hidden underneath it. Measured rather than
    guessed: the bar wraps, and at phone width it is one scrolling row, so any
@@ -61,11 +85,18 @@ ${MAP_CSS}
 .hidden{display:none!important}
 .btn{padding:7px 11px;border-radius:9px;font-family:inherit;font-size:13px;cursor:pointer;
   border:1px solid var(--line);background:var(--elev);color:inherit}
-.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff;
+  box-shadow:0 6px 18px var(--glow)}
+.btn:hover{border-color:var(--accent)}
 /* The gate. A page that is not for this visitor should look like a door, not
    like a map that failed to load. */
 .gate{position:fixed;inset:0;display:grid;place-content:center;justify-items:center;gap:12px;
   padding:24px;text-align:center;background:var(--bg);z-index:9}
+/* The same ambient backdrop the website has, so the door looks like part of
+   the same place rather than a blank error page. */
+.gate::before{content:'';position:absolute;inset:0;z-index:-1;pointer-events:none;
+  background:radial-gradient(50% 40% at 15% 0%,color-mix(in srgb,var(--accent) 22%,transparent),transparent 70%),
+  radial-gradient(45% 40% at 90% 10%,color-mix(in srgb,var(--accent) 14%,transparent),transparent 70%)}
 .gate input{padding:9px 12px;border-radius:9px;border:1px solid var(--line);
   background:var(--elev);color:inherit;font:inherit;min-width:230px}
 .gate .msg{font-size:13px;opacity:.7;max-width:340px}
@@ -121,6 +152,15 @@ function mapTilesUrl(dim,c,marks){
   (marks?'&marks=1':'')}
 function mapAreasUrlFor(dim){return '/api/map/areas?dim='+encodeURIComponent(dim)}
 function mapAvatarUrl(name){return ${JSON.stringify(avatarUrl('__NAME__', 32))}.replace('__NAME__',encodeURIComponent(name))}
+/* The rest of the host contract MAP_JS expects. Missing here until #153: with
+   structures switched on, mapDraw threw "MAP_ICONS is not defined" and took the
+   whole draw down with it, so the map stopped updating entirely. The panel and
+   the public site have always provided these; this page is the fourth host and
+   only got half of them. */
+var STRUCTURE_ICONS=${JSON.stringify(STRUCTURE_ICONS)};
+var MAP_ICONS=STRUCTURE_ICONS;
+function mapIconFor(kind){return STRUCTURE_ICONS[kind]||STRUCTURE_ICONS.other}
+var mapIconSvg=${iconSvg.toString()};
 ${MAP_JS}
 /* Settings the operator chose, applied before the first draw so the map never
    flashes a layer it is not allowed to show. */
@@ -174,9 +214,21 @@ function boot(){
 /* The bar's real height, republished whenever it can change. The note below it
    reads this; a constant would be wrong the moment the bar wrapped. */
 function syncBarHeight(){
+ var r=document.documentElement.style;
  var bar=document.querySelector('.mp-bar');
- if(bar)document.documentElement.style.setProperty('--mp-bar-h',bar.offsetHeight+'px')}
+ if(bar)r.setProperty('--mp-bar-h',bar.offsetHeight+'px');
+ /* The bottom-left stack. The structure key contributes nothing while it is
+    hidden, or the readout would float above a gap. */
+ var leg=document.querySelector('.mp-legend');
+ if(leg)r.setProperty('--mp-legend-h',leg.offsetHeight+'px');
+ var key=document.getElementById('mpIconKey');
+ var keyOn=key&&!key.classList.contains('hidden');
+ r.setProperty('--mp-key-h',(keyOn?key.offsetHeight+8:0)+'px')}
 window.addEventListener('resize',function(){syncBarHeight();mapDraw()});
+/* Re-measured after every draw: the structure key is shown and hidden by the
+   toggle, and the legend's text changes length as the view moves. */
+var mapDrawInner=mapDraw;
+mapDraw=function(){mapDrawInner.apply(null,arguments);syncBarHeight()};
 document.addEventListener('DOMContentLoaded',boot);
 if(document.readyState!=='loading')boot();
 </script>
