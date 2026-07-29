@@ -1,4 +1,5 @@
 // Domain types shared across main / preload / renderer.
+import type { MapPerfConfig } from './tileCache'
 
 export type ServerType =
   | 'vanilla'
@@ -74,6 +75,13 @@ export interface ServerConfig {
   favorite?: boolean
   /** Optional per-server backup destination override. */
   backupDir?: string
+  /**
+   * What the live map is allowed to cost on this server (#133).
+   *
+   * Per server because a box running twenty and a laptop running one want
+   * different answers. Absent means the defaults; see `normalizeMapPerf`.
+   */
+  map?: MapPerfConfig
 }
 
 export interface ServerRuntimeStatus {

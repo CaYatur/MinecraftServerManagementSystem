@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Map as MapIcon, Flame } from 'lucide-react'
+import { Map as MapIcon, Flame, Gauge } from 'lucide-react'
+import { useStore } from '../store'
+import { normalizeMapPerf } from '@shared/tileCache'
+import type { MapPerfConfig } from '@shared/tileCache'
 import { fitView, heatmap, mapBounds, panBy, screenToWorld, worldToScreen, zoomAt } from '@shared/livemap'
 import type { LivePlayer, MapView, Viewport } from '@shared/livemap'
 import { avatarUrl } from '@shared/profile'
@@ -192,6 +195,29 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
   const [marks, setMarks] = useState(false)
   const [markKind, setMarkKind] = useState('')
   const markStore = useRef(new Map<string, StructureMark[]>())
+
+  // Per-server map tuning (#133), read from the server's own config so it
+  // survives a restart and applies to every surface, not just this one.
+  const servers = useStore((s) => s.servers)
+  const updateServer = useStore((s) => s.updateServer)
+  const perf = useMemo(
+    () => normalizeMapPerf(servers.find((s) => s.id === serverId)?.map),
+    [servers, serverId]
+  )
+  const [showPerf, setShowPerf] = useState(false)
+  const [cleared, setCleared] = useState<number | null>(null)
+
+  const savePerf = (patch: Partial<MapPerfConfig>): void => {
+    // Normalised before it is stored, not after it is read: a value that only
+    // gets clamped on the way out is still a wrong number in the config file.
+    void updateServer(serverId, { map: normalizeMapPerf({ ...perf, ...patch }) })
+  }
+  const clearCache = async (): Promise<void> => {
+    setCleared(await window.msms.clearMapCache())
+    tiles.current.clear()
+    markStore.current.clear()
+    setTick2((n) => n + 1)
+  }
   const headCache = useRef(new Map<string, HTMLImageElement | false>())
   const tiles = useRef(new Map<string, HTMLCanvasElement | null>())
   const tilesPending = useRef(false)
@@ -470,7 +496,76 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
         <button className="btn sm" onClick={() => setView(null)}>
           {t('map.resetView')}
         </button>
+        <button className={`btn sm ${showPerf ? 'primary' : ''}`} onClick={() => setShowPerf((v) => !v)}>
+          <Gauge size={13} /> {t('map.performance')}
+        </button>
       </div>
+
+      {/* Per-server, persisted, and applied without a restart — the map is where
+          an operator meets the cost, so it is where the dials belong (#133). */}
+      {showPerf && (
+        <div className="panel" style={{ marginBottom: 10 }}>
+          <label className="switch" style={{ marginBottom: 8 }}>
+            <input
+              type="checkbox"
+              checked={perf.cache}
+              onChange={(e) => savePerf({ cache: e.target.checked })}
+            />
+            {t('map.perfCache')}
+          </label>
+          <p className="hint" style={{ marginTop: 0 }}>
+            {t('map.perfCacheHint')}
+          </p>
+          <div className="row wrap" style={{ gap: 12, alignItems: 'flex-end' }}>
+            <div style={{ minWidth: 150 }}>
+              <div className="dim" style={{ fontSize: 12 }}>
+                {t('map.perfMemory')}
+              </div>
+              <input
+                className="input"
+                type="number"
+                min={2}
+                max={64}
+                value={perf.memoryRegions}
+                onChange={(e) => savePerf({ memoryRegions: Number(e.target.value) })}
+              />
+            </div>
+            <div style={{ minWidth: 150 }}>
+              <div className="dim" style={{ fontSize: 12 }}>
+                {t('map.perfGap')}
+              </div>
+              <input
+                className="input"
+                type="number"
+                min={0}
+                max={5000}
+                step={50}
+                value={perf.parseGapMs}
+                onChange={(e) => savePerf({ parseGapMs: Number(e.target.value) })}
+              />
+            </div>
+            <div style={{ minWidth: 150 }}>
+              <div className="dim" style={{ fontSize: 12 }}>
+                {t('map.perfLimit')}
+              </div>
+              <input
+                className="input"
+                type="number"
+                min={0}
+                max={20000}
+                step={64}
+                value={perf.cacheLimitMB}
+                onChange={(e) => savePerf({ cacheLimitMB: Number(e.target.value) })}
+              />
+            </div>
+            <button className="btn sm" onClick={() => void clearCache()}>
+              {t('map.perfClear')}
+            </button>
+          </div>
+          <p className="hint">{t('map.perfGapHint')}</p>
+          {cleared !== null && <p className="hint">{t('map.perfCleared', { n: cleared })}</p>}
+        </div>
+      )}
 
       <div
         style={{

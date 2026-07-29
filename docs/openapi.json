@@ -2653,6 +2653,147 @@
         }
       }
     },
+    "/api/v1/servers/{id}/map/perf": {
+      "get": {
+        "operationId": "getServersIdMapPerf",
+        "summary": "What the live map is allowed to cost on this server.",
+        "description": "Scope `settings` on the server.",
+        "tags": [
+          "players"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Server id, as returned by GET /servers.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      },
+      "post": {
+        "operationId": "postServersIdMapPerf",
+        "summary": "Change it. Values are clamped on the way in.",
+        "description": "Scope `settings` on the server.\n\nBody fields:\n- `cache` — Keep parsed tiles on disk (default on).\n- `memoryRegions` — Regions held in memory, 2-64.\n- `parseGapMs` — Minimum gap between region parses, 0-5000.\n- `cacheLimitMB` — On-disk ceiling, oldest evicted first.",
+        "tags": [
+          "players"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Server id, as returned by GET /servers.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      }
+    },
+    "/api/v1/servers/{id}/map/cache": {
+      "delete": {
+        "operationId": "deleteServersIdMapCache",
+        "summary": "Drop this server's cached map tiles.",
+        "description": "Scope `settings` on the server.\n\nOnly this server's: the cache filename carries the owner so one server's clear cannot take another's with it.",
+        "tags": [
+          "players"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Server id, as returned by GET /servers.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success."
+          },
+          "400": {
+            "description": "Malformed request, or a missing confirmation."
+          },
+          "401": {
+            "description": "No usable credential."
+          },
+          "403": {
+            "description": "Authenticated, but not permitted — the body names what was needed."
+          },
+          "404": {
+            "description": "No such server, or no such route."
+          },
+          "409": {
+            "description": "Conflicts with the current state (running server, name taken, …)."
+          },
+          "429": {
+            "description": "Rate limited. `Retry-After` says for how long."
+          }
+        }
+      }
+    },
     "/api/v1/servers/{id}/map/tiles": {
       "get": {
         "operationId": "getServersIdMapTiles",
