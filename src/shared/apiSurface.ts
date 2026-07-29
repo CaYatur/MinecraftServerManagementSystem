@@ -219,7 +219,7 @@ export const API_ROUTES: ApiRoute[] = [
       rects: 'Array of `{x1,z1,x2,z2}` in CHUNK coordinates, inclusive, corners in any order.',
       hidden: 'Keep it off every map but the operator\'s own.'
     },
-    notes: 'Rectangles are tidied on the way in: duplicates and contained rects are dropped and neighbours that share a full edge are merged, so the stored shape covers exactly the chunks you sent. Refusals name themselves: `name-required`, `name-too-long`, `note-too-long`, `no-chunks`, `too-many-chunks` (max 65536), `too-many-areas` (max 200), `area-not-found`.'
+    notes: 'Rectangles are tidied on the way in: duplicates and contained rects are dropped and neighbours that share a full edge are merged, so the stored shape covers exactly the chunks you sent. Refusals name themselves: `name-required`, `name-too-long`, `note-too-long`, `no-chunks`, `too-many-chunks` (max 65536), `too-many-rects` (a shape of more than 64 separate pieces after tidying, or more than 1024 sent), `too-many-areas` (max 200), `area-not-found`. A shape too complex to store is refused, never silently trimmed.'
   },
   { method: 'DELETE', path: '/servers/{id}/areas', gate: 'settings', group: 'areas', summary: 'Delete one area.', params: [serverId, { name: 'areaId', in: 'query', required: true, description: 'Area to delete.' }] },
 

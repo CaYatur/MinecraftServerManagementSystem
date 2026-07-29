@@ -147,6 +147,8 @@ export default {
     allStructures: 'All structures',
     areas: 'Areas',
     areasCount: '{{n}} in {{dim}}',
+    areaEdit: 'Edit areas',
+    'areaErr_too-many-rects': 'That shape has too many separate pieces — join some up or make fewer areas.',
     areaNew: 'New area',
     areaName: 'Area name, e.g. spawn town',
     areaNote: 'Note — shown under the name, e.g. owner: CaYatur',

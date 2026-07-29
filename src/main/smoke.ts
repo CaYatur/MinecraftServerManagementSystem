@@ -2279,6 +2279,67 @@ export async function runWorldsSmoke(): Promise<void> {
         return fail('two diagonal chunks were merged into one rect')
       }
 
+      // Removing ONE chunk from a big selection. This is the case the first
+      // version got wrong and no test caught: a 20x20 region is a single rect,
+      // and expanding it to one rect per chunk to filter produced 400 — past
+      // the input ceiling, so 143 chunks vanished with no error at all. The
+      // fix splits the rectangle around the chunk instead, so the size of the
+      // selection cannot matter.
+      {
+        const big = areasMod.normalizeRects(at([[0, 0, 19, 19]]))
+        if (big.length !== 1 || areasMod.areaChunkCount({ rects: big }) !== 400) {
+          return fail('a 20x20 selection is not one 400-chunk rect')
+        }
+        const cut = areasMod.subtractChunk(big, 10, 10)
+        if (areasMod.areaChunkCount({ rects: cut }) !== 399) {
+          return fail('removing one chunk from 400 left ' + areasMod.areaChunkCount({ rects: cut }))
+        }
+        if (areasMod.areaHas({ rects: cut }, 10, 10)) return fail('the removed chunk is still covered')
+        // Every other chunk survives, and none is covered twice — a split that
+        // overlaps would make the area larger than the shape it draws.
+        for (let x = 0; x <= 19; x++) {
+          for (let z = 0; z <= 19; z++) {
+            const hits = cut.filter((r) => areasMod.rectHas(r, x, z)).length
+            const want = x === 10 && z === 10 ? 0 : 1
+            if (hits !== want) return fail('chunk ' + x + ',' + z + ' is covered ' + hits + ' times')
+          }
+        }
+        // Removing a corner, an edge and the last chunk of all.
+        if (areasMod.areaChunkCount({ rects: areasMod.subtractChunk(big, 0, 0) }) !== 399) {
+          return fail('removing the corner went wrong')
+        }
+        if (areasMod.areaChunkCount({ rects: areasMod.subtractChunk(big, 19, 5) }) !== 399) {
+          return fail('removing an edge chunk went wrong')
+        }
+        const one = areasMod.normalizeRects(at([[7, 7, 7, 7]]))
+        if (areasMod.subtractChunk(one, 7, 7).length !== 0) return fail('removing the only chunk left something')
+        // A chunk that was never in the selection changes nothing.
+        if (areasMod.areaChunkCount({ rects: areasMod.subtractChunk(big, 99, 99) }) !== 400) {
+          return fail('removing an unselected chunk changed the selection')
+        }
+      }
+
+      // Too many pieces is REFUSED, not trimmed. `normalizeRects` used to slice
+      // its input, so an API caller who sent a hundred scattered chunks got a
+      // 200 and lost most of them — with nothing to say which.
+      {
+        const scattered = at(
+          Array.from({ length: areasMod.MAX_RECTS_PER_AREA + 20 }, (_, i) => [i * 2, 0, i * 2, 0])
+        )
+        const c = areasMod.checkArea({ name: 'swiss cheese', rects: scattered })
+        if (c.ok) return fail('a shape with too many pieces was accepted')
+        if (c.error !== 'too-many-rects') return fail('wrong reason: ' + c.error)
+        const flood = at(Array.from({ length: areasMod.MAX_INPUT_RECTS + 1 }, (_, i) => [i * 2, 0, i * 2, 0]))
+        const c2 = areasMod.checkArea({ name: 'flood', rects: flood })
+        if (c2.ok || c2.error !== 'too-many-rects') return fail('a flood of rects was not refused: ' + JSON.stringify(c2))
+        // ...and a shape that merges down to few enough pieces is still fine,
+        // however many rectangles it arrived as.
+        const contiguous = at(Array.from({ length: 300 }, (_, i) => [i, 0, i, 0]))
+        const c3 = areasMod.checkArea({ name: 'a long road', rects: contiguous })
+        if (!c3.ok) return fail('300 chunks in a row were refused: ' + c3.error)
+        if (c3.value.rects.length !== 1) return fail('300 chunks in a row did not merge to one rect')
+      }
+
       // Dimension scoping. Without it, an area drawn in the overworld paints the
       // same rectangle over the nether, where it means nothing.
       const over = mk({ id: 'o', rects: at([[0, 0, 9, 9]]) })
@@ -6754,6 +6815,7 @@ export async function runWebSmoke(): Promise<void> {
           if (areasMod.areaChunkCount({ rects: pnl.AREA_PICK }) !== 4) return fail('the picker lost a chunk')
           // Taking one out of the MIDDLE is the case that matters: the rect it
           // sits in covers three others, and dropping the rect drops them too.
+          // The panel splits the rectangle, the same as the app does.
           pctx['areaPickChunk'](1, 0)
           if (areasMod.areaChunkCount({ rects: pnl.AREA_PICK }) !== 3) {
             return fail('removing one chunk took ' + (4 - areasMod.areaChunkCount({ rects: pnl.AREA_PICK })) + ' with it')
@@ -6780,6 +6842,19 @@ export async function runWebSmoke(): Promise<void> {
             rs.map((r) => [r.x1, r.z1, r.x2, r.z2].join(',')).join(' ')
           if (canon(theirsTidy) !== canon(mineTidy)) {
             return fail('the panel tidies differently: ' + canon(theirsTidy) + ' vs ' + canon(mineTidy))
+          }
+          // And the panel must survive the big-selection case too — its own
+          // removal is a second implementation, so it gets the same test.
+          pnl.AREA_PICK = [{ x1: 0, z1: 0, x2: 19, z2: 19 }]
+          pctx['areaPickChunk'](10, 10)
+          if (areasMod.areaChunkCount({ rects: pnl.AREA_PICK }) !== 399) {
+            return fail(
+              'the panel lost chunks removing one from 400: ' +
+              areasMod.areaChunkCount({ rects: pnl.AREA_PICK })
+            )
+          }
+          if (canon(pnl.AREA_PICK) !== canon(areasMod.subtractChunk([{ x1: 0, z1: 0, x2: 19, z2: 19 }], 10, 10))) {
+            return fail('the panel splits a rectangle differently from the app')
           }
           pnl.AREA_PICKING = false
           pnl.AREA_PICK = []

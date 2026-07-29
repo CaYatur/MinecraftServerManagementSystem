@@ -149,6 +149,8 @@ const tr: typeof en = {
     allStructures: 'Tüm yapılar',
     areas: 'Alanlar',
     areasCount: '{{dim}} içinde {{n}} tane',
+    areaEdit: 'Alanları düzenle',
+    'areaErr_too-many-rects': 'Bu şekil çok fazla ayrı parçadan oluşuyor — birleştirin ya da daha az alan yapın.',
     areaNew: 'Yeni alan',
     areaName: 'Alan adı, örn. spawn kasabası',
     areaNote: 'Ek açıklama — adın altında görünür, örn. bu alan sahibi: CaYatur',

@@ -76,6 +76,15 @@ export const MAX_CHUNK = 1_875_000
 export const MAX_AREAS = 200
 export const MAX_RECTS_PER_AREA = 64
 /**
+ * How many rectangles `normalizeRects` will look at before giving up.
+ *
+ * Generous, because clicking chunks one at a time is a real way to build a
+ * selection and each click arrives as its own 1x1 — they merge as they go, so
+ * the list only stays long for a genuinely scattered shape. Past this, the
+ * answer is a refusal, never a shorter list.
+ */
+export const MAX_INPUT_RECTS = 1024
+/**
  * A cap on area, not on ambition: 65,536 chunks is 1024 blocks square, which is
  * a large town. Without a cap one typo — a missing minus, a pasted coordinate in
  * blocks rather than chunks — asks every map to test a million chunks per frame.
@@ -138,7 +147,12 @@ const contains = (outer: ChunkRect, inner: ChunkRect): boolean =>
 export function normalizeRects(list: unknown): ChunkRect[] {
   if (!Array.isArray(list)) return []
   let out: ChunkRect[] = []
-  for (const raw of list.slice(0, MAX_RECTS_PER_AREA * 4)) {
+  // A ceiling on the WORK, not on the answer. The merge below restarts its scan
+  // after every join, so it is superlinear and an unbounded list would hang the
+  // browser tab it runs in. Anything past this is refused by `checkArea` rather
+  // than quietly trimmed here — `.slice()` used to sit on this line, and a
+  // caller who sent more than it allowed got a 200 and lost the rest.
+  for (const raw of list.slice(0, MAX_INPUT_RECTS)) {
     const r = raw && typeof raw === 'object' ? normalizeRect(raw as ChunkRect) : null
     if (r) out.push(r)
   }
@@ -175,7 +189,7 @@ export function normalizeRects(list: unknown): ChunkRect[] {
   // Stable order, so two identical selections serialise identically and a diff
   // of the stored file shows real edits rather than reshuffling.
   out.sort((a, b) => a.x1 - b.x1 || a.z1 - b.z1 || a.x2 - b.x2 || a.z2 - b.z2)
-  return out.slice(0, MAX_RECTS_PER_AREA)
+  return out
 }
 
 export function areaChunkCount(a: Pick<ChunkArea, 'rects'>): number {
@@ -280,8 +294,16 @@ export function checkArea(input: AreaInput): AreaCheck {
   const note = typeof input.note === 'string' ? input.note.trim() : ''
   if (note.length > MAX_NOTE) return { ok: false, error: 'note-too-long' }
 
+  // Checked BEFORE normalising, because normalising is where a too-long list
+  // used to be silently shortened. A caller who sends more than can be stored
+  // has to hear about it — a 200 that kept two thirds of the shape is worse
+  // than a 400, because nothing tells them which third went.
+  if (Array.isArray(input.rects) && input.rects.length > MAX_INPUT_RECTS) {
+    return { ok: false, error: 'too-many-rects' }
+  }
   const rects = normalizeRects(input.rects)
   if (!rects.length) return { ok: false, error: 'no-chunks' }
+  if (rects.length > MAX_RECTS_PER_AREA) return { ok: false, error: 'too-many-rects' }
   const size = areaChunkCount({ rects })
   if (size > MAX_CHUNKS_PER_AREA) return { ok: false, error: 'too-many-chunks' }
 
@@ -355,27 +377,31 @@ export function parseChunkInput(text: string): { rects: ChunkRect[]; bad: string
 }
 
 /**
- * A rect list back to the individual chunks it covers.
+ * Take one chunk OUT of a selection.
  *
- * The inverse of `normalizeRects`, and it exists for one thing: taking a chunk
- * OUT of a selection. Rects are merged on the way in, so the chunk a click lands
- * on is usually in the middle of a rectangle covering forty others — dropping
- * that rectangle would throw away the rest.
- *
- * Capped at `MAX_CHUNKS_PER_AREA`, the same ceiling `checkArea` enforces, so
- * this cannot be asked to build a list an area could never have held anyway.
+ * By splitting the rectangle that contains it into the (at most four) pieces
+ * around it — never by expanding the selection to one rect per chunk and
+ * filtering. That expansion was the first version and it lost data: a 20x20
+ * region is one rectangle, expands to 400, and `normalizeRects` capped its input
+ * at 256, so removing one interior chunk silently deleted 143 others. Splitting
+ * touches only the rectangle involved and cannot grow the list by more than
+ * three, whatever the selection's size.
  */
-export function expandRects(rects: ChunkRect[]): ChunkRect[] {
+export function subtractChunk(rects: ChunkRect[], cx: number, cz: number): ChunkRect[] {
   const out: ChunkRect[] = []
   for (const r of rects) {
-    for (let x = r.x1; x <= r.x2; x++) {
-      for (let z = r.z1; z <= r.z2; z++) {
-        if (out.length >= MAX_CHUNKS_PER_AREA) return out
-        out.push({ x1: x, z1: z, x2: x, z2: z })
-      }
+    if (!rectHas(r, cx, cz)) {
+      out.push(r)
+      continue
     }
+    // Left and right span the full depth; top and bottom are the leftovers in
+    // the removed chunk's own column, so the four pieces never overlap.
+    if (cx > r.x1) out.push({ x1: r.x1, z1: r.z1, x2: cx - 1, z2: r.z2 })
+    if (cx < r.x2) out.push({ x1: cx + 1, z1: r.z1, x2: r.x2, z2: r.z2 })
+    if (cz > r.z1) out.push({ x1: cx, z1: r.z1, x2: cx, z2: cz - 1 })
+    if (cz < r.z2) out.push({ x1: cx, z1: cz + 1, x2: cx, z2: r.z2 })
   }
-  return out
+  return normalizeRects(out)
 }
 
 /** Block coordinates to the chunk containing them. Negative-safe, which `/16|0` is not. */

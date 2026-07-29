@@ -14,7 +14,7 @@ import {
   areasFor,
   chunkOf,
   normalizeRects,
-  expandRects,
+  subtractChunk,
   parseChunkInput,
   checkArea,
   areaChunkCount,
@@ -232,6 +232,8 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
   // label the operator wrote for people to read, so hiding it defeats the point.
   const [areas, setAreas] = useState<ChunkArea[]>([])
   const [showAreas, setShowAreas] = useState(true)
+  // Drawing them is on; the editor is not. Two separate decisions.
+  const [showAreaCard, setShowAreaCard] = useState(false)
   const [pinned, setPinned] = useState<ChunkArea | null>(null)
   const [editing, setEditing] = useState<ChunkArea | 'new' | null>(null)
   // Chunks picked by clicking, while the picker is open. A mode rather than a
@@ -687,14 +689,32 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
         <button className={`btn sm ${showAreas ? 'primary' : ''}`} onClick={() => setShowAreas((v) => !v)}>
           <Shapes size={13} /> {t('map.areas')}
         </button>
+        <button
+          className={`btn sm ${showAreaCard ? 'primary' : ''}`}
+          onClick={() => {
+            const next = !showAreaCard
+            setShowAreaCard(next)
+            // Editing implies looking. Opening the editor over a map that is not
+            // drawing areas would be picking chunks against an invisible shape.
+            if (next) setShowAreas(true)
+            else {
+              setEditing(null)
+              setPicking(false)
+              setPicked([])
+            }
+          }}
+        >
+          {t('map.areaEdit')}
+        </button>
         <button className={`btn sm ${showPerf ? 'primary' : ''}`} onClick={() => setShowPerf((v) => !v)}>
           <Gauge size={13} /> {t('map.performance')}
         </button>
       </div>
 
-      {/* The area editor. Open only when asked for: the map is for looking at,
-          and a permanently visible editing panel would take a third of it. */}
-      {showAreas && (
+      {/* Open only when asked for: the map is for looking at, and a permanently
+          visible editing panel takes a third of it. Drawing areas and EDITING
+          them are two decisions — the web panel keeps them apart the same way. */}
+      {showAreaCard && (
         <div className="card" style={{ padding: 12, display: 'grid', gap: 8 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             <b style={{ fontSize: 13 }}>{t('map.areas')}</b>
@@ -905,12 +925,10 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
               const has = picked.some((r) => c.cx >= r.x1 && c.cx <= r.x2 && c.cz >= r.z1 && c.cz <= r.z2)
               setPicked(
                 has
-                  ? // Rects are merged on the way in, so removing a chunk means
-                    // re-deriving the selection without it rather than dropping
-                    // whichever rectangle happens to contain it.
-                    normalizeRects(
-                      expandRects(picked).filter((p) => !(p.x1 === c.cx && p.z1 === c.cz))
-                    )
+                  ? // Splits the rectangle around the chunk rather than dropping
+                    // it: rects are merged on the way in, so the one under the
+                    // pointer usually covers dozens of others.
+                    subtractChunk(picked, c.cx, c.cz)
                   : normalizeRects([...picked, { x1: c.cx, z1: c.cz, x2: c.cx, z2: c.cz }])
               )
               return

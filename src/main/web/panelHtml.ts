@@ -991,13 +991,18 @@ function areaPickChunk(cx,cz){
  for(var i=0;i<AREA_PICK.length;i++){var r=AREA_PICK[i];
   if(cx>=r.x1&&cx<=r.x2&&cz>=r.z1&&cz<=r.z2)has=true}
  if(has){
-  /* Expand and drop the one chunk. Removing the whole rectangle that happens to
-     contain it would throw away the forty others it was merged with. */
-  var flat=[];
+  /* Split the rectangle AROUND the chunk. Expanding the selection to one rect
+     per chunk and filtering was the first version, and it lost data on any
+     selection past a few hundred chunks. Splitting touches only the rectangle
+     involved and can add at most three. */
+  var cut=[];
   for(var j=0;j<AREA_PICK.length;j++){var q=AREA_PICK[j];
-   for(var x=q.x1;x<=q.x2;x++)for(var z=q.z1;z<=q.z2;z++)
-    if(!(x===cx&&z===cz))flat.push({x1:x,z1:z,x2:x,z2:z})}
-  AREA_PICK=areaTidy(flat)}
+   if(!(cx>=q.x1&&cx<=q.x2&&cz>=q.z1&&cz<=q.z2)){cut.push(q);continue}
+   if(cx>q.x1)cut.push({x1:q.x1,z1:q.z1,x2:cx-1,z2:q.z2});
+   if(cx<q.x2)cut.push({x1:cx+1,z1:q.z1,x2:q.x2,z2:q.z2});
+   if(cz>q.z1)cut.push({x1:cx,z1:q.z1,x2:cx,z2:cz-1});
+   if(cz<q.z2)cut.push({x1:cx,z1:cz+1,x2:cx,z2:q.z2})}
+  AREA_PICK=areaTidy(cut)}
  else AREA_PICK=areaTidy(AREA_PICK.concat([{x1:cx,z1:cz,x2:cx,z2:cz}]));
  areaCountText();mapDraw()}
 function areaAddTyped(){
