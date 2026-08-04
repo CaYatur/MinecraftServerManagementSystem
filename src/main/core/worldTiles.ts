@@ -733,6 +733,23 @@ const SECTOR_HEADER = 8192
  * without ever triggering a parse — and what lets the client tell an empty area
  * from one it simply has not received yet.
  */
+function loadedRegion(path: string): RegionEntry | null | undefined {
+  let mtimeMs = 0
+  try {
+    // One stat answers both questions: whether the region exists and whether a
+    // cached parse is still current. The old request path did exists + stat for
+    // every chunk, so one 64-chunk batch could hit the same Windows file 128
+    // times before doing any useful work.
+    mtimeMs = statSync(path).mtimeMs
+  } catch {
+    return null
+  }
+  const hit = regions.get(path)
+  if (!hit || hit.mtimeMs !== mtimeMs) return undefined
+  hit.at = Date.now()
+  return hit
+}
+
 export function peekChunkTile(
   serverId: string,
   dim: string,
@@ -741,18 +758,10 @@ export function peekChunkTile(
 ): ChunkTile | null | undefined {
   const path = regionPath(serverId, dim, regionOf(chunkX), regionOf(chunkZ))
   if (!path) return null
-  if (!existsSync(path)) return null
-  const hit = regions.get(path)
-  if (!hit) return undefined
-  let mtimeMs = 0
-  try {
-    mtimeMs = statSync(path).mtimeMs
-  } catch {
-    return null
-  }
-  if (hit.mtimeMs !== mtimeMs) return undefined
-  hit.at = Date.now()
-  return hit.tiles.get(chunkSlot(localChunk(chunkX), localChunk(chunkZ))) ?? null
+  const region = loadedRegion(path)
+  if (region === undefined) return undefined
+  if (!region) return null
+  return region.tiles.get(chunkSlot(localChunk(chunkX), localChunk(chunkZ))) ?? null
 }
 
 /**
@@ -763,8 +772,13 @@ export function peekChunkTile(
  * own would be three times the work and three different maps, which is the
  * complaint this consolidates.
  */
-const queue: { serverId: string; dim: string; cx: number; cz: number }[] = []
+const queue: { serverId: string; dim: string; cx: number; cz: number; key: string }[] = []
+const queuedRegions = new Set<string>()
 let working = false
+
+function regionJobKey(serverId: string, dim: string, cx: number, cz: number): string {
+  return `${serverId}\u0000${dim}\u0000${regionOf(cx)},${regionOf(cz)}`
+}
 
 export function requestTiles(
   serverId: string,
@@ -780,13 +794,45 @@ export function requestTiles(
   const tiles: Record<string, { c: number[]; h: number[]; m?: StructureMark[] }> = {}
   const empty: string[] = []
   const missing: { cx: number; cz: number }[] = []
+  const byRegion = new Map<string, { path: string; chunks: { cx: number; cz: number }[] }>()
+
   for (const w of want) {
-    const t = peekChunkTile(serverId, dim, w.cx, w.cz)
-    if (t === undefined) missing.push(w)
-    else if (!t) empty.push(w.cx + ',' + w.cz)
-    // Structures are omitted unless asked for. They are a spoiler, and a
-    // payload that carries them "in case" is one the public feed could leak.
-    else if (t) {
+    const path = regionPath(serverId, dim, regionOf(w.cx), regionOf(w.cz))
+    if (!path) {
+      empty.push(w.cx + ',' + w.cz)
+      continue
+    }
+    const group = byRegion.get(path)
+    if (group) group.chunks.push(w)
+    else byRegion.set(path, { path, chunks: [w] })
+  }
+
+  // Resolve each .mca file once per request. A normal viewport asks for many
+  // chunks from the same region; grouping avoids dozens of duplicate stat calls.
+  for (const group of byRegion.values()) {
+    const region = loadedRegion(group.path)
+    if (region === undefined) {
+      missing.push(...group.chunks)
+      const first = group.chunks[0]
+      const key = regionJobKey(serverId, dim, first.cx, first.cz)
+      if (queue.length <= 4096 && !queuedRegions.has(key)) {
+        queuedRegions.add(key)
+        queue.push({ serverId, dim, cx: first.cx, cz: first.cz, key })
+      }
+      continue
+    }
+    if (!region) {
+      for (const w of group.chunks) empty.push(w.cx + ',' + w.cz)
+      continue
+    }
+    for (const w of group.chunks) {
+      const t = region.tiles.get(chunkSlot(localChunk(w.cx), localChunk(w.cz))) ?? null
+      if (!t) {
+        empty.push(w.cx + ',' + w.cz)
+        continue
+      }
+      // Structures are omitted unless asked for. They are a spoiler, and a
+      // payload that carries them "in case" is one the public feed could leak.
       tiles[w.cx + ',' + w.cz] = {
         c: t.colour,
         h: t.height,
@@ -794,12 +840,7 @@ export function requestTiles(
       }
     }
   }
-  for (const m of missing) {
-    if (queue.length > 4096) break
-    if (!queue.some((q) => q.serverId === serverId && q.dim === dim && q.cx === m.cx && q.cz === m.cz)) {
-      queue.push({ serverId, dim, ...m })
-    }
-  }
+
   if (missing.length && !working) void drain()
   return { tiles, empty, pending: missing.length }
 }
@@ -825,6 +866,8 @@ async function drain(): Promise<void> {
         await chunkTileSliced(job.serverId, job.dim, job.cx, job.cz)
       } catch {
         /* one bad region must not stop the queue */
+      } finally {
+        queuedRegions.delete(job.key)
       }
       if (lastParseAt !== before) {
         // It really parsed. Stand back for the configured gap so the console

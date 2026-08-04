@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from 'node:http'
 import { createHash, timingSafeEqual, randomBytes } from 'node:crypto'
+import { gzipSync } from 'node:zlib'
 import { networkInterfaces } from 'node:os'
 import { createReadStream, existsSync } from 'node:fs'
 import { join, extname, resolve, sep } from 'node:path'
@@ -213,6 +214,37 @@ function sendJson(res: ServerResponse, code: number, body: unknown): void {
   res.writeHead(code, {
     'Content-Type': 'application/json; charset=utf-8',
     'Cache-Control': 'no-store'
+  })
+  res.end(data)
+}
+
+function sendTileJson(req: IncomingMessage, res: ServerResponse, body: unknown): void {
+  const raw = Buffer.from(JSON.stringify(body))
+  const pending = Number((body as { pending?: unknown } | null)?.pending ?? 0)
+  const complete = Number.isFinite(pending) && pending === 0
+  const etag = complete ? `"${createHash('sha256').update(raw).digest('base64url')}"` : ''
+
+  if (complete && req.headers['if-none-match'] === etag) {
+    res.writeHead(304, {
+      ETag: etag,
+      'Cache-Control': 'private, max-age=30, stale-while-revalidate=300',
+      Vary: 'Accept-Encoding'
+    })
+    res.end()
+    return
+  }
+
+  const acceptsGzip = /(?:^|,)\s*gzip\s*(?:,|$)/i.test(String(req.headers['accept-encoding'] ?? ''))
+  const data = acceptsGzip && raw.length >= 1024 ? gzipSync(raw, { level: 6 }) : raw
+  res.writeHead(200, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Cache-Control': complete
+      ? 'private, max-age=30, stale-while-revalidate=300'
+      : 'no-store',
+    ...(complete ? { ETag: etag } : {}),
+    ...(data !== raw ? { 'Content-Encoding': 'gzip' } : {}),
+    Vary: 'Accept-Encoding',
+    'Content-Length': String(data.length)
   })
   res.end(data)
 }
@@ -761,9 +793,9 @@ async function handlePublic(
     // Structures only when the operator published them, whatever the caller
     // asks for: where every village and dungeon is turns a public site into a
     // treasure map of a private world.
-    return sendJson(
+    return sendTileJson(
+      req,
       res,
-      200,
       tilesFor(cfg.serverId, dim, parseWanted(q.get('c')), { marks: cfg.structures })
     )
   }
@@ -1310,9 +1342,9 @@ async function handlePanel(req: IncomingMessage, res: ServerResponse): Promise<v
       const dim = normalizeDimension(url.searchParams.get('dim') ?? 'overworld')
       // An operator may ask for structures on their own map without a setting —
       // they can already read the world folder. The public feed cannot.
-      return sendJson(
+      return sendTileJson(
+        req,
         res,
-        200,
         tilesFor(id, dim, parseWanted(url.searchParams.get('c')), {
           marks: url.searchParams.get('marks') === '1'
         })
@@ -2611,9 +2643,9 @@ async function handleMapPage(req: IncomingMessage, res: ServerResponse): Promise
     const dim = cfg.fixedDim || normalizeDimension(url.searchParams.get('dim') ?? 'overworld')
     // Structures only when the operator published them, whatever the caller
     // asks for: where every dungeon is turns a map into a treasure map.
-    return sendJson(
+    return sendTileJson(
+      req,
       res,
-      200,
       tilesFor(cfg.serverId, dim, parseWanted(url.searchParams.get('c')), { marks: cfg.structures })
     )
   }
