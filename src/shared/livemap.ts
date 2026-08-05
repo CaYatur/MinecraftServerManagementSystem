@@ -397,14 +397,38 @@ export const MAX_TILES_PER_REQUEST = 512
 export const MAX_VIEWPORT_CHUNKS = 4096
 
 /**
- * Tiles a client keeps baked before it starts evicting.
+ * Chunks per region axis, and the blocks one region spans.
  *
- * Strictly greater than `MAX_VIEWPORT_CHUNKS`, and that is the whole point: at
- * the old limit of 2048 a single viewport could exceed the cache, so the map
- * evicted tiles it had just fetched and re-fetched them on the next draw. Any
- * value below the viewport cap turns this into a loop.
+ * A client bakes ONE canvas per region rather than one per chunk (#164). Both
+ * numbers matter to the clients: 32 chunks decides which region a chunk belongs
+ * to, and 512 is both the pixel size of that canvas (32 chunks x 16 px) and the
+ * blocks it covers, which is what makes the draw a single `drawImage` at the
+ * region's world origin.
  */
-export const TILE_KEEP_LIMIT = 8192
+export const REGION_CHUNKS = 32
+export const REGION_SPAN = REGION_CHUNKS * 16
+
+/**
+ * Region canvases a client keeps before it starts evicting.
+ *
+ * The unit used to be the chunk, and it was the wrong one twice over. A
+ * viewport is up to 4096 chunks, so holding a couple of screens' worth meant
+ * thousands of `HTMLCanvasElement`s: enough object overhead that the limit had
+ * to stay low, which is why panning two screens away and back made the ground
+ * disappear and reload — the thing the operator reported after all of #157 and
+ * #159 had landed. Drawing them cost up to 4096 `drawImage` calls and a walk of
+ * every held key, per frame, which is the lag they reported alongside it.
+ *
+ * One region canvas is 512x512x4 = 1 MB and covers 1024 chunks, so the pixels
+ * cost the same and everything around them collapses by three orders of
+ * magnitude. 48 of them is about 48 MB and roughly twelve million blocks of
+ * ground — far more than a session pans over, which is what "it stays until I
+ * reload the page" actually requires.
+ *
+ * Must exceed the regions one viewport can touch (a 64x64-chunk view spans at
+ * most 3x3), or the map evicts what it is looking at.
+ */
+export const MAX_REGION_CANVASES = 48
 
 /** A viewport in chunk coordinates, inclusive at both ends. */
 export interface ChunkBox {
@@ -437,8 +461,16 @@ function boxDistance(box: ChunkBox, cx: number, cz: number): number {
  *
  * Pure and total: the callers hold canvases and DOM objects, and the decision
  * about what to throw away should be testable without either.
+ *
+ * GRID-AGNOSTIC. Keys and `box` only have to be in the SAME units — it decides
+ * which regions to give up now that a client bakes one canvas per region, and
+ * the maths did not have to change to do it.
  */
-export function tilesToDrop(held: Iterable<string>, box: ChunkBox, limit = TILE_KEEP_LIMIT): string[] {
+export function tilesToDrop(
+  held: Iterable<string>,
+  box: ChunkBox,
+  limit = MAX_REGION_CANVASES
+): string[] {
   const keys = [...held]
   const over = keys.length - Math.max(0, limit)
   if (over <= 0) return []
@@ -456,4 +488,19 @@ export function tilesToDrop(held: Iterable<string>, box: ChunkBox, limit = TILE_
   // Farthest first, then by key so two runs on the same input agree.
   ranked.sort((a, b) => b.d - a.d || (a.k < b.k ? -1 : a.k > b.k ? 1 : 0))
   return ranked.slice(0, over).map((r) => r.k)
+}
+
+/** Which region a chunk belongs to. Floor, so it is right west of zero too. */
+export function regionOfChunk(c: number): number {
+  return Math.floor(c / REGION_CHUNKS)
+}
+
+/** A chunk-coordinate viewport as the region grid sees it. */
+export function chunkBoxToRegions(box: ChunkBox): ChunkBox {
+  return {
+    x0: regionOfChunk(box.x0),
+    x1: regionOfChunk(box.x1),
+    z0: regionOfChunk(box.z0),
+    z1: regionOfChunk(box.z1)
+  }
 }

@@ -15,7 +15,13 @@
  * the server's cap, and a client asking for more than the server reads gets a
  * response that says nothing about the excess (#159).
  */
-import { MAX_TILES_PER_REQUEST, MAX_VIEWPORT_CHUNKS, TILE_KEEP_LIMIT } from './livemap'
+import {
+  MAX_REGION_CANVASES,
+  MAX_TILES_PER_REQUEST,
+  MAX_VIEWPORT_CHUNKS,
+  REGION_CHUNKS,
+  REGION_SPAN
+} from './livemap'
 
 export const MAP_CSS = `
 .mp-wrap{display:flex;flex-direction:column;gap:10px}
@@ -257,7 +263,7 @@ function mapRefresh(){
      the overworld — so switching dimension without dropping them draws one
      world's terrain under another world's players. */
   var dimChanged=MAP.dim!==d.dimension;
-  if(dimChanged){MAP_TILES={};MAP_MARKS={};MAP_TILE_WAIT={}}
+  if(dimChanged){MAP_REGIONS={};MAP_TILE_WAIT={}}
   MAP.data=d;MAP.dim=d.dimension;
   /* The public feed is asked for one dimension at a time, so a switch needs a
      new request; a pinned area from the last world would otherwise stay drawn.
@@ -541,10 +547,59 @@ function mapToggleAreas(){MAP.areasOn=!MAP.areasOn;
    offscreen canvas per chunk and then blitted. Building an ImageData per frame
    for every visible chunk is the difference between a map that pans and one
    that stutters; a chunk only changes when the server rewrites its region. */
-var MAP_TILES={},MAP_TILE_PENDING=false;
+/**
+ * The terrain a client is holding, ONE CANVAS PER REGION (#164).
+ *
+ * It used to be one 16x16 canvas per chunk. A viewport is up to 4096 chunks, so
+ * holding a couple of screens meant thousands of canvas elements — enough
+ * object overhead that the limit had to stay low, which is why panning away and
+ * back made the ground vanish and reload, and why a lot of loaded area made the
+ * page crawl: every draw walked every held key and issued up to 4096 drawImage
+ * calls.
+ *
+ *   MAP_REGIONS['rx,rz'] = {
+ *     cv: <512x512 canvas>,   chunks stamped in as they arrive
+ *     st: { 'cx,cz': 1|0 },   1 drawn, 0 read-and-empty; absent means unknown
+ *     mk: { 'cx,cz': [...] }  structure markers
+ *   }
+ *
+ * The per-chunk bookkeeping stays per chunk — only the PIXELS moved. Keeping
+ * the state map inside the region entry is what makes eviction correct by
+ * construction: dropping the canvas drops the claim to have drawn those chunks
+ * in the same statement, so the client can never believe it holds a tile it
+ * cannot draw.
+ */
+var MAP_REGIONS={},MAP_TILE_PENDING=false;
 /* Chunk -> when it is worth asking for again, while its region is read. */
 var MAP_TILE_WAIT={};
 function mapTileKey(cx,cz){return cx+','+cz}
+/* Floor, not truncation: -1/32|0 is 0, which would file every chunk west of
+   spawn into the wrong region. */
+function mapRegionOf(c){return Math.floor(c/${REGION_CHUNKS})}
+function mapRegionKey(cx,cz){return mapRegionOf(cx)+','+mapRegionOf(cz)}
+/* The region entry a chunk belongs to, created on demand. The canvas is blank
+   until chunks are stamped into it, which is the point: a region arrives a few
+   hundred chunks at a time and must be drawable in between. */
+function mapRegionFor(cx,cz,make){
+ var rk=mapRegionKey(cx,cz);var r=MAP_REGIONS[rk];
+ if(r||!make)return r;
+ r={cv:null,g:null,st:{},mk:{}};
+ MAP_REGIONS[rk]=r;return r}
+/* The canvas is a megabyte and is only needed once something is actually drawn
+   into it. Allocating it with the entry meant a region of nothing but
+   ungenerated chunks — an ocean, the edge of the explored world — took a full
+   canvas and a slot in the cache, evicting terrain that had really been read. */
+function mapRegionCanvas(r){
+ if(!r.cv){
+  var cv=document.createElement('canvas');
+  cv.width=${REGION_SPAN};cv.height=${REGION_SPAN};
+  r.cv=cv;r.g=cv.getContext('2d')}
+ return r}
+/* What the client knows about one chunk: 1 drawn, 0 read and empty, undefined
+   never read. */
+function mapChunkState(cx,cz){
+ var r=MAP_REGIONS[mapRegionKey(cx,cz)];
+ return r?r.st[mapTileKey(cx,cz)]:undefined}
 /* The viewport in chunk coordinates. */
 function mapChunkBox(){
  if(!MAP.view)return null;
@@ -563,24 +618,28 @@ function mapVisibleChunks(){
  for(var z=b.z0;z<=b.z1;z++)for(var x=b.x0;x<=b.x1;x++)out.push({cx:x,cz:z});
  return out}
 /**
- * Tiles to DRAW: everything already held that falls in view.
+ * Regions to DRAW: everything held that falls in view.
  *
  * A different question from what to request, and conflating the two is why the
  * terrain vanished when zoomed out (#135) — the request cap correctly refused
  * to ask for a million chunks and took the drawing down with it. Iterating what
  * is HELD rather than what is visible also costs the size of the cache instead
- * of the size of the viewport, so it stays cheap however far out you go.
+ * of the size of the viewport, so it stays cheap however far out you go — and
+ * the cache is now dozens of regions rather than thousands of chunks, so it is
+ * cheap by three orders of magnitude more than it was (#164).
  */
-function mapDrawableChunks(){
+function mapDrawableRegions(){
  var b=mapChunkBox();if(!b)return [];
+ var r0=mapRegionOf(b.x0),r1=mapRegionOf(b.x1);
+ var s0=mapRegionOf(b.z0),s1=mapRegionOf(b.z1);
  var out=[];
- for(var k in MAP_TILES){
-  if(!MAP_TILES[k])continue;
-  var p=k.split(',');var cx=+p[0],cz=+p[1];
-  if(cx<b.x0-1||cx>b.x1+1||cz<b.z0-1||cz>b.z1+1)continue;
-  out.push({cx:cx,cz:cz})}
+ for(var k in MAP_REGIONS){
+  var p=k.split(',');var rx=+p[0],rz=+p[1];
+  if(rx<r0||rx>r1||rz<s0||rz>s1)continue;
+  /* A region that only ever answered "nothing there" has no canvas. */
+  if(!MAP_REGIONS[k].cv)continue;
+  out.push({rx:rx,rz:rz,r:MAP_REGIONS[k]})}
  return out}
-var MAP_MARKS={};
 function mapFetchTiles(force){
  if(!MAP.world||MAP_TILE_PENDING||!MAP.view)return;
  /* When loading-on-pan is off the map draws what it holds and asks for nothing
@@ -606,7 +665,7 @@ function mapFetchTiles(force){
  var now=Date.now(),soonest=Infinity;
  var want=chunks.filter(function(c){
   var k=mapTileKey(c.cx,c.cz);
-  if(MAP_TILES[k]!==undefined)return false;
+  if(mapChunkState(c.cx,c.cz)!==undefined)return false;
   if(MAP_TILE_WAIT[k]>now){soonest=Math.min(soonest,MAP_TILE_WAIT[k]);return false}
   return true});
  if(!want.length){
@@ -636,10 +695,16 @@ function mapFetchTiles(force){
   var known={};
   for(var e=0;e<(d.empty||[]).length;e++)known[d.empty[e]]=1;
   for(var i=0;i<want.length;i++){
-   var k=mapTileKey(want[i].cx,want[i].cz);
+   var cx=want[i].cx,cz=want[i].cz;
+   var k=mapTileKey(cx,cz);
    var t=d.tiles[k];
-   if(t){MAP_TILES[k]=mapBakeTile(t);if(t.m)MAP_MARKS[k]=t.m;delete MAP_TILE_WAIT[k]}
-   else if(known[k]){MAP_TILES[k]=null;delete MAP_TILE_WAIT[k]}
+   if(t){
+    /* Stamped into the region canvas where it belongs rather than baked into a
+       canvas of its own. A region arrives a few hundred chunks at a time, so
+       this has to be incremental — baking a region once, when its first chunk
+       landed, would leave it 90% transparent forever (#164). */
+    mapStampTile(cx,cz,t);delete MAP_TILE_WAIT[k]}
+   else if(known[k]){mapRegionFor(cx,cz,true).st[k]=0;delete MAP_TILE_WAIT[k]}
    else MAP_TILE_WAIT[k]=Date.now()+400}
   mapDraw();
   /* Ask again straight away while anything is still coming. Waiting for the
@@ -662,9 +727,14 @@ function mapIconPath(kind){
 function mapDrawMarks(g,w,h,dpr){
  if(!MAP.marksOn)return;
  var sx=w/MAP.vp.width,sy=h/MAP.vp.height;
- var chunks=mapDrawableChunks();
- for(var i=0;i<chunks.length;i++){
-  var list=MAP_MARKS[mapTileKey(chunks[i].cx,chunks[i].cz)];
+ /* Markers live in the region entry beside the pixels, so they are dropped by
+    the same eviction and cannot outlive the terrain they annotate. */
+ var regions=mapDrawableRegions(),marks=[];
+ for(var ri=0;ri<regions.length;ri++){
+  var mk=regions[ri].r.mk;
+  for(var mkey in mk)marks.push(mk[mkey])}
+ for(var i=0;i<marks.length;i++){
+  var list=marks[i];
   if(!list)continue;
   for(var j=0;j<list.length;j++){
    var mk=list[j];
@@ -697,7 +767,7 @@ function mapToggleMarks(){
  /* The tiles held were fetched without markers, so they carry none. Drop them
     and ask again rather than showing an empty layer that looks like "there are
     no villages here". */
- if(MAP.marksOn){MAP_TILES={};MAP_MARKS={};MAP_TILE_WAIT={}}
+ if(MAP.marksOn){MAP_REGIONS={};MAP_TILE_WAIT={}}
  mapFetchTiles();mapDraw()}
 /* Panning a big world would otherwise hold every chunk ever looked at, for as
    long as the page is open — and since drawing iterates what is held, an
@@ -717,22 +787,37 @@ function mapToggleMarks(){
  * cannot import it because MAP_JS is a string served to a browser.
  */
 function mapTrimTiles(){
- var keys=Object.keys(MAP_TILES);
- var over=keys.length-${TILE_KEEP_LIMIT};
+ var keys=Object.keys(MAP_REGIONS);
+ var over=keys.length-${MAX_REGION_CANVASES};
  if(over<=0)return;
  var b=mapChunkBox();if(!b)return;
+ /* In REGION coordinates, because that is the unit being dropped. */
+ var x0=mapRegionOf(b.x0),x1=mapRegionOf(b.x1);
+ var z0=mapRegionOf(b.z0),z1=mapRegionOf(b.z1);
  var ranked=[];
  for(var i=0;i<keys.length;i++){
-  var p=keys[i].split(',');var cx=+p[0],cz=+p[1];
-  var dx=cx<b.x0?b.x0-cx:cx>b.x1?cx-b.x1:0;
-  var dz=cz<b.z0?b.z0-cz:cz>b.z1?cz-b.z1:0;
-  ranked.push({k:keys[i],d:isFinite(cx)&&isFinite(cz)?Math.max(dx,dz):Infinity})}
+  var p=keys[i].split(',');var rx=+p[0],rz=+p[1];
+  var dx=rx<x0?x0-rx:rx>x1?rx-x1:0;
+  var dz=rz<z0?z0-rz:rz>z1?rz-z1:0;
+  ranked.push({k:keys[i],d:isFinite(rx)&&isFinite(rz)?Math.max(dx,dz):Infinity})}
  ranked.sort(function(a,b2){return b2.d-a.d||(a.k<b2.k?-1:a.k>b2.k?1:0)});
  for(var j=0;j<over;j++){
-  delete MAP_TILES[ranked[j].k];delete MAP_MARKS[ranked[j].k];delete MAP_TILE_WAIT[ranked[j].k]}}
-function mapBakeTile(t){
- var cv=document.createElement('canvas');cv.width=16;cv.height=16;
- var g=cv.getContext('2d');var img=g.createImageData(16,16);
+  var gone=MAP_REGIONS[ranked[j].k];
+  /* The backoff entries for that region's chunks go with it, or they outlive
+     every tile they were about. The canvas and the claim to have drawn those
+     chunks are in the same object, so they cannot come apart. */
+  if(gone)for(var ck in gone.st)delete MAP_TILE_WAIT[ck];
+  delete MAP_REGIONS[ranked[j].k]}}
+/**
+ * One chunk, painted into its region canvas at the chunk's own offset.
+ *
+ * putImageData rather than drawImage: it writes the pixels straight in with
+ * no compositing, which is what makes a transparent column stay transparent
+ * over the region's blank background instead of blending with it.
+ */
+function mapStampTile(cx,cz,t){
+ var r=mapRegionCanvas(mapRegionFor(cx,cz,true));
+ var img=r.g.createImageData(16,16);
  for(var i=0;i<256;i++){
   var c=t.c[i];var o=i*4;
   if(c<0){img.data[o+3]=0;continue}
@@ -744,7 +829,14 @@ function mapBakeTile(t){
   img.data[o+1]=Math.max(0,Math.min(255,Math.round(((c>>8)&255)*f)));
   img.data[o+2]=Math.max(0,Math.min(255,Math.round((c&255)*f)));
   img.data[o+3]=255}
- g.putImageData(img,0,0);return cv}
+ /* Local chunk within the region. A remainder is negative west of zero, so it
+    is wrapped — chunk -1 is local 31, not -1, and a raw modulo would stamp
+    outside the canvas and silently draw nothing. */
+ var lx=((cx%${REGION_CHUNKS})+${REGION_CHUNKS})%${REGION_CHUNKS};
+ var lz=((cz%${REGION_CHUNKS})+${REGION_CHUNKS})%${REGION_CHUNKS};
+ r.g.putImageData(img,lx*16,lz*16);
+ r.st[mapTileKey(cx,cz)]=1;
+ if(t.m)r.mk[mapTileKey(cx,cz)]=t.m}
 /* Area nobody has ever been to.
    Drawn as a deliberate, themed hatch rather than left black, because black is
    indistinguishable from "still loading" and from "broken" — an operator was
@@ -759,7 +851,7 @@ function mapDrawUngenerated(g,w,h,dpr){
  if(size*sx<3)return;
  var accent=mapAccent();var ungen=0;
  for(var cz=b.z0;cz<=b.z1;cz++)for(var cx=b.x0;cx<=b.x1;cx++){
-  if(MAP_TILES[mapTileKey(cx,cz)]!==null)continue;
+  if(mapChunkState(cx,cz)!==0)continue;
   var p=mapW2S({x:cx*16,z:cz*16});
   var x=p.x*sx,y=p.y*sy,d=size*sx,dh2=size*sy;
   g.fillStyle='rgba('+accent+',0.055)';
@@ -783,18 +875,19 @@ function mapAccent(){
  return '220,39,39'}
 function mapDrawTiles(g,w,h){
  if(!MAP.world)return;
- var chunks=mapDrawableChunks();
- if(!chunks.length)return;
+ var regions=mapDrawableRegions();
+ if(!regions.length)return;
  var sx=w/MAP.vp.width,sy=h/MAP.vp.height;
- var size=16*MAP.view.scale;
- /* Nearest-neighbour: this is 16x16 pixel art scaled up, and smoothing it turns
-    a blocky world map into a blur. */
+ var size=${REGION_SPAN}*MAP.view.scale;
+ /* Nearest-neighbour: this is pixel art scaled up, and smoothing it turns a
+    blocky world map into a blur. */
  g.imageSmoothingEnabled=false;
- for(var i=0;i<chunks.length;i++){
-  var t=MAP_TILES[mapTileKey(chunks[i].cx,chunks[i].cz)];
-  if(!t)continue;
-  var p=mapW2S({x:chunks[i].cx*16,z:chunks[i].cz*16});
-  g.drawImage(t,p.x*sx,p.y*sy,size*sx+1,size*sy+1)}
+ /* One call per REGION. This loop used to run up to 4096 times a frame — once
+    per visible chunk — which is what made a page with a lot of ground loaded
+    crawl (#164). A viewport spans at most nine regions. */
+ for(var i=0;i<regions.length;i++){
+  var p=mapW2S({x:regions[i].rx*${REGION_SPAN},z:regions[i].rz*${REGION_SPAN}});
+  g.drawImage(regions[i].r.cv,p.x*sx,p.y*sy,size*sx+1,size*sy+1)}
  g.imageSmoothingEnabled=true}
 function mapToggleWorld(){MAP.world=!MAP.world;
  document.getElementById('mpWorldBtn').textContent='World: '+(MAP.world?'on':'off');
