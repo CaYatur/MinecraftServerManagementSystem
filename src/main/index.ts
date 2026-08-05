@@ -15,6 +15,7 @@ import { initAlerts } from './core/alerts'
 import { initBlockColours } from './core/clientAssets'
 import { resolveBaseDir } from './paths'
 import { log } from './logger'
+import { startTileWarming } from './core/tileWarm'
 import {
   runSmoke,
   runWizardSmoke,
@@ -387,6 +388,10 @@ if (!gotLock) {
     // Before the web server, because the public map draws from the same table.
     initBlockColours()
     initWebServer()
+    // AFTER the colour table, never before: a warmer that ran first would parse
+    // the world with the fallback palette and write those colours into the
+    // cache, where they would outlive the process (#160, #161).
+    startTileWarming()
     createWindow()
 
     app.on('activate', () => {

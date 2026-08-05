@@ -428,8 +428,29 @@ export const WATERY = new Set(['water', 'bubble_column'])
  */
 let textureColours: Record<string, Rgb> = {}
 
+/**
+ * Bumped on every change, so a WORKER can be told whether its copy is current
+ * (#160).
+ *
+ * A worker thread starts with an empty table and renders the fallback palette,
+ * and the caller writes what it produces into the on-disk cache — a wrong map
+ * that outlives the process, with a cache version that still matches. Comparing
+ * a number is how the pool knows to re-send the table instead of assuming.
+ */
+let colourEpoch = 0
+
 export function setTextureColours(map: Record<string, Rgb>): void {
   textureColours = map || {}
+  colourEpoch++
+}
+
+export function textureColourEpoch(): number {
+  return colourEpoch
+}
+
+/** The table itself, for handing to a worker. */
+export function textureColours_(): Record<string, Rgb> {
+  return textureColours
 }
 
 export function textureColourCount(): number {

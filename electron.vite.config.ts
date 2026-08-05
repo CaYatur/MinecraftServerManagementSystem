@@ -12,7 +12,15 @@ export default defineConfig({
     },
     build: {
       rollupOptions: {
-        input: { index: resolve(__dirname, 'src/main/index.ts') }
+        // The tile worker is a SECOND entry, not an import: it runs on its own
+        // thread and `new Worker()` needs a real file beside the main bundle
+        // (#160). Importing it instead would fold its module graph back into
+        // the main bundle, which is the opposite of the point.
+        input: {
+          index: resolve(__dirname, 'src/main/index.ts'),
+          tileWorker: resolve(__dirname, 'src/main/core/tileWorker.ts')
+        },
+        output: { entryFileNames: '[name].js' }
       }
     }
   },
