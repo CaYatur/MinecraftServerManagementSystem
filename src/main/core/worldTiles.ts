@@ -26,6 +26,7 @@ import { createHash } from 'node:crypto'
 import { inflateSync, gunzipSync, gzipSync } from 'node:zlib'
 import { join } from 'node:path'
 import { cacheDir } from '../paths'
+import { MAX_TILES_PER_REQUEST } from '@shared/livemap'
 import { decodeRegionTiles, encodeRegionTiles, normalizeMapPerf } from '@shared/tileCache'
 import type { MapPerfConfig } from '@shared/tileCache'
 import * as nbt from 'prismarine-nbt'
@@ -946,8 +947,14 @@ async function drain(): Promise<void> {
   }
 }
 
-/** `cx,cz;cx,cz…`, capped so one call cannot ask for a whole world. */
-export const MAX_TILES_PER_REQUEST = 64
+/**
+ * `cx,cz;cx,cz…`, capped so one call cannot ask for a whole world.
+ *
+ * Re-exported rather than declared: the clients have to cap against the SAME
+ * number, and when they did not, everything past the server's limit came back
+ * unmentioned and was marked permanently empty (#159).
+ */
+export { MAX_TILES_PER_REQUEST }
 
 export function parseWantedTiles(raw: string | null | undefined): { cx: number; cz: number }[] {
   const out: { cx: number; cz: number }[] = []
