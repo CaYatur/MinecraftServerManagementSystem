@@ -36,11 +36,12 @@ import {
   bitsPerIndex,
   blockColour,
   chunkSlot,
+  indexAt,
   localChunk,
   packingFor,
   parseLocationTable,
+  prepareIndices,
   regionOf,
-  unpackIndices,
   scanRuleFor,
   seeThrough,
   structureKind,
@@ -92,9 +93,10 @@ export function _resetWorldTiles(): void {
 // ---- the on-disk cache (#133) ----
 //
 // #119 kept parsed regions in memory only, so every restart re-parsed the
-// world: 180ms per region just to decompress and parse the NBT, before any
-// surface extraction. The encoded form of the same region gunzips in about a
-// millisecond.
+// world. Measured on a 4 MB region of 1024 chunks: 0.6 s to decompress and
+// parse the NBT, and 0.8 s more to extract the surfaces — 1.5 s in total, and
+// 14 s before #157. The encoded form of the same region reads back in about
+// 16 ms, which is the whole reason this exists.
 
 function cacheDirFor(): string {
   return ensureDir(join(cacheDir(), 'worldtiles'))
@@ -373,6 +375,50 @@ export function tileFromChunk(chunk: any, dim = 'overworld'): ChunkTile | null {
     const paletteRaw = listOf(states?.palette).length ? listOf(states?.palette) : listOf(s.Palette)
     if (!paletteRaw.length) continue
     const names: string[] = paletteRaw.map((p: any) => String(tag(tag(p)?.Name) ?? ''))
+
+    /**
+     * The block rules, resolved once per PALETTE ENTRY.
+     *
+     * This is the whole cost of a map (#157). A section is 4096 positions and
+     * its palette is at most a few dozen entries, and every one of these used
+     * to run per position: a regex to strip the namespace, a Set lookup for
+     * air, `seeThrough` (a Set miss then ten `endsWith` calls), and
+     * `blockColour` with a second regex inside it. A fully generated chunk is
+     * about 53 thousand of those to render 256 columns — 13 ms a chunk, 14
+     * seconds a region, and the reason a viewport could take over a minute.
+     *
+     * Resolved per entry it is a few dozen, and the inner loop is array
+     * indexing. Same answers: the arrays are built by the same functions in the
+     * same order.
+     */
+    const invisible = names.map((n) => {
+      // Air, and the plants a map looks through — see `seeThrough`. Without it
+      // the surface is whatever is standing ON the ground rather than the
+      // ground, which is how a bamboo jungle rendered as a maroon smear.
+      const short = n.replace(/^minecraft:/, '')
+      return !short || INVISIBLE.has(short) || seeThrough(short)
+    })
+    // A section a map sees nothing in — and above the surface that is most of
+    // them, fifteen or so single-entry air palettes per chunk. Skipped HERE,
+    // before the colours are looked up, before the indices are unpacked and
+    // before anything is allocated, because the point is not to make those
+    // sections cheaper but to stop touching them at all.
+    if (invisible.every(Boolean)) {
+      // Except under a roof, where an air section is not nothing: it is the gap
+      // the scan is looking for. Recorded for every column in one pass instead
+      // of by walking 4096 positions to reach the same conclusion. Every
+      // section still standing here has its bottom layer at or below the
+      // ceiling, so a full air layer covers all 256 columns.
+      if (sawAir) sawAir.fill(true)
+      continue
+    }
+
+    // Only now, for the sections that can actually contribute a colour.
+    const packedColour = names.map((n) => {
+      const c = blockColour(n.replace(/^minecraft:/, ''))
+      return (c.r << 16) | (c.g << 8) | c.b
+    })
+
     // A section whose palette is one entry has no data array at all — it is
     // 4096 of that block, which is how a solid stone or all-air section is
     // stored. Reading `data` there would skip the section entirely.
@@ -380,43 +426,48 @@ export function tileFromChunk(chunk: any, dim = 'overworld'): ChunkTile | null {
     // it, which is a list and wrapped twice.
     const longs = toLongs(tag(states?.data) ?? tag(s.BlockStates))
     const bits = bitsPerIndex(names.length)
+    // `null` rather than 4096 zeroes: a uniform section reads palette entry 0
+    // at every position, so the array only existed to say so.
+    //
+    // And prepared rather than unpacked: the loop below walks down from the top
+    // layer and stops the moment every column has an answer, which on real
+    // terrain is after two or three of the sixteen. Unpacking all 4096 did the
+    // rest for nothing.
     const indices =
-      names.length === 1 || !longs.length
-        ? new Array<number>(4096).fill(0)
-        : unpackIndices(longs, bits, 4096, packing)
+      names.length === 1 || !longs.length ? null : prepareIndices(longs, bits, packing)
 
     for (let y = CHUNK_AXIS - 1; y >= 0 && remaining > 0; y--) {
-      for (let z = 0; z < CHUNK_AXIS; z++) {
-        for (let x = 0; x < CHUNK_AXIS; x++) {
-          const col = x + z * CHUNK_AXIS
-          if (colour[col] >= 0) continue
-          const worldY = sectionY * CHUNK_AXIS + y
-          if (rule.ceiling !== null && worldY > rule.ceiling) continue
-          const name = names[indices[y * 256 + z * CHUNK_AXIS + x]] ?? ''
-          const short = name.replace(/^minecraft:/, '')
-          // Air, and the plants a map looks through — see `seeThrough`. Without
-          // it the surface is whatever is standing ON the ground rather than
-          // the ground, which is how a bamboo jungle rendered as a maroon smear.
-          const invisible = !short || INVISIBLE.has(short) || seeThrough(short)
-          if (sawAir) {
-            // Under a roof: remember the gap, and skip everything solid until
-            // one has been seen. Without this the first hit is the roof itself.
-            if (invisible) sawAir[col] = true
-            if (!sawAir[col]) {
-              if (!invisible && fallbackColour && fallbackColour[col] < 0) {
-                const fc = blockColour(short)
-                fallbackColour[col] = (fc.r << 16) | (fc.g << 8) | fc.b
-                if (fallbackHeight) fallbackHeight[col] = worldY
-              }
-              continue
+      // Neither of these depends on the column, and both used to be recomputed
+      // 256 times a layer.
+      const worldY = sectionY * CHUNK_AXIS + y
+      if (rule.ceiling !== null && worldY > rule.ceiling) continue
+      const base = y * 256
+      // `x + z * CHUNK_AXIS` IS the column index, so the two loops the original
+      // had over x and z collapse into one over the column in the same order.
+      for (let col = 0; col < 256; col++) {
+        if (colour[col] >= 0) continue
+        const pi = indices ? indexAt(indices, base + col) : 0
+        // An index past the end of its palette: the width comes from
+        // `bitsPerIndex`, which rounds up, so a three-entry palette is read
+        // four bits wide and corrupt data can address entry 15. The old code
+        // resolved that to an empty name and treated it as invisible.
+        const inv = pi >= names.length || invisible[pi]
+        if (sawAir) {
+          // Under a roof: remember the gap, and skip everything solid until
+          // one has been seen. Without this the first hit is the roof itself.
+          if (inv) sawAir[col] = true
+          if (!sawAir[col]) {
+            if (!inv && fallbackColour && fallbackColour[col] < 0) {
+              fallbackColour[col] = packedColour[pi]
+              if (fallbackHeight) fallbackHeight[col] = worldY
             }
+            continue
           }
-          if (invisible) continue
-          const c = blockColour(short)
-          colour[col] = (c.r << 16) | (c.g << 8) | c.b
-          height[col] = worldY
-          remaining--
         }
+        if (inv) continue
+        colour[col] = packedColour[pi]
+        height[col] = worldY
+        remaining--
       }
     }
   }
@@ -537,16 +588,29 @@ function parseSlot(
  * How many of a region's 1024 chunks to parse before letting the event loop
  * run.
  *
- * A region takes about 180 ms to parse and the main process serves every IPC
- * call, so parsing one in a single pass freezes the whole app for that long —
- * the console stops reading, stats stop arriving, and the interface stutters
- * while the map loads. Slicing does not make the work shorter; it makes it
- * interruptible, which is the part that was hurting.
+ * The main process serves every IPC call, so parsing a region in a single pass
+ * freezes the whole app for as long as it takes — the console stops reading,
+ * stats stop arriving, and the interface stutters while the map loads. Slicing
+ * does not make the work shorter; it makes it interruptible, which is the part
+ * that was hurting.
  *
- * 32 puts the longest uninterrupted block around 6 ms — under a frame — at the
- * cost of 32 extra event-loop turns per region, which is nothing.
+ * 32 was chosen against a measurement of 180 ms a region, which was wrong: that
+ * was the decompress and the NBT parse, about 4% of the real cost, and a region
+ * actually took 14 seconds (#157). The same 32 slots were therefore blocking
+ * for around 600 ms each, ten times the limit the smoke asserts — it did not
+ * catch it because its fixture had no sections to render.
+ *
+ * A region is now about 1.5 s here, so 4 slots is around 6 ms in steady state.
+ * 8 would be enough for that, and is not enough for the FIRST region a process
+ * parses: measured over five runs, the first blocks for 40 ms against 15-19 ms
+ * for every one after it, because V8 has not optimised these loops yet. The
+ * first is the one an operator meets — they open the map, and it is the only
+ * parse that has happened. Sized for that rather than for the average.
+ *
+ * The price is 256 event-loop turns per region instead of 32, and a
+ * `setImmediate` costs microseconds.
  */
-const SLICE_SLOTS = 32
+const SLICE_SLOTS = 4
 
 function loadRegion(
   serverId: string,
@@ -860,9 +924,9 @@ async function drain(): Promise<void> {
       // the very next call was about to do anyway.
       const before = lastParseAt
       try {
-        // Sliced: a region takes ~180 ms and this thread answers every IPC
+        // Sliced: a region takes about 1.5 s and this thread answers every IPC
         // call, so parsing one in a single block froze the interface for that
-        // long. Same work, interruptible.
+        // long. Same work, interruptible — see `SLICE_SLOTS`.
         await chunkTileSliced(job.serverId, job.dim, job.cx, job.cz)
       } catch {
         /* one bad region must not stop the queue */

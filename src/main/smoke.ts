@@ -110,6 +110,7 @@ import {
   shade,
   unpackIndices
 } from '@shared/regionFormat'
+import type { IndexPacking } from '@shared/regionFormat'
 import { publicVerifyReply, verifyDecision } from '@shared/playerVerify'
 import { newRefreshState, tryRefresh, INVENTORY_REFRESH } from '@shared/refreshLimit'
 import {
@@ -1037,6 +1038,106 @@ export async function runModUpdateSmoke(): Promise<void> {
       // back wrong.
       const negative = unpackIndices([-1n], 4, 16, 'padded')
       if (negative.some((v) => v !== 15)) return fail('a negative long decoded to ' + negative[0])
+
+      // The 32-bit extraction against the arbitrary-precision one it replaced.
+      //
+      // #157 rewrote this off BigInt for speed, and a bit-packing bug does not
+      // throw — it produces a plausible map with the wrong blocks in it. The
+      // reference below is a VERBATIM copy of the pre-#157 implementation, kept
+      // here on purpose: the cases above pin the handful of layouts somebody
+      // thought of, and this pins every other one to the answer that shipped.
+      {
+        const reference = (l: bigint[], bits: number, count: number, p: IndexPacking): number[] => {
+          const out = new Array<number>(count).fill(0)
+          if (bits <= 0 || !l.length) return out
+          const mask = (1n << BigInt(bits)) - 1n
+          const u = (v: bigint): bigint => BigInt.asUintN(64, v)
+          if (p === 'padded') {
+            const perLong = Math.floor(64 / bits)
+            for (let i = 0; i < count; i++) {
+              const li = Math.floor(i / perLong)
+              if (li >= l.length) break
+              out[i] = Number((u(l[li]) >> BigInt((i % perLong) * bits)) & mask)
+            }
+            return out
+          }
+          for (let i = 0; i < count; i++) {
+            const bitPos = i * bits
+            const li = Math.floor(bitPos / 64)
+            if (li >= l.length) break
+            const offset = bitPos % 64
+            let value = (u(l[li]) >> BigInt(offset)) & mask
+            if (offset + bits > 64 && li + 1 < l.length) {
+              const taken = 64 - offset
+              value |= (u(l[li + 1]) & ((1n << BigInt(bits - taken)) - 1n)) << BigInt(taken)
+            }
+            out[i] = Number(value & mask)
+          }
+          return out
+        }
+
+        let seed = 0x9e3779b9
+        const rnd = (): number => {
+          seed ^= seed << 13
+          seed |= 0
+          seed ^= seed >>> 17
+          seed ^= seed << 5
+          seed |= 0
+          return seed >>> 0
+        }
+        // Counted, not assumed. A run that never produced a straddling layout
+        // would pass with the straddle deleted, which is the shape of vacuous
+        // test this file has been caught by before.
+        let straddled = 0
+        let spanned = 0
+        let signed = 0
+        for (let trial = 0; trial < 1500; trial++) {
+          const bits = 4 + (rnd() % 28) // 4..31
+          const n = 1 + (rnd() % 40)
+          const longs: bigint[] = []
+          for (let i = 0; i < n; i++) {
+            const v = BigInt.asIntN(64, (BigInt(rnd()) << 32n) | BigInt(rnd()))
+            // The sign bit is DATA. A plain shift fills with ones instead.
+            if (v < 0n) signed++
+            longs.push(v)
+          }
+          const count = 1 + (rnd() % 4096)
+          for (const packing of ['padded', 'spanning'] as IndexPacking[]) {
+            if (packing === 'padded') {
+              const perLong = Math.floor(64 / bits)
+              for (let i = 0; i < Math.min(count, perLong * n); i++) {
+                const o = (i % perLong) * bits
+                // Padded means an index never spans two LONGS — not that it
+                // never spans the two 32-bit halves of one.
+                if (o < 32 && o + bits > 32) {
+                  straddled++
+                  break
+                }
+              }
+            } else {
+              for (let i = 0; i < count; i++) {
+                if (((i * bits) % 64) + bits > 64) {
+                  spanned++
+                  break
+                }
+              }
+            }
+            const want = reference(longs, bits, count, packing)
+            const got = unpackIndices(longs, bits, count, packing)
+            for (let i = 0; i < count; i++) {
+              if (want[i] !== got[i]) {
+                return fail(
+                  `unpackIndices differs from the reference: bits=${bits} packing=${packing} ` +
+                    `index=${i} reference=${want[i]} got=${got[i]}`
+                )
+              }
+            }
+          }
+        }
+        if (straddled < 100) return fail('the fuzz never straddled a 32-bit half: ' + straddled)
+        if (spanned < 100) return fail('the fuzz never spanned two longs: ' + spanned)
+        if (signed < 100) return fail('the fuzz never used a long with the sign bit set: ' + signed)
+      }
 
       // Four bits minimum whatever the palette holds.
       if (bitsPerIndex(1) !== 4 || bitsPerIndex(16) !== 4) return fail('small palettes must still use 4 bits')
@@ -2287,16 +2388,68 @@ export async function runWorldsSmoke(): Promise<void> {
 
     // --- 12a. a region parse must not freeze the process (#151) -------------
     {
-      // A real region file: 1024 slots, each a deflated NBT compound. The
-      // chunks carry no sections, so `tileFromChunk` yields nothing — but the
-      // expensive half, decompress plus NBT parse, runs exactly as it does on a
-      // real world, which is what the timing here is about.
+      // A real region file: 1024 slots, each a deflated NBT compound.
+      //
+      // The chunks carry REAL SECTIONS, and that is the whole point. This
+      // fixture used to write chunks with no sections at all, so
+      // `tileFromChunk` returned null on its first line and the timing below
+      // measured the decompress and the NBT parse and nothing else — which are
+      // together 4% of what a region actually costs. The assertion was sound
+      // and the fixture made it vacuous: the real longest slice was 584 ms
+      // against a limit of 60, and this gate stayed green for months (#157).
+      //
+      // Shaped like a real chunk rather than uniformly dense: above the surface
+      // everything is a single-entry air palette with no data array, below it
+      // is mostly stone, and only the band around the surface carries a full
+      // palette. A uniformly dense region came out at 52 MB against a real
+      // world's ~5, which would have measured something no operator has.
+      const BLOCKS = [
+        'minecraft:air', 'minecraft:stone', 'minecraft:dirt', 'minecraft:grass_block',
+        'minecraft:water', 'minecraft:sand', 'minecraft:oak_log', 'minecraft:oak_leaves',
+        'minecraft:gravel', 'minecraft:deepslate', 'minecraft:andesite', 'minecraft:diorite',
+        'minecraft:granite', 'minecraft:coal_ore', 'minecraft:iron_ore', 'minecraft:snow'
+      ]
+      // 4 bits per index across 4096 blocks is 256 longs, the usual dense
+      // section. Repetitive, like real terrain — random longs do not deflate
+      // and the fixture would be six times the size of the thing it imitates.
+      const packed = (seed: number): number[][] => {
+        const pattern: number[][] = []
+        for (let i = 0; i < 12; i++) pattern.push([(seed * 2654435761 + i * 40503) | 0, (seed + i) | 0])
+        return Array.from({ length: 256 }, (_, i) => pattern[i % pattern.length])
+      }
+      const section = (y: number, seed: number): unknown => {
+        // The surface band. Everything above it is air, everything below stone.
+        const dense = y >= -2 && y <= 6
+        const names = dense ? BLOCKS : [BLOCKS[y > 6 ? 0 : 1]]
+        return {
+          Y: { type: 'byte', value: y },
+          block_states: {
+            type: 'compound',
+            value: {
+              palette: {
+                type: 'list',
+                value: {
+                  type: 'compound',
+                  value: names.map((n) => ({ Name: { type: 'string', value: n } }))
+                }
+              },
+              ...(dense ? { data: { type: 'longArray', value: packed(seed + y) } } : {})
+            }
+          }
+        }
+      }
       const chunkNbt = nbt.writeUncompressed({
         type: 'compound',
         name: '',
         value: {
           DataVersion: { type: 'int', value: 3953 },
-          // Padding, so one chunk is a realistic size rather than 30 bytes.
+          sections: {
+            type: 'list',
+            value: {
+              type: 'compound',
+              value: Array.from({ length: 24 }, (_, i) => section(i - 4, 7))
+            }
+          },
           Heightmaps: { type: 'longArray', value: Array.from({ length: 256 }, () => [0, 1]) }
         }
       } as never)
@@ -2337,6 +2490,15 @@ export async function runWorldsSmoke(): Promise<void> {
       const total = Date.now() - t0
       const slice = tilesMod.lastParseSliceMs()
       if (slice <= 0) return fail('the sliced parse never ran; the fixture was not read')
+      // The fixture has to have produced a real surface, or the timing above is
+      // measuring the parse of something that renders to nothing — which is
+      // exactly how this gate came to certify a 584 ms freeze as 3 ms (#157).
+      // Asserting the interesting case was REACHED, not merely that the loop ran.
+      const drawn = tilesMod.peekChunkTile(SID, 'overworld', 0, 0)
+      if (!drawn) return fail('the fixture rendered no tile; the timing measured an empty parse')
+      if (drawn.colour.some((c) => c < 0)) {
+        return fail('the fixture left columns unresolved; it is not a full surface')
+      }
       if (slice > 60) return fail('a parse slice blocked for ' + slice + ' ms; the interface will stutter')
       console.log(
         'WORLDS-SMOKE: region parsed in ' + total + ' ms, longest uninterrupted slice ' + slice + ' ms'
