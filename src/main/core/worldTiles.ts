@@ -398,16 +398,11 @@ export function tileFromChunk(chunk: any, dim = 'overworld'): ChunkTile | null {
       const short = n.replace(/^minecraft:/, '')
       return !short || INVISIBLE.has(short) || seeThrough(short)
     })
-    const packedColour = names.map((n) => {
-      const c = blockColour(n.replace(/^minecraft:/, ''))
-      return (c.r << 16) | (c.g << 8) | c.b
-    })
-
     // A section a map sees nothing in — and above the surface that is most of
     // them, fifteen or so single-entry air palettes per chunk. Skipped HERE,
-    // before the index array is unpacked and before anything is allocated,
-    // because the point is not to make those sections cheaper but to stop
-    // touching them at all.
+    // before the colours are looked up, before the indices are unpacked and
+    // before anything is allocated, because the point is not to make those
+    // sections cheaper but to stop touching them at all.
     if (invisible.every(Boolean)) {
       // Except under a roof, where an air section is not nothing: it is the gap
       // the scan is looking for. Recorded for every column in one pass instead
@@ -417,6 +412,12 @@ export function tileFromChunk(chunk: any, dim = 'overworld'): ChunkTile | null {
       if (sawAir) sawAir.fill(true)
       continue
     }
+
+    // Only now, for the sections that can actually contribute a colour.
+    const packedColour = names.map((n) => {
+      const c = blockColour(n.replace(/^minecraft:/, ''))
+      return (c.r << 16) | (c.g << 8) | c.b
+    })
 
     // A section whose palette is one entry has no data array at all — it is
     // 4096 of that block, which is how a solid stone or all-air section is
@@ -599,12 +600,17 @@ function parseSlot(
  * for around 600 ms each, ten times the limit the smoke asserts — it did not
  * catch it because its fixture had no sections to render.
  *
- * A region is now about 1.5 s here, so 8 slots is 12 ms — under a frame with
- * room for a machine several times slower, which is the machine that complained.
- * The price is 128 event-loop turns per region instead of 32, and a
+ * A region is now about 1.5 s here, so 4 slots is around 6 ms in steady state.
+ * 8 would be enough for that, and is not enough for the FIRST region a process
+ * parses: measured over five runs, the first blocks for 40 ms against 15-19 ms
+ * for every one after it, because V8 has not optimised these loops yet. The
+ * first is the one an operator meets — they open the map, and it is the only
+ * parse that has happened. Sized for that rather than for the average.
+ *
+ * The price is 256 event-loop turns per region instead of 32, and a
  * `setImmediate` costs microseconds.
  */
-const SLICE_SLOTS = 8
+const SLICE_SLOTS = 4
 
 function loadRegion(
   serverId: string,
