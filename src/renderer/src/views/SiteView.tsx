@@ -196,6 +196,11 @@ export function SiteView(): JSX.Element {
               <input type="checkbox" checked={cfg.map.enabled} onChange={(e) => patchMap({ enabled: e.target.checked })} />
               {t('site.showMap')}
             </label>
+            {/* The number that decides whether the map looks right. Said in
+                blocks and in consequences, because "Round to 64" reads as a
+                display nicety and is actually "every player is drawn up to 32
+                blocks from where they are" — which on a map that now draws real
+                terrain is indistinguishable from a bug. */}
             <div className="field" style={{ width: 150, marginBottom: 0 }}>
               <label>{t('site.mapRound')}</label>
               <input
@@ -207,6 +212,9 @@ export function SiteView(): JSX.Element {
                 onChange={(e) => patchMap({ round: Number(e.target.value) })}
               />
             </div>
+            <p className="hint" style={{ flexBasis: '100%', marginTop: 0 }}>
+              {t('site.mapRoundHint')}
+            </p>
             <label className="switch" style={{ paddingBottom: 8 }}>
               <input type="checkbox" checked={cfg.map.names} onChange={(e) => patchMap({ names: e.target.checked })} />
               {t('site.mapNames')}

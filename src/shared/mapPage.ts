@@ -74,7 +74,9 @@ export const MAP_PAGE_DEFAULTS: MapPageConfig = {
   players: true,
   names: true,
   heads: true,
-  round: 64,
+  // Exact, matching the public site — see PUBLIC_MAP_DEFAULTS. Rounding is the
+  // opt-in now that the map draws terrain a player can be seen standing beside.
+  round: 0,
   structures: false,
   areas: true,
   heatmap: false
