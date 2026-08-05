@@ -157,10 +157,12 @@ import {
   zoomAt,
   tilesToDrop,
   MAX_SCALE,
+  MAX_REGION_CANVASES,
   MAX_TILES_PER_REQUEST,
   MAX_VIEWPORT_CHUNKS,
   MIN_SCALE,
-  TILE_KEEP_LIMIT,
+  REGION_CHUNKS,
+  REGION_SPAN,
   PUBLIC_MAP_DEFAULTS
 } from '@shared/livemap'
 import { normalizeMapPage, mapPagePublic, MAP_PAGE_DEFAULTS } from '@shared/mapPage'
@@ -9045,34 +9047,48 @@ export async function runWebSmoke(): Promise<void> {
         if (PUBLIC_MAP_DEFAULTS.heads) return fail('avatar heads are on by default')
       }
 
-      // ---- what a client keeps when it pans (#159) ----
+      // ---- what a client keeps when it pans (#159, now per region #164) ----
       {
+        // The unit is the REGION: a client bakes one 512x512 canvas per region
+        // rather than one 16x16 per chunk, so this is what eviction drops.
+        //
         // The invariant the whole policy rests on. Below this a single viewport
-        // exceeds the cache, so the map evicts tiles it just fetched and
-        // re-fetches them on the next draw — an endless loop, and the reason
-        // the old limit of 2048 was wrong against a 4096-chunk viewport.
-        if (TILE_KEEP_LIMIT <= MAX_VIEWPORT_CHUNKS) {
-          return fail('the tile cache is smaller than one viewport: ' + TILE_KEEP_LIMIT)
+        // exceeds the cache, so the map evicts what it just fetched and
+        // re-fetches it on the next draw — an endless loop, and the reason the
+        // old chunk limit of 2048 was wrong against a 4096-chunk viewport.
+        // A 4096-chunk view is 64x64 chunks, which straddles at most 3x3
+        // regions however it is aligned.
+        const worstViewportRegions = Math.pow(Math.ceil(Math.sqrt(MAX_VIEWPORT_CHUNKS)) / REGION_CHUNKS + 1, 2)
+        if (MAX_REGION_CANVASES <= worstViewportRegions) {
+          return fail('the region cache is smaller than one viewport: ' + MAX_REGION_CANVASES)
         }
 
         // Under the limit nothing is given up, however far the view has moved.
         const few = ['0,0', '1,0', '900,900']
         if (tilesToDrop(few, { x0: 0, x1: 1, z0: 0, z1: 1 }).length) {
-          return fail('tiles were dropped while the cache was under its limit')
+          return fail('regions were dropped while the cache was under its limit')
         }
 
         // A cache PAST the limit, which is the only state the body runs in — a
         // fixture of a few dozen would step straight over it and pass with the
         // whole policy deleted.
+        //
+        // 8x8 = 64 against a limit of 48, so sixteen have to go. Deliberately
+        // over the limit but not WILDLY over: at three times the limit
+        // everything is evicting everything and the pan property below stops
+        // being a property of the policy and starts being a property of the
+        // fixture size.
         const held: string[] = []
-        for (let z = 0; z < 100; z++) for (let x = 0; x < 100; x++) held.push(x + ',' + z)
-        if (held.length <= TILE_KEEP_LIMIT) return fail('the retention fixture never crosses the limit')
+        for (let z = 0; z < 8; z++) for (let x = 0; x < 8; x++) held.push(x + ',' + z)
+        if (held.length <= MAX_REGION_CANVASES) {
+          return fail('the retention fixture never crosses the limit')
+        }
 
         // The view sits in the top-left corner; the far corner is what should go.
-        const box = { x0: 0, x1: 49, z0: 0, z1: 49 }
+        const box = { x0: 0, x1: 2, z0: 0, z1: 2 }
         const dropped = tilesToDrop(held, box)
         if (!dropped.length) return fail('nothing was dropped by an over-full cache')
-        if (held.length - dropped.length !== TILE_KEEP_LIMIT) {
+        if (held.length - dropped.length !== MAX_REGION_CANVASES) {
           return fail('the cache was not trimmed to its limit: ' + (held.length - dropped.length))
         }
         const gone = new Set(dropped)
@@ -9080,27 +9096,142 @@ export async function runWebSmoke(): Promise<void> {
         // that is precisely the eviction that made a map re-fetch itself.
         for (let z = box.z0; z <= box.z1; z++) {
           for (let x = box.x0; x <= box.x1; x++) {
-            if (gone.has(x + ',' + z)) return fail('a tile in view was dropped: ' + x + ',' + z)
+            if (gone.has(x + ',' + z)) return fail('a region in view was dropped: ' + x + ',' + z)
           }
         }
-        if (!gone.has('99,99')) return fail('the farthest tile survived while nearer ones went')
+        if (!gone.has('7,7')) return fail('the farthest region survived while nearer ones went')
 
-        // The reported bug, as a property: pan one screen right, and the screen
-        // you came from is still held. The old rule kept the viewport and
-        // nothing else, so panning back re-fetched all of it.
-        const panned = new Set(tilesToDrop(held, { x0: 50, x1: 99, z0: 0, z1: 49 }))
-        let survivors = 0
-        for (let z = 0; z <= 49; z++) for (let x = 0; x <= 49; x++) {
-          if (!panned.has(x + ',' + z)) survivors++
-        }
-        if (survivors < 2000) {
-          return fail('panning one screen threw away the previous one: only ' + survivors + ' left')
+        // The reported bug, as a property: pan a screen sideways, and EVERY
+        // region of the screen you came from is still held. The old rule kept
+        // the viewport and nothing else, so panning back re-fetched all of it.
+        // Every one of them, not a proportion: at region granularity the cache
+        // holds far more ground than a session pans over, which is what "it
+        // stays until I reload the page" actually requires.
+        const panned = new Set(tilesToDrop(held, { x0: 3, x1: 5, z0: 0, z1: 2 }))
+        for (let z = 0; z <= 2; z++) {
+          for (let x = 0; x <= 2; x++) {
+            if (panned.has(x + ',' + z)) {
+              return fail('panning one screen threw away the previous one: lost ' + x + ',' + z)
+            }
+          }
         }
 
         // Deterministic: two runs on the same input must agree, or a redraw
         // between them silently changes what is held.
         if (tilesToDrop(held, box).join('|') !== dropped.join('|')) {
           return fail('the retention policy is not deterministic')
+        }
+      }
+
+      // ---- chunks are stamped into their region canvas, incrementally ----
+      //
+      // The risky half of #164. A region arrives a few hundred chunks at a
+      // time, so a region canvas has to be PAINTED INTO as they land. Baking it
+      // once — when its first chunk arrived — leaves it permanently 90%
+      // transparent, which would look exactly like the half-loaded map this is
+      // meant to fix. Driven for real, with a canvas stub that records where
+      // every putImageData landed.
+      {
+        const painted: { w: number; x: number; y: number }[] = []
+        const canvases: number[] = []
+        const canvasFor = (): unknown => {
+          canvases.push(1)
+          return {
+            width: 0,
+            height: 0,
+            getContext: () => ({
+              createImageData: (w: number, h: number) => ({ data: new Uint8ClampedArray(w * h * 4) }),
+              putImageData: (img: { data: Uint8ClampedArray }, x: number, y: number) =>
+                painted.push({ w: Math.sqrt(img.data.length / 4), x, y }),
+              drawImage: () => {},
+              clearRect: () => {},
+              fillRect: () => {}
+            })
+          }
+        }
+        // Two chunks in ONE region, one in another, and one WEST OF ZERO, all
+        // in a single response. The negative one is not decoration: chunk -1
+        // belongs to region -1 at local offset 31, and a raw `cx % 32` gives
+        // -1 there, which paints outside the canvas and silently draws nothing.
+        // Without it in the fixture that wrap could be deleted and this passes.
+        const tile = { c: new Array(256).fill(0x336699), h: new Array(256).fill(64) }
+        let sent = false
+        const ctx: Record<string, unknown> = {
+          setTimeout: () => 0, clearTimeout: () => {}, setInterval: () => 0, clearInterval: () => {},
+          console, Math, Date, Infinity, isFinite, Object, Array,
+          Uint8ClampedArray,
+          Path2D: class {},
+          document: { getElementById: () => null, createElement: () => canvasFor() },
+          mapGet: () => {
+            // Chunks 0,0 and 1,0 share region 0,0; chunk 40,0 is region 1,0.
+            const tiles: Record<string, unknown> = sent
+              ? { '2,0': tile }
+              : { '0,0': tile, '1,0': tile, '40,0': tile, '-1,0': tile }
+            sent = true
+            return Promise.resolve({ tiles, empty: [], pending: 0 })
+          },
+          mapPost: () => Promise.resolve(null),
+          mapServerId: () => 's',
+          mapFeedUrl: () => '/feed',
+          mapTilesUrl: () => '/tiles',
+          mapAreasUrlFor: () => '/areas',
+          mapAvatarUrl: () => '',
+          mapIconFor: () => ({ path: '', colour: '#fff' }),
+          mapIconSvg: () => '',
+          MAP_ICONS: {},
+          STRUCTURE_ICONS: {}
+        }
+        ctx.window = ctx
+        runInNewContext(MAP_JS, ctx)
+        const M = ctx.MAP as Record<string, unknown>
+        M.view = { cx: 340, cz: 0, scale: 1 }
+        M.vp = { width: 800, height: 200 }
+        M.world = true
+        M.loadOnPan = true
+        const fetchTiles = ctx.mapFetchTiles as (force?: boolean) => void
+
+        fetchTiles(true)
+        await new Promise((r) => setTimeout(r, 20))
+        const regions = ctx.MAP_REGIONS as Record<string, { st: Record<string, number> }>
+        const keys = Object.keys(regions).sort()
+        if (keys.join(' ') !== '-1,0 0,0 1,0') {
+          return fail('chunks were not filed into the right regions: ' + keys.join(' '))
+        }
+        // Two chunks in one region means ONE canvas holding both, not two.
+        if (Object.keys(regions['0,0'].st).sort().join(' ') !== '0,0 1,0') {
+          return fail('a region did not record both of its chunks')
+        }
+        const madeFirst = canvases.length
+        const stampsFirst = painted.length
+        if (madeFirst !== 3) return fail('expected one canvas per region, got ' + madeFirst)
+        if (stampsFirst !== 4) return fail('expected one stamp per chunk, got ' + stampsFirst)
+        if (painted.some((p) => p.w !== 16)) return fail('a stamp was not one chunk wide')
+        // Local offsets inside the region, NOT world coordinates: chunk 1,0 goes
+        // 16px in, chunk 40,0 is local 8 in its own region (128px), and chunk
+        // -1,0 is local 31 in region -1 (496px). A raw modulo or a world
+        // coordinate here paints outside the canvas.
+        const at = painted.map((p) => p.x + ':' + p.y).sort().join(' ')
+        if (at !== '0:0 128:0 16:0 496:0') {
+          return fail('chunks were stamped at the wrong offsets: ' + at)
+        }
+
+        // A later response must PAINT INTO the region that already exists.
+        //
+        // The backoff is stepped past deliberately: after the first response
+        // every chunk that did not come back is waiting on its region, which is
+        // correct and has its own test below. Leaving it in place here would
+        // mean the second fetch never asks for anything and this block would
+        // pass while proving nothing about stamping.
+        const wait = ctx.MAP_TILE_WAIT as Record<string, number>
+        for (const k of Object.keys(wait)) delete wait[k]
+        fetchTiles(true)
+        await new Promise((r) => setTimeout(r, 20))
+        if (canvases.length !== madeFirst) {
+          return fail('a second response rebuilt a region canvas instead of adding to it')
+        }
+        if (painted.length - stampsFirst !== 1) return fail('the follow-up chunk was not stamped')
+        if (Object.keys((ctx.MAP_REGIONS as Record<string, { st: object }>)['0,0'].st).length !== 3) {
+          return fail('the follow-up chunk did not join its region')
         }
       }
 

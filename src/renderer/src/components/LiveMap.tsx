@@ -10,11 +10,14 @@ import {
   mapBounds,
   panBy,
   screenToWorld,
+  chunkBoxToRegions,
   tilesToDrop,
   worldToScreen,
   zoomAt,
   MAX_TILES_PER_REQUEST,
-  MAX_VIEWPORT_CHUNKS
+  MAX_VIEWPORT_CHUNKS,
+  REGION_CHUNKS,
+  REGION_SPAN
 } from '@shared/livemap'
 import type { ChunkBox, LivePlayer, MapView, Viewport } from '@shared/livemap'
 import { avatarUrl } from '@shared/profile'
@@ -71,15 +74,62 @@ function iconPath(kind: string): Path2D | null {
 }
 
 /**
- * A chunk tile baked into a 16x16 offscreen canvas, shaded by the step to the
- * column north of it. Baking once per chunk rather than per frame is the
- * difference between a map that pans and one that stutters.
+ * The terrain held for one region: a 512x512 canvas with chunks stamped into it
+ * as they arrive, plus what is known about each of its 1024 chunks (#164).
+ *
+ * One canvas per REGION rather than per chunk. A viewport is up to 4096 chunks,
+ * so per-chunk canvases meant thousands of DOM objects, which forced a cache
+ * limit low enough that panning away and back lost the ground — and cost up to
+ * 4096 `drawImage` calls a frame. The pixels are the same bytes either way.
+ *
+ * `st` and `mk` live in here rather than beside it so that dropping a region
+ * drops the canvas AND the claim to have drawn its chunks in one statement.
  */
-function bakeTile(t: { c: number[]; h: number[] }): HTMLCanvasElement {
+interface RegionTile {
+  cv: HTMLCanvasElement
+  g: CanvasRenderingContext2D
+  /** Chunk key -> 1 drawn, 0 read and empty. Absent means never read. */
+  st: Map<string, 0 | 1>
+  mk: Map<string, StructureMark[]>
+}
+
+const regionOfChunk = (c: number): number => Math.floor(c / REGION_CHUNKS)
+const regionKey = (cx: number, cz: number): string =>
+  regionOfChunk(cx) + ',' + regionOfChunk(cz)
+
+function regionFor(store: Map<string, RegionTile>, cx: number, cz: number): RegionTile {
+  const k = regionKey(cx, cz)
+  const hit = store.get(k)
+  if (hit) return hit
   const cv = document.createElement('canvas')
-  cv.width = 16
-  cv.height = 16
-  const g = cv.getContext('2d') as CanvasRenderingContext2D
+  cv.width = REGION_SPAN
+  cv.height = REGION_SPAN
+  const made: RegionTile = {
+    cv,
+    g: cv.getContext('2d') as CanvasRenderingContext2D,
+    st: new Map(),
+    mk: new Map()
+  }
+  store.set(k, made)
+  return made
+}
+
+/**
+ * One chunk, painted into its region canvas at the chunk's own offset, shaded
+ * by the step to the column north of it.
+ *
+ * Incremental on purpose: a region arrives a few hundred chunks at a time, so
+ * baking it once when its first chunk landed would leave it permanently mostly
+ * transparent.
+ */
+function stampTile(
+  store: Map<string, RegionTile>,
+  cx: number,
+  cz: number,
+  t: { c: number[]; h: number[]; m?: StructureMark[] }
+): void {
+  const r = regionFor(store, cx, cz)
+  const g = r.g
   const img = g.createImageData(16, 16)
   for (let i = 0; i < 256; i++) {
     const c = t.c[i]
@@ -95,8 +145,15 @@ function bakeTile(t: { c: number[]; h: number[] }): HTMLCanvasElement {
     img.data[o + 2] = Math.max(0, Math.min(255, Math.round((c & 255) * f)))
     img.data[o + 3] = 255
   }
-  g.putImageData(img, 0, 0)
-  return cv
+  // Local chunk within the region. A remainder is negative west of zero, so it
+  // is wrapped — chunk -1 is local 31, and a raw modulo would paint outside the
+  // canvas and silently draw nothing.
+  const lx = ((cx % REGION_CHUNKS) + REGION_CHUNKS) % REGION_CHUNKS
+  const lz = ((cz % REGION_CHUNKS) + REGION_CHUNKS) % REGION_CHUNKS
+  g.putImageData(img, lx * 16, lz * 16)
+  const k = cx + ',' + cz
+  r.st.set(k, 1)
+  if (t.m) r.mk.set(k, t.m)
 }
 
 /**
@@ -135,18 +192,20 @@ function headFor(
  * else the moment the cache passed its limit (#159).
  */
 function trimTiles(
-  tiles: Map<string, HTMLCanvasElement | null>,
-  marks: Map<string, StructureMark[]>,
+  store: Map<string, RegionTile>,
   waiting: Map<string, number>,
   box: ChunkBox | null
 ): void {
   if (!box) return
-  for (const k of tilesToDrop(tiles.keys(), box)) {
-    tiles.delete(k)
-    marks.delete(k)
-    // The backoff too, or it outlives every tile it was about and the map
-    // accumulates one entry per chunk ever looked at.
-    waiting.delete(k)
+  // In REGION coordinates, because that is the unit being dropped.
+  const rbox = chunkBoxToRegions(box)
+  for (const k of tilesToDrop(store.keys(), rbox)) {
+    const gone = store.get(k)
+    // The backoff entries for that region's chunks go with it, or they outlive
+    // every tile they were about and the map accumulates one entry per chunk
+    // ever looked at.
+    if (gone) for (const ck of gone.st.keys()) waiting.delete(ck)
+    store.delete(k)
   }
 }
 
@@ -238,7 +297,8 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
   // the world folder (#131).
   const [marks, setMarks] = useState(false)
   const [markKind, setMarkKind] = useState('')
-  const markStore = useRef(new Map<string, StructureMark[]>())
+  // Marks live inside each region entry, so they are dropped by the same
+  // eviction and can never outlive the terrain they annotate (#164).
 
   // Per-server map tuning (#133), read from the server's own config so it
   // survives a restart and applies to every surface, not just this one.
@@ -289,12 +349,11 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
   const clearCache = async (): Promise<void> => {
     setCleared(await window.msms.clearMapCache())
     tiles.current.clear()
-    markStore.current.clear()
     waiting.current.clear()
     setTick2((n) => n + 1)
   }
   const headCache = useRef(new Map<string, HTMLImageElement | false>())
-  const tiles = useRef(new Map<string, HTMLCanvasElement | null>())
+  const tiles = useRef(new Map<string, RegionTile>())
   const tilesPending = useRef(false)
   /** Chunk -> when it is worth asking for again, while its region is read. */
   const waiting = useRef(new Map<string, number>())
@@ -323,19 +382,21 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
   }, [chunkBox])
 
   /**
-   * What to DRAW: everything already held that falls in view. A different
-   * question from what to request — conflating them is why the terrain vanished
-   * when zoomed out (#135).
+   * What to DRAW: every held REGION that falls in view. A different question
+   * from what to request — conflating them is why the terrain vanished when
+   * zoomed out (#135). Iterating what is held rather than what is visible costs
+   * the size of the cache, which is now dozens of regions rather than thousands
+   * of chunks (#164).
    */
-  const drawableChunks = useCallback((): { cx: number; cz: number }[] => {
+  const drawableRegions = useCallback((): { rx: number; rz: number; r: RegionTile }[] => {
     const b = chunkBox()
     if (!b) return []
-    const out: { cx: number; cz: number }[] = []
-    for (const k of tiles.current.keys()) {
-      if (!tiles.current.get(k)) continue
-      const [cx, cz] = k.split(',').map(Number)
-      if (cx < b.x0 - 1 || cx > b.x1 + 1 || cz < b.z0 - 1 || cz > b.z1 + 1) continue
-      out.push({ cx, cz })
+    const rb = chunkBoxToRegions(b)
+    const out: { rx: number; rz: number; r: RegionTile }[] = []
+    for (const [k, r] of tiles.current) {
+      const [rx, rz] = k.split(',').map(Number)
+      if (rx < rb.x0 || rx > rb.x1 || rz < rb.z0 || rz > rb.z1) continue
+      out.push({ rx, rz, r })
     }
     return out
   }, [chunkBox])
@@ -356,7 +417,7 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
     const want = visibleChunks()
       .filter((c: { cx: number; cz: number }) => {
         const k = c.cx + ',' + c.cz
-        if (tiles.current.has(k)) return false
+        if (tiles.current.get(regionKey(c.cx, c.cz))?.st.has(k)) return false
         const until = waiting.current.get(k) ?? 0
         if (until > now) {
           soonest = Math.min(soonest, until)
@@ -376,7 +437,7 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
       }
       return
     }
-    trimTiles(tiles.current, markStore.current, waiting.current, chunkBox())
+    trimTiles(tiles.current, waiting.current, chunkBox())
     tilesPending.current = true
     window.msms
       .mapTiles(serverId, dim, want, marks)
@@ -395,11 +456,13 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
           const k = w.cx + ',' + w.cz
           const t = r.tiles[k]
           if (t) {
-            tiles.current.set(k, bakeTile(t))
-            if (t.m) markStore.current.set(k, t.m)
+            // Stamped into the region canvas where it belongs rather than baked
+            // into a canvas of its own — a region arrives a few hundred chunks
+            // at a time, so this has to be incremental (#164).
+            stampTile(tiles.current, w.cx, w.cz, t)
             waiting.current.delete(k)
           } else if (known.has(k)) {
-            tiles.current.set(k, null)
+            regionFor(tiles.current, w.cx, w.cz).st.set(k, 0)
             waiting.current.delete(k)
           } else {
             // Still being read. Come back to it, but let the rest of the view
@@ -422,7 +485,6 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
   // dimension change would draw one world's terrain under another's players.
   useEffect(() => {
     tiles.current.clear()
-    markStore.current.clear()
     waiting.current.clear()
     setView(null)
     fitFor.current = ''
@@ -432,7 +494,6 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
   useEffect(() => {
     if (!marks) return
     tiles.current.clear()
-    markStore.current.clear()
     waiting.current.clear()
   }, [marks])
 
@@ -471,11 +532,12 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
     // The world first; everything else sits on top of it.
     if (world) {
       g.imageSmoothingEnabled = false
-      for (const c of drawableChunks()) {
-        const t = tiles.current.get(c.cx + ',' + c.cz)
-        if (!t) continue
-        const p = worldToScreen({ x: c.cx * 16, z: c.cz * 16 }, v, size)
-        g.drawImage(t, p.x * sx, p.y * sy, 16 * v.scale * sx + 1, 16 * v.scale * sy + 1)
+      // One call per REGION. This loop used to run once per visible chunk, up
+      // to 4096 times a frame; a viewport spans at most nine regions (#164).
+      for (const c of drawableRegions()) {
+        const p = worldToScreen({ x: c.rx * REGION_SPAN, z: c.rz * REGION_SPAN }, v, size)
+        const side = REGION_SPAN * v.scale
+        g.drawImage(c.r.cv, p.x * sx, p.y * sy, side * sx + 1, side * sy + 1)
       }
       g.imageSmoothingEnabled = true
     }
@@ -588,8 +650,10 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
 
     // After the grid and the heatmap, before the players.
     if (marks) {
-      for (const c of drawableChunks()) {
-        for (const mk of markStore.current.get(c.cx + ',' + c.cz) ?? []) {
+      // Markers live in the region entry beside the pixels, so the same
+      // eviction drops both and one can never outlive the other.
+      for (const c of drawableRegions()) {
+        for (const mk of [...c.r.mk.values()].flat()) {
           if (markKind && mk.kind !== markKind) continue
           const ic = iconFor(mk.kind)
           const x = px(mk.x)
@@ -643,7 +707,7 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
       g.fillStyle = 'rgba(255,255,255,.92)'
       g.fillText(p.name, x, y - (head ? 12 : 7) * dpr)
     }
-  }, [shown, bounds, heat, cell, showHeat, view, vp, dim, heads, world, marks, markKind, tick2, drawableChunks,
+  }, [shown, bounds, heat, cell, showHeat, view, vp, dim, heads, world, marks, markKind, tick2, drawableRegions,
     areas, showAreas, pinned, picking, picked])
 
   const localPoint = (e: React.MouseEvent): { x: number; y: number } => {
