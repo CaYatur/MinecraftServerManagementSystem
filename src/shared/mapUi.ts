@@ -603,11 +603,21 @@ function mapFetchTiles(force){
     away. The viewport is walked in order, so without this the next request
     rebuilds the same list and the map spins on one band while the rest of the
     view stays blank (#159). */
- var now=Date.now();
+ var now=Date.now(),soonest=Infinity;
  var want=chunks.filter(function(c){
   var k=mapTileKey(c.cx,c.cz);
-  return MAP_TILES[k]===undefined&&!(MAP_TILE_WAIT[k]>now)});
- if(!want.length)return;
+  if(MAP_TILES[k]!==undefined)return false;
+  if(MAP_TILE_WAIT[k]>now){soonest=Math.min(soonest,MAP_TILE_WAIT[k]);return false}
+  return true});
+ if(!want.length){
+  /* Everything left on screen is waiting on a region parse, so there is
+     nothing to ask for this instant — and the retry below only fires after a
+     response, which is not coming. Without a wake-up here the view stops
+     filling until the visitor moves it. */
+  if(soonest!==Infinity){
+   clearTimeout(MAP_TILE_SOON);
+   MAP_TILE_SOON=setTimeout(function(){mapFetchTiles(true)},Math.max(50,soonest-now))}
+  return}
  mapTrimTiles();
  want=want.slice(0,${MAX_TILES_PER_REQUEST});
  MAP_TILE_PENDING=true;

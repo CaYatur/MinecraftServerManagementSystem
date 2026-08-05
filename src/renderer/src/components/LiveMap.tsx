@@ -137,12 +137,16 @@ function headFor(
 function trimTiles(
   tiles: Map<string, HTMLCanvasElement | null>,
   marks: Map<string, StructureMark[]>,
+  waiting: Map<string, number>,
   box: ChunkBox | null
 ): void {
   if (!box) return
   for (const k of tilesToDrop(tiles.keys(), box)) {
     tiles.delete(k)
     marks.delete(k)
+    // The backoff too, or it outlives every tile it was about and the map
+    // accumulates one entry per chunk ever looked at.
+    waiting.delete(k)
   }
 }
 
@@ -348,14 +352,31 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
     // the viewport is walked in order, so the unresolved chunks are always at
     // the front — and the map spins on one band while the rest stays blank.
     const now = Date.now()
+    let soonest = Infinity
     const want = visibleChunks()
       .filter((c: { cx: number; cz: number }) => {
         const k = c.cx + ',' + c.cz
-        return !tiles.current.has(k) && (waiting.current.get(k) ?? 0) <= now
+        if (tiles.current.has(k)) return false
+        const until = waiting.current.get(k) ?? 0
+        if (until > now) {
+          soonest = Math.min(soonest, until)
+          return false
+        }
+        return true
       })
       .slice(0, MAX_TILES_PER_REQUEST)
-    if (!want.length) return
-    trimTiles(tiles.current, markStore.current, chunkBox())
+    if (!want.length) {
+      // Everything left on screen is waiting on a region parse, so there is
+      // nothing to ask for THIS instant — but the retry below only fires after
+      // a response, and there is no response coming. Without a wake-up here the
+      // view stops filling until the operator moves it.
+      if (soonest !== Infinity) {
+        const timer = window.setTimeout(() => setTick2((n) => n + 1), Math.max(50, soonest - now))
+        return () => window.clearTimeout(timer)
+      }
+      return
+    }
+    trimTiles(tiles.current, markStore.current, waiting.current, chunkBox())
     tilesPending.current = true
     window.msms
       .mapTiles(serverId, dim, want, marks)

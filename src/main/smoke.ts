@@ -9075,6 +9075,80 @@ export async function runWebSmoke(): Promise<void> {
         }
       }
 
+      // ---- a view whose chunks are all still parsing must wake itself ----
+      //
+      // The backoff that stops the map re-asking for chunks it is already
+      // waiting on can empty the request list entirely — every visible chunk is
+      // in the same few regions, so they all back off together. The retry only
+      // fires after a RESPONSE, and there is no response coming, so without a
+      // wake-up the view stops filling and looks exactly like the bug this all
+      // came from. Driven for real: MAP_JS is run with a recording timer.
+      {
+        const timers: number[] = []
+        let served = 0
+        const ctx: Record<string, unknown> = {
+          setTimeout: (_fn: unknown, ms: number) => {
+            timers.push(ms)
+            return timers.length
+          },
+          clearTimeout: () => {},
+          setInterval: () => 0,
+          clearInterval: () => {},
+          console,
+          Math,
+          Date,
+          Infinity,
+          isFinite,
+          Object,
+          Path2D: class {},
+          document: { getElementById: () => null, createElement: () => null },
+          // The host contract. Every response says "nothing yet, still reading",
+          // which is the state the wake-up exists for.
+          mapGet: () => {
+            served++
+            return Promise.resolve({ tiles: {}, empty: [], pending: 40 })
+          },
+          mapPost: () => Promise.resolve(null),
+          mapServerId: () => 's',
+          mapFeedUrl: () => '/feed',
+          mapTilesUrl: () => '/tiles',
+          mapAreasUrlFor: () => '/areas',
+          mapAvatarUrl: () => '',
+          mapIconFor: () => ({ path: '', colour: '#fff' }),
+          mapIconSvg: () => '',
+          MAP_ICONS: {},
+          STRUCTURE_ICONS: {}
+        }
+        ctx.window = ctx
+        runInNewContext(MAP_JS + '\n;globalThis.__map=this;', ctx)
+
+        const M = ctx.MAP as Record<string, unknown>
+        M.view = { cx: 0, cz: 0, scale: 1 }
+        M.vp = { width: 96, height: 96 }
+        M.world = true
+        M.loadOnPan = true
+        const fetchTiles = ctx.mapFetchTiles as (force?: boolean) => void
+
+        // First pass: asks, and every chunk comes back still pending.
+        fetchTiles(true)
+        await new Promise((r) => setTimeout(r, 20))
+        if (served !== 1) return fail('the map did not ask for tiles at all')
+        const waiting = Object.keys(ctx.MAP_TILE_WAIT as object).length
+        if (!waiting) return fail('a pending response left nothing backing off; the test proves nothing')
+
+        // Second pass, while they are all still backing off: nothing to ask
+        // for, so it must have scheduled its own return instead of stopping.
+        const before = timers.length
+        fetchTiles(true)
+        await new Promise((r) => setTimeout(r, 20))
+        if (served !== 1) return fail('the map re-asked for chunks it was already waiting on')
+        if (timers.length <= before) {
+          return fail('a fully-backed-off view scheduled no wake-up; the map would stall')
+        }
+        const delay = timers[timers.length - 1]
+        if (!(delay >= 50 && delay <= 400)) return fail('the wake-up delay is wrong: ' + delay)
+      }
+
       // ---- every client caps at the number the server reads (#159) ----
       {
         // A client that asks for more than the server looks at gets a response
