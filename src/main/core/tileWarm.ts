@@ -24,7 +24,12 @@ import { normalizeMapPerf } from '@shared/tileCache'
 import { getServer } from './serverRegistry'
 import { log } from '../logger'
 import { poolBacklog, poolReady } from './tilePool'
-import { cachedRegionIsCurrent, regionDirsForServer, warmOneRegion } from './worldTiles'
+import {
+  cachedRegionIsCurrent,
+  regionDirsForServer,
+  tileCacheBytes,
+  warmOneRegion
+} from './worldTiles'
 
 /**
  * Regions read per pass, per server.
@@ -40,11 +45,14 @@ const TICK_MS = 60_000
 
 /** Servers already fully warmed, so a finished world costs one directory scan. */
 const done = new Set<string>()
+/** Servers whose warming stopped because the cache is full, so it is said once. */
+const full = new Set<string>()
 let timer: NodeJS.Timeout | null = null
 let running = false
 
 export function _resetTileWarm(): void {
   done.clear()
+  full.clear()
   running = false
 }
 
@@ -86,6 +94,27 @@ export async function warmServer(serverId: string, budget = PER_PASS): Promise<n
   // cost: the work would be thrown away the moment it left memory.
   if (!perf.cache) return 0
   if (!poolReady()) return 0
+
+  // A full cache means STOP, not "make room". The warmer writes nearest to
+  // spawn first and the sweep evicts oldest first, so carrying on would spend
+  // the pass deleting the area around spawn — the part a map is pointed at —
+  // and keeping whichever far corner was written last. An interactive parse
+  // may still evict; that one is answering somebody.
+  //
+  // A limit of zero is not "no limit", it is no room — the sweep would delete
+  // whatever was written the moment it landed.
+  const limit = perf.cacheLimitMB * 1024 * 1024
+  if (tileCacheBytes() >= limit) {
+    if (!full.has(serverId)) {
+      full.add(serverId)
+      log.info(
+        `Tile cache: full at ${perf.cacheLimitMB} MB, so "${s.name}" will not be warmed further. ` +
+          'Raise the limit in the map performance settings to cache more of this world.'
+      )
+    }
+    return 0
+  }
+  full.delete(serverId)
 
   let parsed = 0
   let looked = 0

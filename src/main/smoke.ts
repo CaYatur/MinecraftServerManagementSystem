@@ -2598,6 +2598,16 @@ export async function runWorldsSmoke(): Promise<void> {
       if (second !== 0) {
         return fail('warming re-parsed regions it had already cached: ' + second)
       }
+      // A full cache means STOP. The warmer writes nearest to spawn first and
+      // the sweep evicts oldest first, so carrying on would delete the area
+      // around spawn and keep whichever far corner was written last — warming
+      // would actively make the map worse on a world bigger than the limit.
+      registry.updateServer(SID, { map: normalizeMapPerf({ ...(restore ?? {}), cache: true, cacheLimitMB: 0 }) })
+      warmMod._resetTileWarm()
+      tilesMod.clearTileCache(SID)
+      const capped = await warmMod.warmServer(SID, 4)
+      if (capped !== 0) return fail('warming ran past a full cache: ' + capped)
+      if (tilesMod.tileCacheBytes() !== 0) return fail('warming wrote into a cache it had no room in')
       if (restore) registry.updateServer(SID, { map: restore })
 
       // Nearest the origin first: spawn is where a map is first pointed, and a

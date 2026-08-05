@@ -800,3 +800,31 @@ export async function warmOneRegion(
   }
   return true
 }
+
+/**
+ * Bytes currently held in the on-disk tile cache.
+ *
+ * The warmer reads this to know when to stop. It matters because the two
+ * policies point in opposite directions: the warmer writes NEAREST TO SPAWN
+ * FIRST, and `sweepCache` evicts OLDEST FIRST — so on a world bigger than the
+ * cache limit, warming would have spent its time deleting the area around
+ * spawn, the part a map is actually pointed at, and keeping the far corners it
+ * happened to write last.
+ */
+export function tileCacheBytes(): number {
+  try {
+    const dir = cacheDirFor()
+    let total = 0
+    for (const name of readdirSync(dir)) {
+      if (!name.endsWith('.tiles')) continue
+      try {
+        total += statSync(join(dir, name)).size
+      } catch {
+        /* a file that vanished mid-scan is not in the cache */
+      }
+    }
+    return total
+  } catch {
+    return 0
+  }
+}
