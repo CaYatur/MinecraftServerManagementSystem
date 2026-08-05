@@ -4,8 +4,19 @@ import { Map as MapIcon, Flame, Gauge, Shapes, Plus, Trash2, Check, X } from 'lu
 import { useStore } from '../store'
 import { normalizeMapPerf } from '@shared/tileCache'
 import type { MapPerfConfig } from '@shared/tileCache'
-import { fitView, heatmap, mapBounds, panBy, screenToWorld, worldToScreen, zoomAt } from '@shared/livemap'
-import type { LivePlayer, MapView, Viewport } from '@shared/livemap'
+import {
+  fitView,
+  heatmap,
+  mapBounds,
+  panBy,
+  screenToWorld,
+  tilesToDrop,
+  worldToScreen,
+  zoomAt,
+  MAX_TILES_PER_REQUEST,
+  MAX_VIEWPORT_CHUNKS
+} from '@shared/livemap'
+import type { ChunkBox, LivePlayer, MapView, Viewport } from '@shared/livemap'
 import { avatarUrl } from '@shared/profile'
 import type { StructureMark } from '@shared/regionFormat'
 import { iconFor, ICON_BOX } from '@shared/mapIcons'
@@ -118,16 +129,21 @@ function headFor(
  * Panning a big world would otherwise hold every chunk ever looked at.
  *
  * Each tile is small, but "small times unbounded" is still unbounded, and this
- * runs for as long as the app is open. Dropping the ones no longer near the
- * view costs a re-fetch that is already cached in the main process.
+ * runs for as long as the app is open. WHICH ones to give up is
+ * `tilesToDrop` — shared with the web map, and farthest-from-the-view first,
+ * because the old rule here kept the current viewport and deleted everything
+ * else the moment the cache passed its limit (#159).
  */
 function trimTiles(
   tiles: Map<string, HTMLCanvasElement | null>,
-  keep: { cx: number; cz: number }[]
+  marks: Map<string, StructureMark[]>,
+  box: ChunkBox | null
 ): void {
-  if (tiles.size <= 2048) return
-  const wanted = new Set(keep.map((c) => c.cx + ',' + c.cz))
-  for (const k of tiles.keys()) if (!wanted.has(k)) tiles.delete(k)
+  if (!box) return
+  for (const k of tilesToDrop(tiles.keys(), box)) {
+    tiles.delete(k)
+    marks.delete(k)
+  }
 }
 
 export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
@@ -270,11 +286,14 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
     setCleared(await window.msms.clearMapCache())
     tiles.current.clear()
     markStore.current.clear()
+    waiting.current.clear()
     setTick2((n) => n + 1)
   }
   const headCache = useRef(new Map<string, HTMLImageElement | false>())
   const tiles = useRef(new Map<string, HTMLCanvasElement | null>())
   const tilesPending = useRef(false)
+  /** Chunk -> when it is worth asking for again, while its region is read. */
+  const waiting = useRef(new Map<string, number>())
   const [tick2, setTick2] = useState(0)
 
   const chunkBox = useCallback((): { x0: number; x1: number; z0: number; z1: number } | null => {
@@ -293,7 +312,7 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
   const visibleChunks = useCallback((): { cx: number; cz: number }[] => {
     const b = chunkBox()
     if (!b) return []
-    if ((b.x1 - b.x0 + 1) * (b.z1 - b.z0 + 1) > 4096) return []
+    if ((b.x1 - b.x0 + 1) * (b.z1 - b.z0 + 1) > MAX_VIEWPORT_CHUNKS) return []
     const out: { cx: number; cz: number }[] = []
     for (let z = b.z0; z <= b.z1; z++) for (let x = b.x0; x <= b.x1; x++) out.push({ cx: x, cz: z })
     return out
@@ -324,11 +343,19 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
     // Off, the map draws what it holds and asks for nothing more until the
     // operator presses to load (#136).
     if (!perf.loadOnPan && !loadNow) return
+    // A chunk whose region is still being parsed is not asked for again
+    // straight away. Without this the next request rebuilds the same list —
+    // the viewport is walked in order, so the unresolved chunks are always at
+    // the front — and the map spins on one band while the rest stays blank.
+    const now = Date.now()
     const want = visibleChunks()
-      .filter((c: { cx: number; cz: number }) => !tiles.current.has(c.cx + ',' + c.cz))
-      .slice(0, 64)
+      .filter((c: { cx: number; cz: number }) => {
+        const k = c.cx + ',' + c.cz
+        return !tiles.current.has(k) && (waiting.current.get(k) ?? 0) <= now
+      })
+      .slice(0, MAX_TILES_PER_REQUEST)
     if (!want.length) return
-    trimTiles(tiles.current, visibleChunks())
+    trimTiles(tiles.current, markStore.current, chunkBox())
     tilesPending.current = true
     window.msms
       .mapTiles(serverId, dim, want, marks)
@@ -337,6 +364,11 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
         // The empty list is "read, and nothing there" — as opposed to "not read
         // yet". Marking null only when the whole response had nothing pending
         // meant a genuinely empty chunk was re-requested on every draw (#136).
+        //
+        // `!r.pending` is NOT a second way to know that: it says nothing about
+        // chunks the server never looked at, and once a request can carry more
+        // than the server reads that inference blanks them permanently (#159).
+        // Every requested chunk comes back in `tiles`, in `empty`, or pending.
         const known = new Set(r.empty ?? [])
         for (const w of want) {
           const k = w.cx + ',' + w.cz
@@ -344,7 +376,15 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
           if (t) {
             tiles.current.set(k, bakeTile(t))
             if (t.m) markStore.current.set(k, t.m)
-          } else if (known.has(k) || !r.pending) tiles.current.set(k, null)
+            waiting.current.delete(k)
+          } else if (known.has(k)) {
+            tiles.current.set(k, null)
+            waiting.current.delete(k)
+          } else {
+            // Still being read. Come back to it, but let the rest of the view
+            // be asked for first.
+            waiting.current.set(k, Date.now() + 400)
+          }
         }
         setTick2((n) => n + 1)
         // Ask again while anything is still coming, rather than waiting for the
@@ -362,6 +402,7 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
   useEffect(() => {
     tiles.current.clear()
     markStore.current.clear()
+    waiting.current.clear()
     setView(null)
     fitFor.current = ''
   }, [serverId, dim])
@@ -371,6 +412,7 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
     if (!marks) return
     tiles.current.clear()
     markStore.current.clear()
+    waiting.current.clear()
   }, [marks])
 
   useEffect(() => {

@@ -357,3 +357,94 @@ export function heatmap(points: { x: number; z: number }[], cell = 16): HeatCell
   // Busiest first: a consumer that truncates should keep the hot spots.
   return [...buckets.values()].sort((a, b) => b.count - a.count || a.x - b.x || a.z - b.z)
 }
+
+// ---- what a client asks for, and what it keeps (#159) ----
+
+/**
+ * Chunks one request may ask for.
+ *
+ * 64 was the original, and at 64 a full viewport of 4096 chunks took **64
+ * sequential round trips** — the map filled in visible bands and an operator
+ * watching it called that "loading piece by piece". The cap was there so one
+ * call could not ask for a whole world; it is still there, eight times wider.
+ *
+ * Both HTTP surfaces gzip their tile responses (`sendTileJson`), so 512 chunks
+ * is about 82 KB on the wire against 10 KB for 64. Over IPC there is no wire.
+ *
+ * THIS CONSTANT MUST BE THE ONLY ONE. A client that sends more than the server
+ * reads gets a response that says nothing about the excess, and the handler
+ * below would then mark every unexamined chunk as permanently empty.
+ */
+export const MAX_TILES_PER_REQUEST = 512
+
+/**
+ * Chunks a viewport will ask for at all.
+ *
+ * Zoomed out far enough a viewport covers tens of thousands, and at that scale
+ * a chunk is a fraction of a pixel — asking is pointless as well as expensive.
+ * The client draws whatever it still HOLDS beyond this, which is why the
+ * retention policy below matters more than it looks.
+ */
+export const MAX_VIEWPORT_CHUNKS = 4096
+
+/**
+ * Tiles a client keeps baked before it starts evicting.
+ *
+ * Strictly greater than `MAX_VIEWPORT_CHUNKS`, and that is the whole point: at
+ * the old limit of 2048 a single viewport could exceed the cache, so the map
+ * evicted tiles it had just fetched and re-fetched them on the next draw. Any
+ * value below the viewport cap turns this into a loop.
+ */
+export const TILE_KEEP_LIMIT = 8192
+
+/** A viewport in chunk coordinates, inclusive at both ends. */
+export interface ChunkBox {
+  x0: number
+  x1: number
+  z0: number
+  z1: number
+}
+
+/** Chunks from the box edge — 0 for anything inside it. */
+function boxDistance(box: ChunkBox, cx: number, cz: number): number {
+  const dx = cx < box.x0 ? box.x0 - cx : cx > box.x1 ? cx - box.x1 : 0
+  const dz = cz < box.z0 ? box.z0 - cz : cz > box.z1 ? cz - box.z1 : 0
+  return Math.max(dx, dz)
+}
+
+/**
+ * Which held tiles to drop, farthest from the view first.
+ *
+ * The old rule kept the CURRENT VIEWPORT AND NOTHING ELSE: pan one screen and
+ * every tile you came from was deleted, so panning back re-fetched all of it.
+ * That is the "load somewhere else and then wait for the first place to load
+ * again" an operator reported, and on the desktop there was not even a margin —
+ * `keep` was exactly the visible chunks.
+ *
+ * Distance ordering replaces the margin. Everything on screen is at distance 0,
+ * its surroundings are 1, 2, 3…, so the cache naturally holds a ring of
+ * recently visited ground and gives up the far edges of where you have been.
+ * Nothing is dropped at all until the limit is passed.
+ *
+ * Pure and total: the callers hold canvases and DOM objects, and the decision
+ * about what to throw away should be testable without either.
+ */
+export function tilesToDrop(held: Iterable<string>, box: ChunkBox, limit = TILE_KEEP_LIMIT): string[] {
+  const keys = [...held]
+  const over = keys.length - Math.max(0, limit)
+  if (over <= 0) return []
+  const ranked = keys.map((k) => {
+    const comma = k.indexOf(',')
+    const cx = Number(k.slice(0, comma))
+    const cz = Number(k.slice(comma + 1))
+    // A key that does not parse is not a chunk anyone can draw, so it goes
+    // first rather than sorting unpredictably on NaN.
+    const d = comma < 0 || !Number.isFinite(cx) || !Number.isFinite(cz)
+      ? Infinity
+      : boxDistance(box, cx, cz)
+    return { k, d }
+  })
+  // Farthest first, then by key so two runs on the same input agree.
+  ranked.sort((a, b) => b.d - a.d || (a.k < b.k ? -1 : a.k > b.k ? 1 : 0))
+  return ranked.slice(0, over).map((r) => r.k)
+}

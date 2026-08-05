@@ -9,7 +9,13 @@
  * frames while doing nothing interesting.
  *
  * The host page provides `api(path)` and `mapServerId()`.
+ *
+ * The three tuning numbers are interpolated from `@shared/livemap` rather than
+ * written here: this is a string, so a copy in it cannot be typechecked against
+ * the server's cap, and a client asking for more than the server reads gets a
+ * response that says nothing about the excess (#159).
  */
+import { MAX_TILES_PER_REQUEST, MAX_VIEWPORT_CHUNKS, TILE_KEEP_LIMIT } from './livemap'
 
 export const MAP_CSS = `
 .mp-wrap{display:flex;flex-direction:column;gap:10px}
@@ -251,7 +257,7 @@ function mapRefresh(){
      the overworld — so switching dimension without dropping them draws one
      world's terrain under another world's players. */
   var dimChanged=MAP.dim!==d.dimension;
-  if(dimChanged){MAP_TILES={};MAP_MARKS={}}
+  if(dimChanged){MAP_TILES={};MAP_MARKS={};MAP_TILE_WAIT={}}
   MAP.data=d;MAP.dim=d.dimension;
   /* The public feed is asked for one dimension at a time, so a switch needs a
      new request; a pinned area from the last world would otherwise stay drawn.
@@ -536,6 +542,8 @@ function mapToggleAreas(){MAP.areasOn=!MAP.areasOn;
    for every visible chunk is the difference between a map that pans and one
    that stutters; a chunk only changes when the server rewrites its region. */
 var MAP_TILES={},MAP_TILE_PENDING=false;
+/* Chunk -> when it is worth asking for again, while its region is read. */
+var MAP_TILE_WAIT={};
 function mapTileKey(cx,cz){return cx+','+cz}
 /* The viewport in chunk coordinates. */
 function mapChunkBox(){
@@ -550,7 +558,7 @@ function mapChunkBox(){
  */
 function mapVisibleChunks(){
  var b=mapChunkBox();if(!b)return [];
- if((b.x1-b.x0+1)*(b.z1-b.z0+1)>4096)return [];
+ if((b.x1-b.x0+1)*(b.z1-b.z0+1)>${MAX_VIEWPORT_CHUNKS})return [];
  var out=[];
  for(var z=b.z0;z<=b.z1;z++)for(var x=b.x0;x<=b.x1;x++)out.push({cx:x,cz:z});
  return out}
@@ -591,10 +599,17 @@ function mapFetchTiles(force){
   if((x1-x0+1)*(z1-z0+1)<=4096){
    chunks=[];
    for(var rz=z0;rz<=z1;rz++)for(var rx=x0;rx<=x1;rx++)chunks.push({cx:rx,cz:rz})}}
- var want=chunks.filter(function(c){return MAP_TILES[mapTileKey(c.cx,c.cz)]===undefined});
+ /* A chunk whose region is still being read is not asked for again straight
+    away. The viewport is walked in order, so without this the next request
+    rebuilds the same list and the map spins on one band while the rest of the
+    view stays blank (#159). */
+ var now=Date.now();
+ var want=chunks.filter(function(c){
+  var k=mapTileKey(c.cx,c.cz);
+  return MAP_TILES[k]===undefined&&!(MAP_TILE_WAIT[k]>now)});
  if(!want.length)return;
  mapTrimTiles();
- want=want.slice(0,64);
+ want=want.slice(0,${MAX_TILES_PER_REQUEST});
  MAP_TILE_PENDING=true;
  mapGet(mapTilesUrl(MAP.dim,want.map(function(c){return c.cx+','+c.cz}).join(';'),MAP.marksOn)).then(function(d){
   MAP_TILE_PENDING=false;
@@ -604,13 +619,18 @@ function mapFetchTiles(force){
      nothing pending was the bug: on a busy viewport something is always
      pending, so genuinely empty chunks were never marked and were re-requested
      on every single draw, forever (#136). */
+  /* A zero "pending" is NOT a second way to know a chunk is empty: it says
+     nothing about chunks the server never looked at, and once a request can
+     carry more than the server reads that inference blanks them permanently
+     (#159). Every requested chunk comes back drawn, listed empty, or pending. */
   var known={};
   for(var e=0;e<(d.empty||[]).length;e++)known[d.empty[e]]=1;
   for(var i=0;i<want.length;i++){
    var k=mapTileKey(want[i].cx,want[i].cz);
    var t=d.tiles[k];
-   if(t){MAP_TILES[k]=mapBakeTile(t);if(t.m)MAP_MARKS[k]=t.m}
-   else if(known[k]||!d.pending)MAP_TILES[k]=null}
+   if(t){MAP_TILES[k]=mapBakeTile(t);if(t.m)MAP_MARKS[k]=t.m;delete MAP_TILE_WAIT[k]}
+   else if(known[k]){MAP_TILES[k]=null;delete MAP_TILE_WAIT[k]}
+   else MAP_TILE_WAIT[k]=Date.now()+400}
   mapDraw();
   /* Ask again straight away while anything is still coming. Waiting for the
      2-second position poll is why a viewport filled in visible bands over ten
@@ -667,20 +687,39 @@ function mapToggleMarks(){
  /* The tiles held were fetched without markers, so they carry none. Drop them
     and ask again rather than showing an empty layer that looks like "there are
     no villages here". */
- if(MAP.marksOn){MAP_TILES={};MAP_MARKS={}}
+ if(MAP.marksOn){MAP_TILES={};MAP_MARKS={};MAP_TILE_WAIT={}}
  mapFetchTiles();mapDraw()}
 /* Panning a big world would otherwise hold every chunk ever looked at, for as
    long as the page is open — and since drawing iterates what is held, an
    unbounded cache is a per-frame cost as well as a memory one. Tiles outside
    the view are dropped past the cap; re-fetching one is cheap because the main
    process still has the region. */
+/**
+ * Drop the tiles FARTHEST from the view, and only once past the limit.
+ *
+ * The margin rule this replaces deleted everything more than eight chunks
+ * outside the viewport, so panning two screens and back re-fetched the lot —
+ * "load somewhere else, then wait for the first place to load again" (#159).
+ * Distance ordering keeps a ring of recently visited ground instead, and the
+ * limit is above the viewport cap so a single view can never evict itself.
+ *
+ * Mirrors tilesToDrop in @shared/livemap, which is the tested copy; this one
+ * cannot import it because MAP_JS is a string served to a browser.
+ */
 function mapTrimTiles(){
  var keys=Object.keys(MAP_TILES);
- if(keys.length<=2048)return;
+ var over=keys.length-${TILE_KEEP_LIMIT};
+ if(over<=0)return;
  var b=mapChunkBox();if(!b)return;
+ var ranked=[];
  for(var i=0;i<keys.length;i++){
   var p=keys[i].split(',');var cx=+p[0],cz=+p[1];
-  if(cx<b.x0-8||cx>b.x1+8||cz<b.z0-8||cz>b.z1+8){delete MAP_TILES[keys[i]];delete MAP_MARKS[keys[i]]}}}
+  var dx=cx<b.x0?b.x0-cx:cx>b.x1?cx-b.x1:0;
+  var dz=cz<b.z0?b.z0-cz:cz>b.z1?cz-b.z1:0;
+  ranked.push({k:keys[i],d:isFinite(cx)&&isFinite(cz)?Math.max(dx,dz):Infinity})}
+ ranked.sort(function(a,b2){return b2.d-a.d||(a.k<b2.k?-1:a.k>b2.k?1:0)});
+ for(var j=0;j<over;j++){
+  delete MAP_TILES[ranked[j].k];delete MAP_MARKS[ranked[j].k];delete MAP_TILE_WAIT[ranked[j].k]}}
 function mapBakeTile(t){
  var cv=document.createElement('canvas');cv.width=16;cv.height=16;
  var g=cv.getContext('2d');var img=g.createImageData(16,16);

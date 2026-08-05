@@ -2801,7 +2801,7 @@
       "get": {
         "operationId": "getServersIdMapTiles",
         "summary": "Rendered surface colours for the requested chunks.",
-        "description": "Scope `view` on the server.\n\nAsk with `?c=cx,cz;cx,cz` (max 64) and `?dim=`. Answers only with regions already parsed and queues the rest — `pending` says how many are still coming, so a caller polls rather than blocking. A request never parses a region itself.",
+        "description": "Scope `view` on the server.\n\nAsk with `?c=cx,cz;cx,cz` (max 512) and `?dim=`. Answers only with regions already parsed and queues the rest — `pending` says how many are still coming, so a caller polls rather than blocking. A request never parses a region itself.",
         "tags": [
           "players"
         ],

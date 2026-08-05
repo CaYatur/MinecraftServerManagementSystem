@@ -132,7 +132,7 @@ import * as areasMod from '@shared/chunkAreas'
 import * as areasMod2 from './core/chunkAreas'
 import * as tilesMod from './core/worldTiles'
 import * as tex from '@shared/textures'
-import { MAP_CSS, MAP_HTML } from '@shared/mapUi'
+import { MAP_CSS, MAP_HTML, MAP_JS } from '@shared/mapUi'
 import { getMapPageHtml } from './web/mapPageHtml'
 import * as pngMod from './core/png'
 import { deflateSync } from 'node:zlib'
@@ -155,8 +155,12 @@ import {
   screenToWorld,
   worldToScreen,
   zoomAt,
+  tilesToDrop,
   MAX_SCALE,
+  MAX_TILES_PER_REQUEST,
+  MAX_VIEWPORT_CHUNKS,
   MIN_SCALE,
+  TILE_KEEP_LIMIT,
   PUBLIC_MAP_DEFAULTS
 } from '@shared/livemap'
 import { normalizeMapPage, mapPagePublic, MAP_PAGE_DEFAULTS } from '@shared/mapPage'
@@ -9010,6 +9014,88 @@ export async function runWebSmoke(): Promise<void> {
         if (clampRound('lots') !== PUBLIC_MAP_DEFAULTS.round) return fail('a junk rounding did not fall back')
         if (PUBLIC_MAP_DEFAULTS.enabled) return fail('the public map is on by default')
         if (PUBLIC_MAP_DEFAULTS.heads) return fail('avatar heads are on by default')
+      }
+
+      // ---- what a client keeps when it pans (#159) ----
+      {
+        // The invariant the whole policy rests on. Below this a single viewport
+        // exceeds the cache, so the map evicts tiles it just fetched and
+        // re-fetches them on the next draw — an endless loop, and the reason
+        // the old limit of 2048 was wrong against a 4096-chunk viewport.
+        if (TILE_KEEP_LIMIT <= MAX_VIEWPORT_CHUNKS) {
+          return fail('the tile cache is smaller than one viewport: ' + TILE_KEEP_LIMIT)
+        }
+
+        // Under the limit nothing is given up, however far the view has moved.
+        const few = ['0,0', '1,0', '900,900']
+        if (tilesToDrop(few, { x0: 0, x1: 1, z0: 0, z1: 1 }).length) {
+          return fail('tiles were dropped while the cache was under its limit')
+        }
+
+        // A cache PAST the limit, which is the only state the body runs in — a
+        // fixture of a few dozen would step straight over it and pass with the
+        // whole policy deleted.
+        const held: string[] = []
+        for (let z = 0; z < 100; z++) for (let x = 0; x < 100; x++) held.push(x + ',' + z)
+        if (held.length <= TILE_KEEP_LIMIT) return fail('the retention fixture never crosses the limit')
+
+        // The view sits in the top-left corner; the far corner is what should go.
+        const box = { x0: 0, x1: 49, z0: 0, z1: 49 }
+        const dropped = tilesToDrop(held, box)
+        if (!dropped.length) return fail('nothing was dropped by an over-full cache')
+        if (held.length - dropped.length !== TILE_KEEP_LIMIT) {
+          return fail('the cache was not trimmed to its limit: ' + (held.length - dropped.length))
+        }
+        const gone = new Set(dropped)
+        // Nothing on screen may be given up while anything off screen is held —
+        // that is precisely the eviction that made a map re-fetch itself.
+        for (let z = box.z0; z <= box.z1; z++) {
+          for (let x = box.x0; x <= box.x1; x++) {
+            if (gone.has(x + ',' + z)) return fail('a tile in view was dropped: ' + x + ',' + z)
+          }
+        }
+        if (!gone.has('99,99')) return fail('the farthest tile survived while nearer ones went')
+
+        // The reported bug, as a property: pan one screen right, and the screen
+        // you came from is still held. The old rule kept the viewport and
+        // nothing else, so panning back re-fetched all of it.
+        const panned = new Set(tilesToDrop(held, { x0: 50, x1: 99, z0: 0, z1: 49 }))
+        let survivors = 0
+        for (let z = 0; z <= 49; z++) for (let x = 0; x <= 49; x++) {
+          if (!panned.has(x + ',' + z)) survivors++
+        }
+        if (survivors < 2000) {
+          return fail('panning one screen threw away the previous one: only ' + survivors + ' left')
+        }
+
+        // Deterministic: two runs on the same input must agree, or a redraw
+        // between them silently changes what is held.
+        if (tilesToDrop(held, box).join('|') !== dropped.join('|')) {
+          return fail('the retention policy is not deterministic')
+        }
+      }
+
+      // ---- every client caps at the number the server reads (#159) ----
+      {
+        // A client that asks for more than the server looks at gets a response
+        // that mentions neither the extra chunks nor a reason, and the handlers
+        // used to read that silence as "empty" and blank them for good. The web
+        // map is a STRING, so the only way to check its copy is to read it.
+        const sliced = [...MAP_JS.matchAll(/want\.slice\(0,(\d+)\)/g)].map((m) => Number(m[1]))
+        if (sliced.length !== 1) {
+          return fail('expected exactly one tile-request cap in MAP_JS, found ' + sliced.length)
+        }
+        if (sliced[0] !== MAX_TILES_PER_REQUEST) {
+          return fail('the web map asks for ' + sliced[0] + ' but the server reads ' + MAX_TILES_PER_REQUEST)
+        }
+        // And the server really does read that many, rather than stopping at an
+        // older constant somewhere in the parser.
+        const asked: string[] = []
+        for (let i = 0; i < MAX_TILES_PER_REQUEST + 50; i++) asked.push(i + ',0')
+        const parsed = tilesMod.parseWantedTiles(asked.join(';'))
+        if (parsed.length !== MAX_TILES_PER_REQUEST) {
+          return fail('the server parsed ' + parsed.length + ' of ' + MAX_TILES_PER_REQUEST + ' asked for')
+        }
       }
 
       // ---- the endpoints ----
