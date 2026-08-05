@@ -105,36 +105,157 @@ export function unpackIndices(
 ): number[] {
   const out = new Array<number>(count).fill(0)
   if (bits <= 0 || !longs.length) return out
-  const mask = (1n << BigInt(bits)) - 1n
-  const asUnsigned = (v: bigint): bigint => BigInt.asUintN(64, v)
-
-  if (packing === 'padded') {
-    const perLong = Math.floor(64 / bits)
-    for (let i = 0; i < count; i++) {
-      const longIndex = Math.floor(i / perLong)
-      if (longIndex >= longs.length) break
-      const shift = BigInt((i % perLong) * bits)
-      out[i] = Number((asUnsigned(longs[longIndex]) >> shift) & mask)
-    }
-    return out
-  }
-
+  const src = prepareIndices(longs, bits, packing)
   for (let i = 0; i < count; i++) {
-    const bitPos = i * bits
-    const longIndex = Math.floor(bitPos / 64)
-    if (longIndex >= longs.length) break
-    const offset = bitPos % 64
-    let value = (asUnsigned(longs[longIndex]) >> BigInt(offset)) & mask
-    // Straddling: take the remaining high bits from the next long.
-    if (offset + bits > 64 && longIndex + 1 < longs.length) {
-      const taken = 64 - offset
-      const rest = asUnsigned(longs[longIndex + 1]) & ((1n << BigInt(bits - taken)) - 1n)
-      value |= rest << BigInt(taken)
-    }
-    out[i] = Number(value & mask)
+    if (!indexInRange(src, i)) break
+    out[i] = indexAt(src, i)
   }
   return out
 }
+
+/**
+ * Longs prepared for repeated single-index reads.
+ *
+ * The reason this exists rather than a plain `number[]` of every index: a
+ * surface scan reads the top layer of a section, then the next one down, and
+ * stops as soon as every column has an answer — usually after two or three of
+ * the sixteen. Unpacking all 4096 up front did the other thirteen layers'
+ * work for nothing AND allocated a 4096-element array per section, which
+ * together were 562 ms of the 1030 ms a region spent here and a sixth of the
+ * process's garbage (#157).
+ */
+export interface IndexSource {
+  /** High and low 32-bit halves of each long. Empty when `big` is in use. */
+  hi: Int32Array
+  lo: Int32Array
+  /** Set only for palettes too wide for 32-bit arithmetic — see below. */
+  big: bigint[] | null
+  bits: number
+  mask: number
+  /** Indices per long under `padded`; 0 when spanning. */
+  perLong: number
+  spanning: boolean
+  longs: number
+}
+
+export function prepareIndices(
+  longs: bigint[],
+  bits: number,
+  packing: IndexPacking
+): IndexSource {
+  const spanning = packing === 'spanning'
+  // Above 31 the 32-bit extraction cannot hold the answer. No real palette gets
+  // near it — 4096 blocks in a section is 12 bits — but a corrupt one must not
+  // read as a wrong index, so it keeps the arbitrary-precision path rather than
+  // truncating silently.
+  if (bits > 31) {
+    return {
+      hi: new Int32Array(0), lo: new Int32Array(0), big: longs, bits,
+      mask: 0, perLong: spanning ? 0 : Math.floor(64 / bits), spanning, longs: longs.length
+    }
+  }
+  /**
+   * Each long split into two 32-bit halves, ONCE.
+   *
+   * The BigInt version did a shift, a mask and a `Number()` per index, at about
+   * 120 ns each. BigInt is arbitrary-precision and allocates; the 32-bit
+   * integer ops below do not. The conversion is still BigInt, but it happens
+   * per LONG (256 a section) rather than per index (4096).
+   */
+  const n = longs.length
+  const hi = new Int32Array(n)
+  const lo = new Int32Array(n)
+  for (let i = 0; i < n; i++) {
+    const u = BigInt.asUintN(64, longs[i])
+    lo[i] = Number(u & 0xffffffffn) | 0
+    hi[i] = Number(u >> 32n) | 0
+  }
+  return {
+    hi, lo, big: null, bits,
+    mask: bits === 31 ? 0x7fffffff : (1 << bits) - 1,
+    perLong: spanning ? 0 : Math.floor(64 / bits),
+    spanning,
+    longs: n
+  }
+}
+
+/**
+ * Whether index `i` is backed by a long at all.
+ *
+ * The old loop `break`s when it runs past the end, leaving the rest of the
+ * output at zero. Callers that read one index at a time need the same answer
+ * without a loop to break out of.
+ */
+export function indexInRange(src: IndexSource, i: number): boolean {
+  const li = src.spanning ? ((i * src.bits) / 64) | 0 : (i / src.perLong) | 0
+  return li < src.longs
+}
+
+/**
+ * One index, `bits` wide.
+ *
+ * The straddle is the case worth naming: "padded" means an index never spans
+ * two LONGS, not that it never spans the two halves of one. At 5 bits index 6
+ * starts at bit 30 and runs to 34, so it takes two bits from the low half and
+ * three from the high one. Reading only one half there gives a plausible wrong
+ * index, which is the failure this format specialises in.
+ */
+export function indexAt(src: IndexSource, i: number): number {
+  const { bits, mask, hi, lo } = src
+  if (src.big) return indexAtBig(src, i)
+  if (!src.spanning) {
+    const li = (i / src.perLong) | 0
+    if (li >= src.longs) return 0
+    const offset = (i % src.perLong) * bits
+    if (offset >= 32) return (hi[li] >>> (offset - 32)) & mask
+    if (offset + bits <= 32) return (lo[li] >>> offset) & mask
+    return ((lo[li] >>> offset) | (hi[li] << (32 - offset))) & mask
+  }
+  const bitPos = i * bits
+  const li = (bitPos / 64) | 0
+  if (li >= src.longs) return 0
+  const offset = bitPos % 64
+  if (offset + bits <= 64) {
+    if (offset >= 32) return (hi[li] >>> (offset - 32)) & mask
+    if (offset + bits <= 32) return (lo[li] >>> offset) & mask
+    return ((lo[li] >>> offset) | (hi[li] << (32 - offset))) & mask
+  }
+  // Spanning two longs: the low bits finish this one, the rest start the next.
+  // `taken` is under `bits` here, so the shift stays inside 32 bits, and
+  // `offset` is above 33 for any width this path handles.
+  const taken = 64 - offset
+  let value = (hi[li] >>> (offset - 32)) & ((1 << taken) - 1)
+  if (li + 1 < src.longs) {
+    const rest = lo[li + 1] & ((1 << (bits - taken)) - 1)
+    value |= rest << taken
+  }
+  return value & mask
+}
+
+/** The arbitrary-precision read, for palettes too wide for 32-bit arithmetic. */
+function indexAtBig(src: IndexSource, i: number): number {
+  const longs = src.big as bigint[]
+  const bits = src.bits
+  const mask = (1n << BigInt(bits)) - 1n
+  const asUnsigned = (v: bigint): bigint => BigInt.asUintN(64, v)
+  if (!src.spanning) {
+    const li = Math.floor(i / src.perLong)
+    if (li >= longs.length) return 0
+    return Number((asUnsigned(longs[li]) >> BigInt((i % src.perLong) * bits)) & mask)
+  }
+  const bitPos = i * bits
+  const li = Math.floor(bitPos / 64)
+  if (li >= longs.length) return 0
+  const offset = bitPos % 64
+  let value = (asUnsigned(longs[li]) >> BigInt(offset)) & mask
+  if (offset + bits > 64 && li + 1 < longs.length) {
+    const taken = 64 - offset
+    const rest = asUnsigned(longs[li + 1]) & ((1n << BigInt(bits - taken)) - 1n)
+    value |= rest << BigInt(taken)
+  }
+  return Number(value & mask)
+}
+
 
 /**
  * Blocks that are not surface.

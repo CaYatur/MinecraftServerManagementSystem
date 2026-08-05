@@ -5,11 +5,11 @@
  * mis-reads its own file produces a *plausible* map rather than an error, and
  * the cache then serves that wrong picture until somebody deletes it by hand.
  *
- * Why it is worth having at all, measured on a real world: one 5.4 MB region of
- * 811 chunks costs 180 ms to decompress and NBT-parse before any surface work,
- * and #119's cache was a Map in memory — so every restart paid it again. The
- * encoded form of the same region is about 1 MB, gzips in 2-3 ms and gunzips in
- * about 1.
+ * Why it is worth having at all: a 4 MB region of 1024 chunks costs about 1.5 s
+ * to decompress, NBT-parse and extract surfaces from (#157 measured it — it was
+ * 14 s before that), and #119's cache was a Map in memory, so every restart
+ * paid it again. The encoded form of the same region is about 1 MB and reads
+ * back in roughly 16 ms.
  */
 
 import type { StructureKind } from './regionFormat'
