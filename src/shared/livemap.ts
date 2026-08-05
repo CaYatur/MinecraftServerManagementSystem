@@ -285,7 +285,16 @@ export interface PublicMapConfig {
 export const PUBLIC_MAP_DEFAULTS: PublicMapConfig = {
   enabled: false,
   serverId: '',
-  round: 64,
+  /**
+   * Exact, and rounding is the opt-in.
+   *
+   * This was 64 — chosen when the public map was dots on an empty grid, where
+   * being up to 32 blocks out was invisible. The map draws real terrain now, so
+   * the same rounding puts a player visibly beside the house they are standing
+   * in, and it reads as a placement bug rather than as privacy. An operator who
+   * wants the protection can still have it, and the field says what it costs.
+   */
+  round: 0,
   heads: false,
   names: true,
   // The terrain is the map. Publishing a grid with dots on it and calling it a

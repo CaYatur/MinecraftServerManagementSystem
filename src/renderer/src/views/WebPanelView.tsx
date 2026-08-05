@@ -415,6 +415,7 @@ export function WebPanelView(): JSX.Element {
                   value={mapPage.round}
                   onChange={(e) => setMapPage({ ...mapPage, round: Number(e.target.value) })}
                 />
+                <p className="hint" style={{ marginTop: 4 }}>{t('web.mapRoundHint')}</p>
               </div>
               <div className="field" style={{ flex: 1, minWidth: 140 }}>
                 <label>{t('web.mapPin')}</label>

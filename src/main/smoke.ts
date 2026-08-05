@@ -8978,19 +8978,30 @@ export async function runWebSmoke(): Promise<void> {
         const exact: LivePlayer[] = [
           { name: 'Alex', uuid: 'u-1', world: 'world', dim: 'overworld', x: 1234, y: 12, z: -987 }
         ]
-        const pub = redactPlayers(exact, { ...PUBLIC_MAP_DEFAULTS, enabled: true, serverId: 's' })
+        // Rounding is asked for EXPLICITLY here rather than taken from the
+        // defaults. It used to come from them, and when the default changed to
+        // exact this block started asserting that the feature was broken — the
+        // two questions are "does redaction work when switched on" and "is it on
+        // by default", and only the first belongs in this block.
+        const pub = redactPlayers(exact, { ...PUBLIC_MAP_DEFAULTS, enabled: true, serverId: 's', round: 64 })
         const one = pub[0] as unknown as Record<string, unknown>
         // The panel payload's fields must not arrive here by being spread
         // through. Height is the sharp one: y=12 says "in a cave", which is
-        // when a player cannot defend the base you would then walk to.
+        // when a player cannot defend the base you would then walk to. This
+        // holds whatever the rounding is — the fields are the protection that
+        // does not have a setting.
+        const bare = redactPlayers(exact, { ...PUBLIC_MAP_DEFAULTS, enabled: true, serverId: 's' })[0]
         for (const leaked of ['y', 'world', 'uuid']) {
           if (leaked in one) return fail('the public map payload carries "' + leaked + '"')
+          if (leaked in (bare as unknown as Record<string, unknown>)) {
+            return fail('with rounding off the public map payload carries "' + leaked + '"')
+          }
         }
-        if (one.x === 1234 || one.z === -987) return fail('the public map published exact coordinates')
+        if (one.x === 1234 || one.z === -987) return fail('rounding did not move a player at all')
         if (Math.abs((one.x as number) - 1234) > 32) return fail('rounding moved a player more than half a cell')
         // Deterministic, not jittered: a watcher who samples a stationary
         // player repeatedly must not be able to average the noise away.
-        const again = redactPlayers(exact, { ...PUBLIC_MAP_DEFAULTS, enabled: true, serverId: 's' })
+        const again = redactPlayers(exact, { ...PUBLIC_MAP_DEFAULTS, enabled: true, serverId: 's', round: 64 })
         if (again[0].x !== pub[0].x || again[0].z !== pub[0].z) return fail('redaction is not deterministic')
         // Opt-ins.
         // Heads are drawn from the name since #116, so heads-on must publish
@@ -9008,6 +9019,24 @@ export async function runWebSmoke(): Promise<void> {
         const noNames = redactPlayers(exact, { ...PUBLIC_MAP_DEFAULTS, enabled: true, serverId: 's', names: false })
         if ('name' in (noNames[0] as unknown as Record<string, unknown>)) {
           return fail('names off still published a name')
+        }
+        // Exact by default. Rounding is a real protection and stays available,
+        // but it was ON at 64 blocks for everyone, and on a map that now draws
+        // terrain that puts a player visibly beside the house they are standing
+        // in — which reads as a placement bug, and was reported as one.
+        if (PUBLIC_MAP_DEFAULTS.round !== 0) {
+          return fail('the public map rounds positions by default: ' + PUBLIC_MAP_DEFAULTS.round)
+        }
+        if (MAP_PAGE_DEFAULTS.round !== 0) {
+          return fail('the map page rounds positions by default: ' + MAP_PAGE_DEFAULTS.round)
+        }
+        // Still available, and still exactly as strong when asked for.
+        {
+          const exactCfg = { ...PUBLIC_MAP_DEFAULTS, enabled: true, serverId: 's' }
+          const p = redactPlayers(exact, exactCfg)[0]
+          if (p.x !== 1234 || p.z !== -987) return fail('the default no longer publishes exact positions')
+          const rounded = redactPlayers(exact, { ...exactCfg, round: 64 })[0]
+          if (rounded.x % 64 !== 0 || rounded.z % 64 !== 0) return fail('opting into rounding stopped working')
         }
         if (clampRound(-5) !== 0) return fail('a negative rounding was accepted')
         if (clampRound(99999) !== 512) return fail('rounding was not capped')
