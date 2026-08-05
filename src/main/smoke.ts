@@ -131,11 +131,15 @@ import * as worldsMod from './core/worlds'
 import * as areasMod from '@shared/chunkAreas'
 import * as areasMod2 from './core/chunkAreas'
 import * as tilesMod from './core/worldTiles'
+import { parseRegionBuffer } from './core/regionParse'
+import type { ChunkTile } from './core/regionParse'
+import * as warmMod from './core/tileWarm'
+import { parseOnWorker, poolReady, _setTileWorkersEnabled } from './core/tilePool'
 import * as tex from '@shared/textures'
 import { MAP_CSS, MAP_HTML, MAP_JS } from '@shared/mapUi'
 import { getMapPageHtml } from './web/mapPageHtml'
 import * as pngMod from './core/png'
-import { deflateSync } from 'node:zlib'
+import { deflateSync, gunzipSync } from 'node:zlib'
 import * as assetsMod from './core/clientAssets'
 import {
   isValidMcName,
@@ -2489,7 +2493,14 @@ export async function runWorldsSmoke(): Promise<void> {
       // The queue's path parses in slices. What matters is not that it is
       // faster — it is the same work — but that no single uninterrupted block
       // is long enough to be felt: this thread answers every IPC call, so a
-      // 180 ms block is 180 ms of frozen interface while the map loads.
+      // long block is that long with the interface frozen while the map loads.
+      //
+      // Workers OFF for this one. They are the normal path now (#160) and the
+      // main thread does not block at all with them on, which would leave this
+      // gate measuring nothing — the same way its fixture used to (#157). The
+      // sliced parse is still what runs when a thread cannot be spawned, so it
+      // still has to hold.
+      _setTileWorkersEnabled(false)
       tilesMod.clearTileCache(SID)
       const t0 = Date.now()
       await tilesMod.chunkTileSliced(SID, 'overworld', 0, 0)
@@ -2507,8 +2518,93 @@ export async function runWorldsSmoke(): Promise<void> {
       }
       if (slice > 60) return fail('a parse slice blocked for ' + slice + ' ms; the interface will stutter')
       console.log(
-        'WORLDS-SMOKE: region parsed in ' + total + ' ms, longest uninterrupted slice ' + slice + ' ms'
+        'WORLDS-SMOKE: region parsed on-thread in ' + total + ' ms, longest uninterrupted slice ' + slice + ' ms'
       )
+      _setTileWorkersEnabled(true)
+    }
+
+    // --- 12a-ii. the worker parses, and parses the SAME map (#160) ----------
+    {
+      // The hazard this whole design is arranged around: `blockColour` reads
+      // module-level state that the client jar fills at runtime, and a worker
+      // thread starts with it EMPTY. A worker that was not given the table
+      // renders the fallback palette, and the result is written to the on-disk
+      // cache — a wrong map that survives restarts, with a cache version that
+      // still matches. So the colours are set to something unmistakable here
+      // and the worker's answer has to carry them.
+      const level =
+        /^level-name=(.+)$/m.exec(readFileSync(join(root, 'server.properties'), 'utf-8'))?.[1]?.trim() ||
+        'world'
+      const rpath = join(root, level, 'region', 'r.0.0.mca')
+      setTextureColours({ stone: { r: 7, g: 11, b: 13 } })
+      tilesMod.clearTileCache(SID)
+      tilesMod._resetWorldTiles()
+
+      if (!poolReady()) return fail('the tile worker pool would not start')
+      const t0 = Date.now()
+      const r = await parseOnWorker(rpath, 'overworld')
+      const took = Date.now() - t0
+      if (r.error) return fail('the worker refused the region: ' + r.error)
+      if (!r.buf) return fail('the worker returned no tiles')
+      if (r.chunks !== 1024) return fail('the worker parsed ' + r.chunks + ' chunks, expected 1024')
+
+      const decoded = decodeRegionTiles(gunzipSync(r.buf))
+      if (!decoded) return fail('the worker produced a region that does not decode')
+      const first = decoded.tiles.get(0)
+      if (!first) return fail('the worker produced no tile for chunk 0')
+      // The fixture's surface band is a 16-block palette, so not every column
+      // is stone — but every column must be a colour this table could produce,
+      // and the fallback palette contains none of these.
+      const wantStone = (7 << 16) | (11 << 8) | 13
+      if (!first.colour.includes(wantStone)) {
+        return fail('the worker did not use the colour table it was given')
+      }
+
+      // And byte for byte what this thread would have produced. Two renderers
+      // that agree on a smoke fixture and disagree on a real world is the
+      // failure mode; comparing the ENCODED region compares every column of
+      // every chunk rather than a sample.
+      const here = parseRegionBuffer(readFileSync(rpath), 'overworld')
+      const usable = new Map<number, ChunkTile>()
+      for (const [slot, tile] of here) if (tile) usable.set(slot, tile)
+      const mine = encodeRegionTiles({ mtimeMs: r.mtimeMs, tiles: usable })
+      const theirs = gunzipSync(r.buf)
+      if (Buffer.compare(Buffer.from(mine), Buffer.from(theirs)) !== 0) {
+        return fail('the worker and the main thread rendered different maps')
+      }
+      setTextureColours({})
+      console.log('WORLDS-SMOKE: worker parsed 1024 chunks in ' + took + ' ms, identical to this thread')
+    }
+
+    // --- 12a-iii. the background warmer (#161) ------------------------------
+    {
+      // Warming is only worth doing into a cache, and the operator can turn the
+      // cache off — in which case a warmer would be pure cost, parsing a world
+      // and throwing every bit of it away.
+      const restore = registry.getServer(SID)?.map
+      registry.updateServer(SID, { map: normalizeMapPerf({ ...(restore ?? {}), cache: false }) })
+      tilesMod.clearTileCache(SID)
+      warmMod._resetTileWarm()
+      const off = await warmMod.warmServer(SID, 4)
+      if (off !== 0) return fail('warming ran with the cache off: ' + off)
+
+      // With it on it really warms, and what it wrote is what the map reads:
+      // the second pass finds everything current and parses nothing.
+      registry.updateServer(SID, { map: normalizeMapPerf({ ...(restore ?? {}), cache: true }) })
+      warmMod._resetTileWarm()
+      const first = await warmMod.warmServer(SID, 4)
+      if (first < 1) return fail('warming with the cache on parsed nothing')
+      const second = await warmMod.warmServer(SID, 4)
+      if (second !== 0) {
+        return fail('warming re-parsed regions it had already cached: ' + second)
+      }
+      if (restore) registry.updateServer(SID, { map: restore })
+
+      // Nearest the origin first: spawn is where a map is first pointed, and a
+      // world accumulates far corners from one player who once walked a long way.
+      const order = warmMod.warmOrder(join(root, 'paper_world', 'region'))
+      const seen = order.filter((n) => /^r\.-?\d+\.-?\d+\.mca$/.test(n))
+      if (order.length !== seen.length) return fail('warmOrder returned a non-region file')
     }
 
     // --- 12b. item textures from the client jar (#127) ----------------------

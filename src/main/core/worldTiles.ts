@@ -23,48 +23,25 @@ import {
   writeFileSync
 } from 'node:fs'
 import { createHash } from 'node:crypto'
-import { inflateSync, gunzipSync, gzipSync } from 'node:zlib'
+import { gunzipSync, gzipSync } from 'node:zlib'
 import { join } from 'node:path'
 import { cacheDir } from '../paths'
 import { MAX_TILES_PER_REQUEST } from '@shared/livemap'
 import { decodeRegionTiles, encodeRegionTiles, normalizeMapPerf } from '@shared/tileCache'
 import type { MapPerfConfig } from '@shared/tileCache'
-import * as nbt from 'prismarine-nbt'
 import { getServer } from './serverRegistry'
 import { readProperties } from './serverFiles'
 import { log } from '../logger'
-import {
-  bitsPerIndex,
-  blockColour,
-  chunkSlot,
-  indexAt,
-  localChunk,
-  packingFor,
-  parseLocationTable,
-  prepareIndices,
-  regionOf,
-  scanRuleFor,
-  seeThrough,
-  structureKind,
-  CHUNK_AXIS,
-  INVISIBLE
-} from '@shared/regionFormat'
+import { chunkSlot, localChunk, parseLocationTable, regionOf } from '@shared/regionFormat'
+import { parseSlot, SECTOR_HEADER } from './regionParse'
+import { parseOnWorker, poolReady } from './tilePool'
+import type { ChunkTile } from './regionParse'
 import type { StructureMark } from '@shared/regionFormat'
 
-/** A chunk's surface: 256 columns, row-major (x fastest). */
-export interface ChunkTile {
-  /** Packed 0xRRGGBB per column. */
-  colour: number[]
-  /** World Y of the drawn block, for cross-chunk shading. */
-  height: number[]
-  /**
-   * Structures starting in this chunk (#131).
-   *
-   * Read from the same NBT the surface came from, so it costs one more object
-   * lookup rather than a second pass over the world. Absent on most chunks.
-   */
-  marks?: StructureMark[]
-}
+// The parse itself lives in `regionParse.ts`, which knows nothing about
+// Electron so a worker thread can run it (#160).
+export type { ChunkTile } from './regionParse'
+export { tileFromChunk } from './regionParse'
 
 interface RegionEntry {
   at: number
@@ -145,7 +122,24 @@ function writeCachedRegion(serverId: string, path: string, entry: RegionEntry): 
   try {
     const usable = new Map<number, ChunkTile>()
     for (const [slot, tile] of entry.tiles) if (tile) usable.set(slot, tile)
-    const buf = gzipSync(encodeRegionTiles({ mtimeMs: entry.mtimeMs, tiles: usable }), { level: 6 })
+    writeCachedBuffer(
+      serverId,
+      path,
+      gzipSync(encodeRegionTiles({ mtimeMs: entry.mtimeMs, tiles: usable }), { level: 6 })
+    )
+  } catch {
+    /* a cache that cannot be written still leaves a working map */
+  }
+}
+
+/**
+ * The same write, given the encoded bytes rather than the tiles.
+ *
+ * A worker already produced exactly this buffer, and re-encoding it here would
+ * be doing on the main thread the work the worker exists to take off it (#160).
+ */
+function writeCachedBuffer(serverId: string, path: string, buf: Uint8Array): void {
+  try {
     writtenSinceSweep += buf.length
     const f = cacheFileFor(serverId, path)
     // Through a temp file: a reader hitting a half-written cache would decode
@@ -290,244 +284,6 @@ function regionPath(serverId: string, dim: string, rx: number, rz: number): stri
   return dir ? join(dir, `r.${rx}.${rz}.mca`) : null
 }
 
-/** Longs out of prismarine-nbt, which gives signed 64-bit values as [hi, lo]. */
-function toLongs(raw: unknown): bigint[] {
-  if (!Array.isArray(raw)) return []
-  return raw.map((v) => {
-    if (typeof v === 'bigint') return v
-    if (Array.isArray(v) && v.length === 2) {
-      // [high, low], both signed 32-bit. The high word carries the sign.
-      return BigInt.asIntN(64, (BigInt(v[0]) << 32n) | (BigInt(v[1] >>> 0) & 0xffffffffn))
-    }
-    if (typeof v === 'number') return BigInt(Math.trunc(v))
-    return 0n
-  })
-}
-
-/* eslint-disable @typescript-eslint/no-explicit-any */
-function tag(v: any): any {
-  return v && typeof v === 'object' && 'value' in v ? v.value : v
-}
-
-/**
- * Unwrap an NBT *list*, which prismarine-nbt wraps twice.
- *
- * A list arrives as `{type:'list', value:{type:'compound', value:[...]}}` — the
- * outer wrapper says "list", the inner one says what the elements are. One
- * `tag()` leaves you holding the inner descriptor object, not the array.
- *
- * This is not a nicety. Reading `sections` happened to work because the code
- * unwrapped it twice by accident, while `palette` was unwrapped once — so
- * `Array.isArray(palette)` was false for every section of every chunk, every
- * section was skipped, and the world renderer produced nothing at all. The
- * smoke tested the bit decoding and never a real chunk, so nothing caught it.
- */
-function listOf(v: any): any[] {
-  const once = tag(v)
-  const twice = tag(once)
-  return Array.isArray(twice) ? twice : Array.isArray(once) ? once : []
-}
-
-/**
- * The topmost visible block of every column in one chunk.
- *
- * Sections are walked from the highest down, and within a section from y=15
- * down, stopping at the first block that is not air. A column that is nothing
- * but air the whole way — under an unlit sky, or a chunk that is only partly
- * generated — is left transparent rather than drawn as the void.
- */
-export function tileFromChunk(chunk: any, dim = 'overworld'): ChunkTile | null {
-  const v = tag(chunk)
-  if (!v) return null
-  const dataVersion = tag(v.DataVersion)
-  const packing = packingFor(typeof dataVersion === 'number' ? dataVersion : undefined)
-  // 1.18+ uses `sections`; 1.13-1.17 used `Level.Sections`.
-  const sections = listOf(v.sections).length ? listOf(v.sections) : listOf(tag(v.Level)?.Sections)
-  if (!sections.length) return null
-
-  const withY = sections
-    .map((s: any) => ({ s: tag(s), y: Number(tag(tag(s)?.Y)) }))
-    .filter((x) => Number.isFinite(x.y))
-    .sort((a, b) => b.y - a.y)
-
-  const colour = new Array<number>(CHUNK_AXIS * CHUNK_AXIS).fill(-1)
-  const height = new Array<number>(CHUNK_AXIS * CHUNK_AXIS).fill(0)
-  let remaining = colour.length
-
-  // The nether has a bedrock roof: a top-down scan finds it in every column and
-  // paints the whole dimension one flat grey. `sawAir` per column is how a map
-  // gets under it — solid blocks are skipped until an air gap has been seen.
-  const rule = scanRuleFor(dim)
-  const sawAir = rule.underRoof ? new Array<boolean>(colour.length).fill(false) : null
-  // A column that is solid from the ceiling all the way down — a netherrack
-  // pillar joining floor to roof — never shows an air gap, so the under-roof
-  // rule would skip every block in it and leave a hole. The highest solid block
-  // seen while skipping is kept as the answer for exactly that case.
-  const fallbackColour = sawAir ? new Array<number>(colour.length).fill(-1) : null
-  const fallbackHeight = sawAir ? new Array<number>(colour.length).fill(0) : null
-
-  for (const { s, y: sectionY } of withY) {
-    if (remaining === 0) break
-    // Above the ceiling there is nothing worth looking at, and on the nether
-    // that is most of the sections.
-    if (rule.ceiling !== null && sectionY * CHUNK_AXIS > rule.ceiling) continue
-    const states = tag(s.block_states) ?? tag(s.BlockStates)
-    // A list, so unwrapped twice. See `listOf`.
-    const paletteRaw = listOf(states?.palette).length ? listOf(states?.palette) : listOf(s.Palette)
-    if (!paletteRaw.length) continue
-    const names: string[] = paletteRaw.map((p: any) => String(tag(tag(p)?.Name) ?? ''))
-
-    /**
-     * The block rules, resolved once per PALETTE ENTRY.
-     *
-     * This is the whole cost of a map (#157). A section is 4096 positions and
-     * its palette is at most a few dozen entries, and every one of these used
-     * to run per position: a regex to strip the namespace, a Set lookup for
-     * air, `seeThrough` (a Set miss then ten `endsWith` calls), and
-     * `blockColour` with a second regex inside it. A fully generated chunk is
-     * about 53 thousand of those to render 256 columns — 13 ms a chunk, 14
-     * seconds a region, and the reason a viewport could take over a minute.
-     *
-     * Resolved per entry it is a few dozen, and the inner loop is array
-     * indexing. Same answers: the arrays are built by the same functions in the
-     * same order.
-     */
-    const invisible = names.map((n) => {
-      // Air, and the plants a map looks through — see `seeThrough`. Without it
-      // the surface is whatever is standing ON the ground rather than the
-      // ground, which is how a bamboo jungle rendered as a maroon smear.
-      const short = n.replace(/^minecraft:/, '')
-      return !short || INVISIBLE.has(short) || seeThrough(short)
-    })
-    // A section a map sees nothing in — and above the surface that is most of
-    // them, fifteen or so single-entry air palettes per chunk. Skipped HERE,
-    // before the colours are looked up, before the indices are unpacked and
-    // before anything is allocated, because the point is not to make those
-    // sections cheaper but to stop touching them at all.
-    if (invisible.every(Boolean)) {
-      // Except under a roof, where an air section is not nothing: it is the gap
-      // the scan is looking for. Recorded for every column in one pass instead
-      // of by walking 4096 positions to reach the same conclusion. Every
-      // section still standing here has its bottom layer at or below the
-      // ceiling, so a full air layer covers all 256 columns.
-      if (sawAir) sawAir.fill(true)
-      continue
-    }
-
-    // Only now, for the sections that can actually contribute a colour.
-    const packedColour = names.map((n) => {
-      const c = blockColour(n.replace(/^minecraft:/, ''))
-      return (c.r << 16) | (c.g << 8) | c.b
-    })
-
-    // A section whose palette is one entry has no data array at all — it is
-    // 4096 of that block, which is how a solid stone or all-air section is
-    // stored. Reading `data` there would skip the section entirely.
-    // `data` is a longArray, which is wrapped once — unlike the palette beside
-    // it, which is a list and wrapped twice.
-    const longs = toLongs(tag(states?.data) ?? tag(s.BlockStates))
-    const bits = bitsPerIndex(names.length)
-    // `null` rather than 4096 zeroes: a uniform section reads palette entry 0
-    // at every position, so the array only existed to say so.
-    //
-    // And prepared rather than unpacked: the loop below walks down from the top
-    // layer and stops the moment every column has an answer, which on real
-    // terrain is after two or three of the sixteen. Unpacking all 4096 did the
-    // rest for nothing.
-    const indices =
-      names.length === 1 || !longs.length ? null : prepareIndices(longs, bits, packing)
-
-    for (let y = CHUNK_AXIS - 1; y >= 0 && remaining > 0; y--) {
-      // Neither of these depends on the column, and both used to be recomputed
-      // 256 times a layer.
-      const worldY = sectionY * CHUNK_AXIS + y
-      if (rule.ceiling !== null && worldY > rule.ceiling) continue
-      const base = y * 256
-      // `x + z * CHUNK_AXIS` IS the column index, so the two loops the original
-      // had over x and z collapse into one over the column in the same order.
-      for (let col = 0; col < 256; col++) {
-        if (colour[col] >= 0) continue
-        const pi = indices ? indexAt(indices, base + col) : 0
-        // An index past the end of its palette: the width comes from
-        // `bitsPerIndex`, which rounds up, so a three-entry palette is read
-        // four bits wide and corrupt data can address entry 15. The old code
-        // resolved that to an empty name and treated it as invisible.
-        const inv = pi >= names.length || invisible[pi]
-        if (sawAir) {
-          // Under a roof: remember the gap, and skip everything solid until
-          // one has been seen. Without this the first hit is the roof itself.
-          if (inv) sawAir[col] = true
-          if (!sawAir[col]) {
-            if (!inv && fallbackColour && fallbackColour[col] < 0) {
-              fallbackColour[col] = packedColour[pi]
-              if (fallbackHeight) fallbackHeight[col] = worldY
-            }
-            continue
-          }
-        }
-        if (inv) continue
-        colour[col] = packedColour[pi]
-        height[col] = worldY
-        remaining--
-      }
-    }
-  }
-  // Columns the under-roof rule skipped entirely fall back to the highest solid
-  // block, so a floor-to-ceiling pillar is drawn rather than punched out.
-  if (fallbackColour && fallbackHeight) {
-    for (let i = 0; i < colour.length; i++) {
-      if (colour[i] < 0 && fallbackColour[i] >= 0) {
-        colour[i] = fallbackColour[i]
-        height[i] = fallbackHeight[i]
-        remaining--
-      }
-    }
-  }
-  // Nothing at all: an ungenerated or empty chunk, which is not a tile.
-  if (remaining === colour.length) return null
-  const marks = structuresOf(v)
-  return { colour, height, ...(marks.length ? { marks } : {}) }
-}
-
-/**
- * Structures whose start is in this chunk.
- *
- * `structures.starts` is keyed by structure id and each entry carries the chunk
- * it starts in — `ChunkX`/`ChunkZ` in chunk units, which is why they are
- * multiplied here rather than used raw. A chunk that merely CONTAINS part of a
- * structure lists it in `References`, not `starts`, so this yields one mark per
- * structure rather than one per chunk it sprawls across.
- */
-function structuresOf(v: any): StructureMark[] {
-  const starts = tag(tag(v.structures)?.starts) ?? tag(tag(tag(v.Level)?.Structures)?.Starts)
-  if (!starts || typeof starts !== 'object') return []
-  const out: StructureMark[] = []
-  for (const [id, raw] of Object.entries(starts)) {
-    const s = tag(raw)
-    if (!s || typeof s !== 'object') continue
-    const cx = Number(tag((s as any).ChunkX))
-    const cz = Number(tag((s as any).ChunkZ))
-    if (!Number.isFinite(cx) || !Number.isFinite(cz)) continue
-    out.push({
-      kind: structureKind(id),
-      id: String(id).replace(/^minecraft:/, ''),
-      x: cx * CHUNK_AXIS + CHUNK_AXIS / 2,
-      z: cz * CHUNK_AXIS + CHUNK_AXIS / 2
-    })
-  }
-  return out
-}
-
-function decompress(buf: Buffer, kind: number): Buffer | null {
-  try {
-    if (kind === 1) return gunzipSync(buf)
-    if (kind === 2) return inflateSync(buf)
-    if (kind === 3) return buf
-  } catch {
-    /* a truncated or corrupt chunk is skipped, never fatal */
-  }
-  return null
-}
 
 /**
  * The smallest gap between two region parses.
@@ -557,33 +313,6 @@ export function parseBudgetReady(serverId?: string, now = Date.now()): boolean {
  * Synchronous and slow by design — the callers are expected to keep this off
  * any request path, and to respect `parseBudgetReady`.
  */
-/**
- * One chunk out of a region file, into `tiles`.
- *
- * Pulled out of the parse loop so the same work can be done in one pass or in
- * slices with the event loop running in between — see `SLICE_SLOTS`.
- */
-function parseSlot(
-  file: Buffer,
-  table: ReturnType<typeof parseLocationTable>,
-  slot: number,
-  tiles: Map<number, ChunkTile | null>,
-  dim: string
-): void {
-  const loc = table[slot]
-  if (!loc || !loc.offset || loc.offset + 5 > file.length) return
-  const length = file.readUInt32BE(loc.offset)
-  const kind = file[loc.offset + 4]
-  const end = loc.offset + 5 + Math.max(0, length - 1)
-  if (length <= 0 || end > file.length) return
-  const raw = decompress(file.subarray(loc.offset + 5, end), kind)
-  if (!raw) return
-  try {
-    tiles.set(slot, tileFromChunk(nbt.parseUncompressed(raw), dim))
-  } catch {
-    /* one unreadable chunk must not lose the region */
-  }
-}
 
 /**
  * How many of a region's 1024 chunks to parse before letting the event loop
@@ -723,6 +452,38 @@ async function loadRegionSliced(
     regions.set(path, empty)
     return empty
   }
+
+  // A worker thread if there is one (#160). The parse is about 1.4 s and this
+  // thread answers every IPC call, serves the web panel and reads the console;
+  // slicing made that interruptible, not absent. Off-thread it is absent, and
+  // several regions parse at once.
+  //
+  // The worker hands back the ENCODED region, already gzipped, which is also
+  // exactly what the disk cache stores — so a hit costs one decode either way
+  // and nothing rebuilds 1024 objects across a thread boundary.
+  if (poolReady()) {
+    const r = await parseOnWorker(path, dim)
+    if (!r.error && r.buf) {
+      const decoded = decodeRegionTiles(gunzipSync(r.buf))
+      if (decoded) {
+        const entry: RegionEntry = { at: Date.now(), mtimeMs: r.mtimeMs, tiles: new Map(decoded.tiles) }
+        regions.set(path, entry)
+        trimMemory(perf.memoryRegions)
+        if (perf.cache) {
+          writeCachedBuffer(serverId, path, r.buf)
+          sweepCache(perf.cacheLimitMB)
+        }
+        // Nothing blocked this thread, so there is no slice to report.
+        lastSliceMs = 0
+        log.info(`World tiles: parsed ${r.chunks} chunks from ${path.split(/[\/]/).pop()} on a worker`)
+        return entry
+      }
+    }
+    if (r.error === 'unreadable') return giveUp()
+    // Anything else falls through to the on-thread parse below rather than
+    // showing the operator an empty map.
+  }
+
   let file: Buffer
   try {
     file = readFileSync(path)
@@ -788,7 +549,6 @@ function trimMemory(keep: number): void {
   }
 }
 
-const SECTOR_HEADER = 8192
 
 /**
  * A tile ONLY if its region is already parsed.
@@ -982,3 +742,61 @@ export function chunkTile(
   return region.tiles.get(chunkSlot(localChunk(chunkX), localChunk(chunkZ))) ?? null
 }
 
+
+// ---- what the background warmer needs (#161) ----
+
+/**
+ * Every dimension directory this server actually has on disk.
+ *
+ * The warmer cannot ask for "the region folder" — a Paper server keeps the
+ * nether and the end in sibling folders, and a custom world is a top-level one
+ * of its own, which is the layout `regionDirCandidates` exists to resolve.
+ */
+export function regionDirsForServer(serverId: string): { dim: string; dir: string }[] {
+  const out: { dim: string; dir: string }[] = []
+  const seen = new Set<string>()
+  for (const dim of ['overworld', 'nether', 'end']) {
+    const dir = regionDirFor(serverId, dim)
+    if (!dir || seen.has(dir) || !existsSync(dir)) continue
+    seen.add(dir)
+    out.push({ dim, dir })
+  }
+  return out
+}
+
+/**
+ * Whether the cache already holds this region as it stands on disk.
+ *
+ * Cheap on purpose: the warmer asks this once per region per pass, and on a
+ * warmed world the answer is yes for every one of them. Reading the file and
+ * checking its mtime is what makes a second pass cost a directory walk rather
+ * than a world.
+ */
+export function cachedRegionIsCurrent(serverId: string, path: string, mtimeMs: number): boolean {
+  const hit = regions.get(path)
+  if (hit && hit.mtimeMs === mtimeMs) return true
+  return !!readCachedRegion(serverId, path, mtimeMs)
+}
+
+/**
+ * Parse one region into the cache, without touching the in-memory working set.
+ *
+ * Deliberately NOT `loadRegionSliced`: warming a thousand regions through that
+ * would evict the handful an operator is actually looking at, over and over.
+ * The disk cache is the point here; memory belongs to whoever is looking.
+ */
+export async function warmOneRegion(
+  serverId: string,
+  path: string,
+  dim: string,
+  perf: MapPerfConfig
+): Promise<boolean> {
+  if (!poolReady()) return false
+  const r = await parseOnWorker(path, dim)
+  if (r.error || !r.buf) return false
+  if (perf.cache) {
+    writeCachedBuffer(serverId, path, r.buf)
+    sweepCache(perf.cacheLimitMB)
+  }
+  return true
+}
