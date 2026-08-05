@@ -9168,7 +9168,10 @@ export async function runWebSmoke(): Promise<void> {
               ? { '2,0': tile }
               : { '0,0': tile, '1,0': tile, '40,0': tile, '-1,0': tile }
             sent = true
-            return Promise.resolve({ tiles, empty: [], pending: 0 })
+            // Chunk 80,0 is region 2,0 and is READ AND EMPTY. It must be
+            // remembered — so it is never asked for again — without costing a
+            // megabyte of canvas nothing will ever be drawn into.
+            return Promise.resolve({ tiles, empty: ['80,0'], pending: 0 })
           },
           mapPost: () => Promise.resolve(null),
           mapServerId: () => 's',
@@ -9184,8 +9187,13 @@ export async function runWebSmoke(): Promise<void> {
         ctx.window = ctx
         runInNewContext(MAP_JS, ctx)
         const M = ctx.MAP as Record<string, unknown>
-        M.view = { cx: 340, cz: 0, scale: 1 }
-        M.vp = { width: 800, height: 200 }
+        // Wide and short on purpose. Every fixture chunk has to fall inside the
+        // view AND inside the first request: the viewport is walked row by row
+        // and capped, so a tall view would spend its whole budget on rows above
+        // z=0 and the response below would be about chunks nobody asked for.
+        // 126 chunks across x 4 rows of z is 504, just under the cap.
+        M.view = { cx: 640, cz: 0, scale: 1 }
+        M.vp = { width: 2000, height: 40 }
         M.world = true
         M.loadOnPan = true
         const fetchTiles = ctx.mapFetchTiles as (force?: boolean) => void
@@ -9194,12 +9202,20 @@ export async function runWebSmoke(): Promise<void> {
         await new Promise((r) => setTimeout(r, 20))
         const regions = ctx.MAP_REGIONS as Record<string, { st: Record<string, number> }>
         const keys = Object.keys(regions).sort()
-        if (keys.join(' ') !== '-1,0 0,0 1,0') {
+        if (keys.join(' ') !== '-1,0 0,0 1,0 2,0') {
           return fail('chunks were not filed into the right regions: ' + keys.join(' '))
         }
         // Two chunks in one region means ONE canvas holding both, not two.
         if (Object.keys(regions['0,0'].st).sort().join(' ') !== '0,0 1,0') {
           return fail('a region did not record both of its chunks')
+        }
+        // The empty region is known but has no canvas: an ocean must not be
+        // able to evict the terrain you actually loaded.
+        const empties = regions['2,0']
+        if (!empties) return fail('an empty chunk was not remembered; it will be asked for forever')
+        if (empties.st['80,0'] !== 0) return fail('an empty chunk was not recorded as empty')
+        if ((empties as unknown as { cv: unknown }).cv) {
+          return fail('a region with nothing drawn in it allocated a canvas')
         }
         const madeFirst = canvases.length
         const stampsFirst = painted.length

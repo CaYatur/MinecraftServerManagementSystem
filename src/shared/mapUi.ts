@@ -583,10 +583,18 @@ function mapRegionKey(cx,cz){return mapRegionOf(cx)+','+mapRegionOf(cz)}
 function mapRegionFor(cx,cz,make){
  var rk=mapRegionKey(cx,cz);var r=MAP_REGIONS[rk];
  if(r||!make)return r;
- var cv=document.createElement('canvas');
- cv.width=${REGION_SPAN};cv.height=${REGION_SPAN};
- r={cv:cv,g:cv.getContext('2d'),st:{},mk:{}};
+ r={cv:null,g:null,st:{},mk:{}};
  MAP_REGIONS[rk]=r;return r}
+/* The canvas is a megabyte and is only needed once something is actually drawn
+   into it. Allocating it with the entry meant a region of nothing but
+   ungenerated chunks — an ocean, the edge of the explored world — took a full
+   canvas and a slot in the cache, evicting terrain that had really been read. */
+function mapRegionCanvas(r){
+ if(!r.cv){
+  var cv=document.createElement('canvas');
+  cv.width=${REGION_SPAN};cv.height=${REGION_SPAN};
+  r.cv=cv;r.g=cv.getContext('2d')}
+ return r}
 /* What the client knows about one chunk: 1 drawn, 0 read and empty, undefined
    never read. */
 function mapChunkState(cx,cz){
@@ -628,6 +636,8 @@ function mapDrawableRegions(){
  for(var k in MAP_REGIONS){
   var p=k.split(',');var rx=+p[0],rz=+p[1];
   if(rx<r0||rx>r1||rz<s0||rz>s1)continue;
+  /* A region that only ever answered "nothing there" has no canvas. */
+  if(!MAP_REGIONS[k].cv)continue;
   out.push({rx:rx,rz:rz,r:MAP_REGIONS[k]})}
  return out}
 function mapFetchTiles(force){
@@ -806,7 +816,7 @@ function mapTrimTiles(){
  * over the region's blank background instead of blending with it.
  */
 function mapStampTile(cx,cz,t){
- var r=mapRegionFor(cx,cz,true);
+ var r=mapRegionCanvas(mapRegionFor(cx,cz,true));
  var img=r.g.createImageData(16,16);
  for(var i=0;i<256;i++){
   var c=t.c[i];var o=i*4;

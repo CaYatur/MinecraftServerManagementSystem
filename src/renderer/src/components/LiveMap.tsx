@@ -86,8 +86,16 @@ function iconPath(kind: string): Path2D | null {
  * drops the canvas AND the claim to have drawn its chunks in one statement.
  */
 interface RegionTile {
-  cv: HTMLCanvasElement
-  g: CanvasRenderingContext2D
+  /**
+   * Null until something is actually drawn into it.
+   *
+   * The canvas is a megabyte and allocating it with the entry meant a region of
+   * nothing but ungenerated chunks — an ocean, the edge of the explored world —
+   * took one anyway, and a slot in the cache, evicting terrain that had really
+   * been read.
+   */
+  cv: HTMLCanvasElement | null
+  g: CanvasRenderingContext2D | null
   /** Chunk key -> 1 drawn, 0 read and empty. Absent means never read. */
   st: Map<string, 0 | 1>
   mk: Map<string, StructureMark[]>
@@ -101,17 +109,21 @@ function regionFor(store: Map<string, RegionTile>, cx: number, cz: number): Regi
   const k = regionKey(cx, cz)
   const hit = store.get(k)
   if (hit) return hit
-  const cv = document.createElement('canvas')
-  cv.width = REGION_SPAN
-  cv.height = REGION_SPAN
-  const made: RegionTile = {
-    cv,
-    g: cv.getContext('2d') as CanvasRenderingContext2D,
-    st: new Map(),
-    mk: new Map()
-  }
+  const made: RegionTile = { cv: null, g: null, st: new Map(), mk: new Map() }
   store.set(k, made)
   return made
+}
+
+/** The canvas, made on the first chunk that needs one. */
+function regionCanvas(r: RegionTile): CanvasRenderingContext2D {
+  if (!r.g) {
+    const cv = document.createElement('canvas')
+    cv.width = REGION_SPAN
+    cv.height = REGION_SPAN
+    r.cv = cv
+    r.g = cv.getContext('2d') as CanvasRenderingContext2D
+  }
+  return r.g
 }
 
 /**
@@ -129,7 +141,7 @@ function stampTile(
   t: { c: number[]; h: number[]; m?: StructureMark[] }
 ): void {
   const r = regionFor(store, cx, cz)
-  const g = r.g
+  const g = regionCanvas(r)
   const img = g.createImageData(16, 16)
   for (let i = 0; i < 256; i++) {
     const c = t.c[i]
@@ -396,6 +408,8 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
     for (const [k, r] of tiles.current) {
       const [rx, rz] = k.split(',').map(Number)
       if (rx < rb.x0 || rx > rb.x1 || rz < rb.z0 || rz > rb.z1) continue
+      // A region that only ever answered "nothing there" has no canvas.
+      if (!r.cv) continue
       out.push({ rx, rz, r })
     }
     return out
@@ -535,6 +549,7 @@ export function LiveMap({ serverId }: { serverId: string }): JSX.Element {
       // One call per REGION. This loop used to run once per visible chunk, up
       // to 4096 times a frame; a viewport spans at most nine regions (#164).
       for (const c of drawableRegions()) {
+        if (!c.r.cv) continue
         const p = worldToScreen({ x: c.rx * REGION_SPAN, z: c.rz * REGION_SPAN }, v, size)
         const side = REGION_SPAN * v.scale
         g.drawImage(c.r.cv, p.x * sx, p.y * sy, side * sx + 1, side * sy + 1)
