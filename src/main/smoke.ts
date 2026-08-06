@@ -417,6 +417,63 @@ function waitFor(pred: () => boolean, ms: number): Promise<boolean> {
  * synthetic timestamps, then checks filtering, ordering, counts, retention,
  * per-server isolation and cleanup.
  */
+/**
+ * The repository, when the gates are running inside one (#166).
+ *
+ * A few checks assert things about the CODE rather than about a running
+ * process — that every declared IPC channel has a handler, that the bundled
+ * bridge jar matches the plugin.yml it was built from, that every route in the
+ * router appears in the documented surface. Those can only be answered by
+ * reading the source, and a PACKAGED app has no source: it is an asar of built
+ * JavaScript, extracted to a temp folder that contains no `src` at all.
+ *
+ * `MSMS_SMOKE_WORLDS` had been failing against every packaged build since at
+ * least v0.2.5 for exactly this reason — an unhandled ENOENT on
+ * `src/shared/ipc.ts` that took the whole gate down after it had already
+ * passed everything it could actually test.
+ *
+ * Returns null when there is no source tree, and every caller then SAYS SO
+ * rather than passing quietly: a check that silently does nothing is the
+ * failure mode this project keeps finding.
+ */
+function sourceRoot(): string | null {
+  const root = process.cwd()
+  if (existsSync(join(root, 'src', 'shared', 'ipc.ts'))) return root
+  // Looks like the repository, but the file this probes for is gone. That is a
+  // MOVED FILE, not a packaged run, and answering "no source tree" to it would
+  // silently switch off every source-derived check in every gate — the exact
+  // way a guard against a missing file rots into a guard against running at all.
+  if (existsSync(join(root, 'electron.vite.config.ts'))) {
+    // eslint-disable-next-line no-console
+    console.log(
+      'SMOKE: FAIL - this is the repository but src/shared/ipc.ts is missing, so the ' +
+        'source-tree probe would disable every source-derived check'
+    )
+    app.exit(1)
+  }
+  return null
+}
+
+/**
+ * Named so a skip is legible in the transcript rather than an absence.
+ *
+ * And it REFUSES to skip when there is a source tree. The danger in "skip this
+ * when the file is missing" is that it quietly becomes "skip this always" — the
+ * check stops running in the one place it can run, and nothing says so. A
+ * developer run has the sources, so reaching here with them present is a bug in
+ * the guard rather than a packaged run, and it fails the gate.
+ */
+function skipNoSource(gate: string, what: string): void {
+  if (sourceRoot()) {
+    // eslint-disable-next-line no-console
+    console.log(`${gate}: FAIL - ${what} was skipped inside the source tree; the guard is wrong`)
+    app.exit(1)
+    return
+  }
+  // eslint-disable-next-line no-console
+  console.log(`${gate}: SKIP - ${what} needs the source tree, and this is a packaged run`)
+}
+
 export async function runEventsSmoke(): Promise<void> {
   const fail = (m: string): void => {
     console.log('EVENTS-SMOKE: FAIL -', m)
@@ -1582,11 +1639,15 @@ export async function runModUpdateSmoke(): Promise<void> {
       if (!bridgeVersionOf(bundled.name)) return fail('the bundled jar is not named like one: ' + bundled.name)
       // ...and it is the jar the sources describe. A committed build output can
       // drift from the code it was built from, and nothing else would notice.
-      const declared = /^version:\s*(.+)$/m.exec(
-        readFileSync(join(process.cwd(), 'bridge', 'src', 'main', 'resources', 'plugin.yml'), 'utf-8')
-      )?.[1]?.trim()
-      if (declared !== bundled.version) {
-        return fail('the bundled jar is ' + bundled.version + ' but plugin.yml declares ' + declared)
+      if (!sourceRoot()) {
+        skipNoSource('MODUPDATE-SMOKE', 'the bundled jar vs plugin.yml check')
+      } else {
+        const declared = /^version:\s*(.+)$/m.exec(
+          readFileSync(join(sourceRoot() as string, 'bridge', 'src', 'main', 'resources', 'plugin.yml'), 'utf-8')
+        )?.[1]?.trim()
+        if (declared !== bundled.version) {
+          return fail('the bundled jar is ' + bundled.version + ' but plugin.yml declares ' + declared)
+        }
       }
       if (!bridgeInstallMod.bundledBridgeSha256()) return fail('the bundled jar could not be hashed')
 
@@ -1654,13 +1715,18 @@ export async function runBridgeSmoke(): Promise<void> {
       return fail('a tick behind the plugin logger prefix did not parse')
     }
     // Tied to the real sources rather than to a literal: the marker the parser
-    // looks for, and the name Paper prints in front of it.
-    const pluginName = /^name:\s*(.+)$/m
-      .exec(readFileSync(join(process.cwd(), 'bridge', 'src', 'main', 'resources', 'plugin.yml'), 'utf-8'))?.[1]
-      ?.trim()
-    if (!pluginName) return fail('plugin.yml has no name')
-    if (BRIDGE_MARKER === '[' + pluginName + ']') {
-      return fail('the marker is identical to the plugin name — the logger prefix would be sliced instead')
+    // looks for, and the name Paper prints in front of it. Source-derived, so
+    // it can only run inside the repository (#166).
+    if (!sourceRoot()) {
+      skipNoSource('BRIDGE-SMOKE', 'the marker vs plugin.yml name check')
+    } else {
+      const pluginName = /^name:\s*(.+)$/m
+        .exec(readFileSync(join(sourceRoot() as string, 'bridge', 'src', 'main', 'resources', 'plugin.yml'), 'utf-8'))?.[1]
+        ?.trim()
+      if (!pluginName) return fail('plugin.yml has no name')
+      if (BRIDGE_MARKER === '[' + pluginName + ']') {
+        return fail('the marker is identical to the plugin name — the logger prefix would be sliced instead')
+      }
     }
     console.log('BRIDGE-SMOKE: marker parsed at column 0, behind [INFO]:, [STDOUT] and the plugin logger prefix')
 
@@ -2363,10 +2429,13 @@ export async function runWorldsSmoke(): Promise<void> {
     // Read out of the SOURCE rather than from ipcMain, because the smoke
     // registers handlers itself and asking the live process would only prove
     // that this run wired them up.
-    {
-      const ipcSrc = readFileSync(join(process.cwd(), 'src', 'shared', 'ipc.ts'), 'utf-8')
-      const regSrc = readFileSync(join(process.cwd(), 'src', 'main', 'ipc', 'register.ts'), 'utf-8')
-      const preSrc = readFileSync(join(process.cwd(), 'src', 'preload', 'index.ts'), 'utf-8')
+    if (!sourceRoot()) {
+      skipNoSource('WORLDS-SMOKE', 'the IPC channel/handler cross-check')
+    } else {
+      const src = sourceRoot() as string
+      const ipcSrc = readFileSync(join(src, 'src', 'shared', 'ipc.ts'), 'utf-8')
+      const regSrc = readFileSync(join(src, 'src', 'main', 'ipc', 'register.ts'), 'utf-8')
+      const preSrc = readFileSync(join(src, 'src', 'preload', 'index.ts'), 'utf-8')
 
       // `name: 'channel:string',` inside the channel table.
       const declared = [...ipcSrc.matchAll(/^\s{2}(\w+):\s*'([a-z0-9:-]+)',?$/gim)].map((m) => m[1])
@@ -8615,56 +8684,61 @@ export async function runWebSmoke(): Promise<void> {
        * which is the failure that actually happens. So the route literals are
        * read out of `handlePanel` itself and each one must appear in the table.
        */
-      const srcPath = join(process.cwd(), 'src', 'main', 'web', 'server.ts')
-      if (!existsSync(srcPath)) return fail('cannot read the router source at ' + srcPath)
-      const whole = readFileSync(srcPath, 'utf-8')
-      const from = whole.indexOf('async function handlePanel')
-      // The NEXT top-level function, not `startWebServer`. That marker held only
-      // while `handlePanel` happened to be the last thing before it; #146 put
-      // `handleMapPage` in between, and its routes — which belong to a different
-      // listener and are deliberately not part of the `/api/v1` surface — were
-      // then read as undocumented panel routes.
-      const after = whole.slice(from + 1)
-      const next = after.search(/\n(?:export )?(?:async )?function /)
-      const to = next < 0 ? whole.indexOf('export function startWebServer') : from + 1 + next
-      if (from < 0 || to < 0 || to < from) return fail('could not isolate handlePanel in the source')
-      const router = whole.slice(from, to)
-      // The isolation is load-bearing: too short and the coverage check reads a
-      // handful of routes and passes, which looks exactly like success.
-      if (!router.includes('/api/keys') || router.length < 20000) {
-        return fail('handlePanel was isolated to ' + router.length + ' chars — the slice is wrong')
-      }
-
-      // `/api/…` literals, mapped onto the versioned form the table uses.
-      for (const m of router.matchAll(/\b(?:raw)?[Pp]ath === '(\/api\/[^']*)'/g)) {
-        const lit = m[1]
-        const want = lit.startsWith('/api/v1') ? lit : API_PREFIX + lit.slice(4)
-        if (!documented.includes(want)) {
-          return fail('the router serves ' + lit + ' and the spec does not document it')
+      // Source-derived, so it can only run inside the repository (#166).
+      if (!sourceRoot()) {
+        skipNoSource('WEB-SMOKE', 'the router vs documented-surface cross-check')
+      } else {
+        const srcPath = join(process.cwd(), 'src', 'main', 'web', 'server.ts')
+        if (!existsSync(srcPath)) return fail('cannot read the router source at ' + srcPath)
+        const whole = readFileSync(srcPath, 'utf-8')
+        const from = whole.indexOf('async function handlePanel')
+        // The NEXT top-level function, not `startWebServer`. That marker held only
+        // while `handlePanel` happened to be the last thing before it; #146 put
+        // `handleMapPage` in between, and its routes — which belong to a different
+        // listener and are deliberately not part of the `/api/v1` surface — were
+        // then read as undocumented panel routes.
+        const after = whole.slice(from + 1)
+        const next = after.search(/\n(?:export )?(?:async )?function /)
+        const to = next < 0 ? whole.indexOf('export function startWebServer') : from + 1 + next
+        if (from < 0 || to < 0 || to < from) return fail('could not isolate handlePanel in the source')
+        const router = whole.slice(from, to)
+        // The isolation is load-bearing: too short and the coverage check reads a
+        // handful of routes and passes, which looks exactly like success.
+        if (!router.includes('/api/keys') || router.length < 20000) {
+          return fail('handlePanel was isolated to ' + router.length + ' chars — the slice is wrong')
         }
-      }
 
-      // Sub-paths chosen by string comparison: `sub`, `action`, `rest`.
-      // These are covered by a wildcard segment in the table (the eight
-      // moderation actions, the four world actions) rather than by a path each.
-      const wildcardCovered = new Set<string>([...MODERATION_ACTIONS, ...WORLD_ACTIONS, 'delete'])
-      const segments = new Set<string>()
-      for (const p of documented) for (const seg of p.split('/')) if (seg && !seg.startsWith('{')) segments.add(seg)
-      for (const m of router.matchAll(/\b(?:sub|action|rest) === '([^']+)'/g)) {
-        const token = m[1]
-        if (!token || wildcardCovered.has(token)) continue
-        // `rest` carries multi-segment values like `admin/category/delete`.
-        if (token.split('/').every((seg) => segments.has(seg))) continue
-        return fail('the router handles "' + token + '" and the spec documents no such path')
-      }
+        // `/api/…` literals, mapped onto the versioned form the table uses.
+        for (const m of router.matchAll(/\b(?:raw)?[Pp]ath === '(\/api\/[^']*)'/g)) {
+          const lit = m[1]
+          const want = lit.startsWith('/api/v1') ? lit : API_PREFIX + lit.slice(4)
+          if (!documented.includes(want)) {
+            return fail('the router serves ' + lit + ' and the spec does not document it')
+          }
+        }
 
-      // ...and the other direction: nothing in the table may be invented.
-      for (const p of documented) {
-        const literals = p.slice(API_PREFIX.length).split('/').filter((s) => s && !s.startsWith('{'))
-        const leaf = literals[literals.length - 1]
-        if (!leaf) continue
-        if (!router.includes("'" + leaf) && !router.includes('/' + leaf)) {
-          return fail('the spec documents ' + p + ' and the router has no such route')
+        // Sub-paths chosen by string comparison: `sub`, `action`, `rest`.
+        // These are covered by a wildcard segment in the table (the eight
+        // moderation actions, the four world actions) rather than by a path each.
+        const wildcardCovered = new Set<string>([...MODERATION_ACTIONS, ...WORLD_ACTIONS, 'delete'])
+        const segments = new Set<string>()
+        for (const p of documented) for (const seg of p.split('/')) if (seg && !seg.startsWith('{')) segments.add(seg)
+        for (const m of router.matchAll(/\b(?:sub|action|rest) === '([^']+)'/g)) {
+          const token = m[1]
+          if (!token || wildcardCovered.has(token)) continue
+          // `rest` carries multi-segment values like `admin/category/delete`.
+          if (token.split('/').every((seg) => segments.has(seg))) continue
+          return fail('the router handles "' + token + '" and the spec documents no such path')
+        }
+
+        // ...and the other direction: nothing in the table may be invented.
+        for (const p of documented) {
+          const literals = p.slice(API_PREFIX.length).split('/').filter((s) => s && !s.startsWith('{'))
+          const leaf = literals[literals.length - 1]
+          if (!leaf) continue
+          if (!router.includes("'" + leaf) && !router.includes('/' + leaf)) {
+            return fail('the spec documents ' + p + ' and the router has no such route')
+          }
         }
       }
 
@@ -8709,7 +8783,19 @@ export async function runWebSmoke(): Promise<void> {
       // Keep the checked-in copy current. It is a generated artefact, and a
       // stale one in the repo is worse than none — an integrator reads the file
       // in the repository, not the one this process would serve.
-      writeFileSync(join(process.cwd(), 'docs', 'openapi.json'), JSON.stringify(doc, null, 2) + '\n', 'utf-8')
+      //
+      // There is no repository in a packaged run and `docs/` is not shipped, so
+      // this WROTE INTO A DIRECTORY THAT DOES NOT EXIST and took the gate down
+      // with an ENOENT (#166).
+      if (!sourceRoot()) {
+        skipNoSource('WEB-SMOKE', 'refreshing the checked-in openapi.json')
+      } else {
+        writeFileSync(
+          join(sourceRoot() as string, 'docs', 'openapi.json'),
+          JSON.stringify(doc, null, 2) + '\n',
+          'utf-8'
+        )
+      }
 
       console.log(
         'WEB-SMOKE: api docs OK (' + documented.length + ' documented paths, router-derived coverage both ways, no install data)'

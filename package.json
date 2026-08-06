@@ -1,7 +1,7 @@
 {
   "name": "msms",
   "version": "0.3.0",
-  "description": "Minecraft Server Management System — portable, bilingual (EN/TR) desktop control panel for Minecraft servers.",
+  "description": "Minecraft Server Management System \u2014 portable, bilingual (EN/TR) desktop control panel for Minecraft servers.",
   "author": "CaYatur",
   "license": "MIT",
   "main": "./out/main/index.js",
@@ -14,6 +14,8 @@
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json --composite false",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
     "lint": "eslint . --ext .ts,.tsx || echo lint-skipped",
+    "gates": "node scripts/gates.mjs",
+    "gates:packaged": "node scripts/gates.mjs --packaged",
     "dist": "electron-vite build && electron-builder",
     "dist:portable": "electron-vite build && electron-builder --win portable",
     "dist:dir": "electron-vite build && electron-builder --dir"
