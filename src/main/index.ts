@@ -16,6 +16,7 @@ import { initBlockColours } from './core/clientAssets'
 import { resolveBaseDir } from './paths'
 import { log } from './logger'
 import { startTileWarming } from './core/tileWarm'
+import { teeSmokeOutput } from './smokeLog'
 import {
   runSmoke,
   runWizardSmoke,
@@ -230,7 +231,9 @@ if (!gotLock) {
   // worse than a failing test, because it looks like a working one.
   if (Object.keys(process.env).some((k) => k.startsWith('MSMS_SMOKE'))) {
     // eslint-disable-next-line no-console
-    console.log('SMOKE: FAIL - another instance holds the single-instance lock; nothing ran')
+    // Through the logger as well: a packaged app has no console, so a bare
+    // console.log here would make this the one failure nobody can see (#166).
+    log.error('SMOKE: FAIL - another instance holds the single-instance lock; nothing ran')
     app.exit(1)
   } else {
     app.quit()
@@ -241,6 +244,10 @@ if (!gotLock) {
   app.whenReady().then(async () => {
     Menu.setApplicationMenu(null)
     loadConfig()
+    // A packaged app has no console attached, so without this a gate can only
+    // ever report its exit code and nothing else (#166). Here rather than at
+    // module scope, which is where the logger itself is known to work.
+    if (Object.keys(process.env).some((k) => k.startsWith('MSMS_SMOKE'))) teeSmokeOutput()
     log.info(`MSMS starting. Base dir: ${resolveBaseDir()}`)
     handleImageProtocol()
     registerIpc()
