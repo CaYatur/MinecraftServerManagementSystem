@@ -46,8 +46,6 @@ A Turkish project summary is available near the end of this README: [Türkçe Ö
 
 ## 📌 Project Status
 
-**Current package version:** `0.2.3`
-
 MSMS is under active development, and the whole of it now runs: the desktop
 manager, the **admin web panel**, the **public website with its store and
 economy**, and a **third page that is nothing but a fullscreen live map**. The
